@@ -41,7 +41,7 @@ Demo 会自动执行：
 6. 执行外部循环逐帧控制（目标点示例：15,15）
 
 如果你的目标是“自己设计和落地模型”，不是只运行现成 demo，请直接阅读：
-- [`usage_playbook.md`](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/docs/usage_playbook.md)
+- [`application_manual.md`](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/docs/application_manual.md)
 
 ## 4. 外部循环模式说明
 

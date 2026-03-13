@@ -75,10 +75,10 @@ cmake --build build
 
 ## 从“能跑”到“会用”
 
-如果你不只是想运行现成 demo，而是要做自己的模型与控制链路，请先看这份实战手册：
-- [`docs/usage_playbook.md`](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/docs/usage_playbook.md)
+如果你要按工程流程落地，请先看应用手册：
+- [`docs/application_manual.md`](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/docs/application_manual.md)
 
-它覆盖完整用户路径：
+它覆盖完整使用流程：
 - 怎么设计模型与 I/O
 - 怎么配置参数
 - 怎么用 profiler 预估资源
@@ -98,5 +98,6 @@ cmake --build build
 
 - 用户手册：[`docs/user_manual.md`](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/docs/user_manual.md)
 - 开发手册：[`docs/developer_manual.md`](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/docs/developer_manual.md)
+- 应用手册：[`docs/application_manual.md`](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/docs/application_manual.md)
 - 实战手册：[`docs/usage_playbook.md`](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/docs/usage_playbook.md)
 - Demo 说明：[`demo_full_flow.md`](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/demo_full_flow.md)
