@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 #include "../include/config_user.h"
 #include "../include/csv_loader.h"
@@ -37,6 +38,11 @@ typedef struct DemoContext {
     CsvDataset dataset;
     DriverStub pc_driver;
 } DemoContext;
+
+typedef struct Pose2D {
+    float x;
+    float y;
+} Pose2D;
 
 /**
  * @brief 统一写出演示训练数据到 CSV 文件。
@@ -370,6 +376,127 @@ static int run_inference(DemoContext* ctx,
     return 0;
 }
 
+static const char* select_frame_command(const Pose2D* cur, const Pose2D* goal) {
+    const float dx = goal->x - cur->x;
+    const float dy = goal->y - cur->y;
+    if (fabsf(dx) < 0.30f && fabsf(dy) < 0.30f) {
+        return "move stop";
+    }
+    if (dx >= 0.0f) {
+        return (dy > 2.0f) ? "move right fast" : "move right slow";
+    }
+    return (dy > 2.0f) ? "move left fast" : "move left slow";
+}
+
+static float clamp_abs_step(float step, float remain) {
+    if (fabsf(step) > fabsf(remain)) {
+        return remain;
+    }
+    return step;
+}
+
+static int run_external_goal_loop(DemoContext* ctx,
+                                  const float* loaded_weights,
+                                  const Pose2D* goal,
+                                  Pose2D* io_pose,
+                                  size_t max_frames) {
+    size_t frame = 0U;
+    if (ctx == NULL || loaded_weights == NULL || goal == NULL || io_pose == NULL || max_frames == 0U) {
+        return -1;
+    }
+    printf("external loop start: from(%.2f, %.2f) -> goal(%.2f, %.2f)\n",
+           (double)io_pose->x,
+           (double)io_pose->y,
+           (double)goal->x,
+           (double)goal->y);
+    for (frame = 0U; frame < max_frames; ++frame) {
+        const char* command = NULL;
+        float state[STATE_DIM];
+        int token_ids[MAX_SEQ_LEN];
+        size_t token_count = 0U;
+        float logits[OUTPUT_DIM];
+        float act[OUTPUT_DIM];
+        float remain_x = 0.0f;
+        float remain_y = 0.0f;
+        float step_x = 0.0f;
+        float step_y = 0.0f;
+        int rc = TOKENIZER_STATUS_OK;
+
+        remain_x = goal->x - io_pose->x;
+        remain_y = goal->y - io_pose->y;
+        if (fabsf(remain_x) < 0.30f && fabsf(remain_y) < 0.30f) {
+            printf("external loop done at frame=%zu pose=(%.3f, %.3f)\n",
+                   frame,
+                   (double)io_pose->x,
+                   (double)io_pose->y);
+            return 0;
+        }
+
+        command = select_frame_command(io_pose, goal);
+        memset(state, 0, sizeof(state));
+        memset(token_ids, 0, sizeof(token_ids));
+        memset(logits, 0, sizeof(logits));
+        memset(act, 0, sizeof(act));
+
+        state[0] = io_pose->x / 15.0f;
+        state[1] = io_pose->y / 15.0f;
+        state[2] = remain_x / 15.0f;
+        state[3] = remain_y / 15.0f;
+        state[4] = (fabsf(remain_x) + fabsf(remain_y)) / 30.0f;
+
+        rc = tokenizer_encode(&ctx->tokenizer, command, token_ids, MAX_SEQ_LEN, &token_count);
+        if (rc != TOKENIZER_STATUS_OK || token_count == 0U) {
+            return -2;
+        }
+        predict_logits(loaded_weights, token_ids, token_count, state, logits);
+        if (activate_output(logits, act) != 0) {
+            return -3;
+        }
+
+        step_x = act[2] * 0.55f;
+        if (fabsf(step_x) < 0.08f && fabsf(remain_x) > 0.5f) {
+            step_x = (remain_x > 0.0f) ? 0.10f : -0.10f;
+        }
+        step_x = clamp_abs_step(step_x, remain_x);
+
+        step_y = 0.0f;
+        if (remain_y > 0.0f) {
+            step_y = ((act[3] + 1.0f) * 0.5f) * 0.40f;
+            if (step_y < 0.05f) {
+                step_y = 0.05f;
+            }
+            step_y = clamp_abs_step(step_y, remain_y);
+        } else if (remain_y < 0.0f) {
+            step_y = -0.05f;
+            step_y = clamp_abs_step(step_y, remain_y);
+        }
+
+        io_pose->x += step_x;
+        io_pose->y += step_y;
+
+        printf("frame=%03zu cmd=\"%s\" remain=(%.3f, %.3f) act=(%.3f,%.3f,%.3f,%.3f) step=(%.3f, %.3f) pose=(%.3f, %.3f)\n",
+               frame + 1U,
+               command,
+               (double)remain_x,
+               (double)remain_y,
+               (double)act[0],
+               (double)act[1],
+               (double)act[2],
+               (double)act[3],
+               (double)step_x,
+               (double)step_y,
+               (double)io_pose->x,
+               (double)io_pose->y);
+    }
+    printf("external loop reached max_frames=%zu, final pose=(%.3f, %.3f), remain=(%.3f, %.3f)\n",
+           max_frames,
+           (double)io_pose->x,
+           (double)io_pose->y,
+           (double)(goal->x - io_pose->x),
+           (double)(goal->y - io_pose->y));
+    return 1;
+}
+
 /**
  * @brief 释放 Demo 上下文占用的所有资源。
  *
@@ -406,6 +533,8 @@ int main(int argc, char** argv) {
     float* loaded_weights = NULL;
     size_t loaded_count = 0U;
     const float infer_state[STATE_DIM] = { 0.95f, 0.12f, 0.35f, 0.0f, 0.05f, 0.20f, 0.0f, 0.0f };
+    Pose2D start_pose = { 0.0f, 0.0f };
+    Pose2D target_pose = { 15.0f, 15.0f };
     DemoContext ctx;
     int rc = 0;
     (void)argc;
@@ -474,13 +603,24 @@ int main(int argc, char** argv) {
     printf("reloaded weight count=%zu\n", loaded_count);
 
     rc = run_inference(&ctx, loaded_weights, "move left fast", infer_state);
-    free(loaded_weights);
-    loaded_weights = NULL;
     if (rc != 0) {
         fprintf(stderr, "run_inference failed: %d\n", rc);
+        free(loaded_weights);
+        loaded_weights = NULL;
         cleanup_context(&ctx);
         return 9;
     }
+
+    rc = run_external_goal_loop(&ctx, loaded_weights, &target_pose, &start_pose, 300U);
+    if (rc != 0) {
+        fprintf(stderr, "run_external_goal_loop failed: %d\n", rc);
+        free(loaded_weights);
+        loaded_weights = NULL;
+        cleanup_context(&ctx);
+        return 10;
+    }
+    free(loaded_weights);
+    loaded_weights = NULL;
 
     cleanup_context(&ctx);
     printf("full c99 demo completed\n");

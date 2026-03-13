@@ -38,4 +38,11 @@ TestCaseGroup testcases_get_error_boundary_group(void);
  */
 TestCaseGroup testcases_get_stress_integration_group(void);
 
+/**
+ * @brief 获取模型专项测试分组（泛化/OOD/对抗扰动/稳定性/一致性）。
+ *
+ * @return TestCaseGroup 分组对象
+ */
+TestCaseGroup testcases_get_model_special_group(void);
+
 #endif /* TEST_CASES_H */

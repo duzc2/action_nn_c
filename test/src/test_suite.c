@@ -43,10 +43,11 @@ static size_t append_case_group(TestCase* dst,
  * @return int 进程返回码
  */
 int main(void) {
-    TestCase all_cases[64];
+    TestCase all_cases[96];
     size_t count = 0U;
-    count = append_case_group(all_cases, 64U, count, testcases_get_unit_correctness_group());
-    count = append_case_group(all_cases, 64U, count, testcases_get_error_boundary_group());
-    count = append_case_group(all_cases, 64U, count, testcases_get_stress_integration_group());
+    count = append_case_group(all_cases, 96U, count, testcases_get_unit_correctness_group());
+    count = append_case_group(all_cases, 96U, count, testcases_get_error_boundary_group());
+    count = append_case_group(all_cases, 96U, count, testcases_get_stress_integration_group());
+    count = append_case_group(all_cases, 96U, count, testcases_get_model_special_group());
     return testfw_run_all(all_cases, count);
 }
