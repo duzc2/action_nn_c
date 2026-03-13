@@ -7,6 +7,7 @@ project(action_c C)
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
+enable_testing()
 
 # clang/gcc 统一告警配置，帮助在早期发现潜在问题。
 if (CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
@@ -51,3 +52,22 @@ if (UNIX OR MINGW)
     target_link_libraries(dnn_core PUBLIC m)
     target_link_libraries(profiler PRIVATE m)
 endif()
+
+# 全量 C99 测试套件：
+# - 覆盖单元/集成/正确性/错误/临界/压力/常规测试。
+# - 通过自定义测试执行器输出进度条与实时日志。
+add_executable(full_test_suite
+    test/src/test_framework.c
+    test/src/test_suite.c
+)
+target_include_directories(full_test_suite PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/test/include
+)
+target_link_libraries(full_test_suite PRIVATE dnn_core)
+
+if (UNIX OR MINGW)
+    target_link_libraries(full_test_suite PRIVATE m)
+endif()
+
+add_test(NAME full_test_suite COMMAND full_test_suite)
