@@ -73,6 +73,7 @@ add_executable(full_test_suite
     test/src/test_cases_unit_correctness.c
     test/src/test_cases_error_boundary.c
     test/src/test_cases_stress_integration.c
+    test/src/test_cases_model_special.c
     test/src/test_suite.c
 )
 target_include_directories(full_test_suite PRIVATE

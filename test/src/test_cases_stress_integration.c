@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 #include "../../src/include/csv_loader.h"
 #include "../../src/include/model.h"
@@ -15,6 +16,324 @@
 #include "../../src/include/tensor.h"
 #include "../../src/include/tokenizer.h"
 #include "../../src/include/weights_io.h"
+
+enum {
+    TINY_TOKEN_WEIGHT_COUNT = VOCAB_SIZE * OUTPUT_DIM,
+    TINY_STATE_WEIGHT_COUNT = STATE_DIM * OUTPUT_DIM,
+    TINY_BIAS_COUNT = OUTPUT_DIM,
+    TINY_TOTAL_WEIGHT_COUNT = TINY_TOKEN_WEIGHT_COUNT + TINY_STATE_WEIGHT_COUNT + TINY_BIAS_COUNT
+};
+
+typedef struct TinySample {
+    int ids[8];
+    size_t token_count;
+    float state[STATE_DIM];
+    float target[OUTPUT_DIM];
+} TinySample;
+
+static unsigned int tiny_lcg_next(unsigned int* seed) {
+    *seed = (*seed * 1664525U) + 1013904223U;
+    return *seed;
+}
+
+static float tiny_rand_range(unsigned int* seed, float lo, float hi) {
+    unsigned int v = tiny_lcg_next(seed);
+    float t = (float)(v & 0x00FFFFFFU) / (float)0x01000000U;
+    return lo + (hi - lo) * t;
+}
+
+static float tiny_clamp(float v, float lo, float hi) {
+    if (v < lo) {
+        return lo;
+    }
+    if (v > hi) {
+        return hi;
+    }
+    return v;
+}
+
+static int tiny_init_vocab_tokenizer(Vocabulary* vocab, Tokenizer* tokenizer) {
+    static const char* tokens[] = {"<unk>", "move", "left", "right", "stop", "fast", "slow"};
+    size_t i = 0U;
+    int rc = 0;
+    if (vocab == NULL || tokenizer == NULL) {
+        return TOKENIZER_STATUS_INVALID_ARGUMENT;
+    }
+    rc = vocab_init(vocab, VOCAB_SIZE);
+    if (rc != TOKENIZER_STATUS_OK) {
+        return rc;
+    }
+    for (i = 0U; i < sizeof(tokens) / sizeof(tokens[0]); ++i) {
+        rc = vocab_add_token(vocab, tokens[i], NULL);
+        if (rc != TOKENIZER_STATUS_OK) {
+            vocab_free(vocab);
+            return rc;
+        }
+    }
+    rc = tokenizer_init(tokenizer, vocab, 0);
+    if (rc != TOKENIZER_STATUS_OK) {
+        vocab_free(vocab);
+        return rc;
+    }
+    return TOKENIZER_STATUS_OK;
+}
+
+static void tiny_init_weights(float* weights, size_t count) {
+    size_t i = 0U;
+    for (i = 0U; i < count; ++i) {
+        weights[i] = ((float)((int)(i % 19U) - 9)) * 0.001f;
+    }
+}
+
+static void tiny_predict_logits(const float* weights,
+                                const int* token_ids,
+                                size_t token_count,
+                                const float* state,
+                                float* out_logits) {
+    const size_t token_base = 0U;
+    const size_t state_base = TINY_TOKEN_WEIGHT_COUNT;
+    const size_t bias_base = TINY_TOKEN_WEIGHT_COUNT + TINY_STATE_WEIGHT_COUNT;
+    size_t i = 0U;
+    size_t j = 0U;
+    for (j = 0U; j < OUTPUT_DIM; ++j) {
+        out_logits[j] = weights[bias_base + j];
+    }
+    for (i = 0U; i < token_count; ++i) {
+        size_t id = (token_ids[i] >= 0) ? (size_t)token_ids[i] : 0U;
+        if (id >= VOCAB_SIZE) {
+            id = 0U;
+        }
+        for (j = 0U; j < OUTPUT_DIM; ++j) {
+            out_logits[j] += weights[token_base + id * OUTPUT_DIM + j] / (float)token_count;
+        }
+    }
+    for (i = 0U; i < STATE_DIM; ++i) {
+        for (j = 0U; j < OUTPUT_DIM; ++j) {
+            out_logits[j] += state[i] * weights[state_base + i * OUTPUT_DIM + j];
+        }
+    }
+}
+
+static int tiny_activate(const float* logits, float* out_act) {
+    const int activations[OUTPUT_DIM] = IO_MAPPING_ACTIVATIONS;
+    Tensor in;
+    Tensor out;
+    size_t shape[1] = {OUTPUT_DIM};
+    if (tensor_init_view(&in, (float*)logits, 1U, shape) != TENSOR_STATUS_OK) {
+        return -1;
+    }
+    if (tensor_init_view(&out, out_act, 1U, shape) != TENSOR_STATUS_OK) {
+        return -2;
+    }
+    if (op_actuator(&in, activations, &out) != TENSOR_STATUS_OK) {
+        return -3;
+    }
+    return 0;
+}
+
+static int tiny_train_one(float* weights, const TinySample* sample, float lr, float* out_loss) {
+    const size_t token_base = 0U;
+    const size_t state_base = TINY_TOKEN_WEIGHT_COUNT;
+    const size_t bias_base = TINY_TOKEN_WEIGHT_COUNT + TINY_STATE_WEIGHT_COUNT;
+    float logits[OUTPUT_DIM] = {0};
+    float pred[OUTPUT_DIM] = {0};
+    float grad[OUTPUT_DIM] = {0};
+    size_t i = 0U;
+    size_t j = 0U;
+    if (sample == NULL || sample->token_count == 0U) {
+        return -1;
+    }
+    tiny_predict_logits(weights, sample->ids, sample->token_count, sample->state, logits);
+    if (tiny_activate(logits, pred) != 0) {
+        return -2;
+    }
+    *out_loss = 0.0f;
+    for (j = 0U; j < OUTPUT_DIM; ++j) {
+        float err = pred[j] - sample->target[j];
+        grad[j] = err;
+        *out_loss += err * err;
+    }
+    *out_loss /= (float)OUTPUT_DIM;
+    for (i = 0U; i < sample->token_count; ++i) {
+        size_t id = (sample->ids[i] >= 0) ? (size_t)sample->ids[i] : 0U;
+        if (id >= VOCAB_SIZE) {
+            id = 0U;
+        }
+        for (j = 0U; j < OUTPUT_DIM; ++j) {
+            weights[token_base + id * OUTPUT_DIM + j] -= (lr * grad[j]) / (float)sample->token_count;
+        }
+    }
+    for (i = 0U; i < STATE_DIM; ++i) {
+        for (j = 0U; j < OUTPUT_DIM; ++j) {
+            weights[state_base + i * OUTPUT_DIM + j] -= lr * grad[j] * sample->state[i];
+        }
+    }
+    for (j = 0U; j < OUTPUT_DIM; ++j) {
+        weights[bias_base + j] -= lr * grad[j];
+    }
+    return 0;
+}
+
+static int tiny_make_sample(Tokenizer* tokenizer,
+                            unsigned int* seed,
+                            TinySample* out_sample,
+                            float x_min,
+                            float x_max,
+                            float y_min,
+                            float y_max) {
+    float x = tiny_rand_range(seed, x_min, x_max);
+    float y = tiny_rand_range(seed, y_min, y_max);
+    float tx = tiny_rand_range(seed, x_min, x_max);
+    float ty = tiny_rand_range(seed, y_min, y_max);
+    float dx = tx - x;
+    float dy = ty - y;
+    const char* cmd = NULL;
+    int rc = 0;
+    if (fabsf(dx) < 0.2f && fabsf(dy) < 0.2f) {
+        cmd = "move stop";
+    } else if (dx > 0.0f) {
+        cmd = (fabsf(dx) > 3.0f) ? "move right fast" : "move right slow";
+    } else {
+        cmd = (fabsf(dx) > 3.0f) ? "move left fast" : "move left slow";
+    }
+    memset(out_sample, 0, sizeof(*out_sample));
+    out_sample->state[0] = x / 20.0f;
+    out_sample->state[1] = y / 20.0f;
+    out_sample->state[2] = dx / 20.0f;
+    out_sample->state[3] = dy / 20.0f;
+    out_sample->state[4] = tiny_clamp((fabsf(dx) + fabsf(dy)) / 40.0f, 0.0f, 1.0f);
+    out_sample->state[5] = tiny_clamp(fabsf(dx) / 20.0f, 0.0f, 1.0f);
+    out_sample->state[6] = tiny_clamp(fabsf(dy) / 20.0f, 0.0f, 1.0f);
+    out_sample->state[7] = 1.0f;
+    rc = tokenizer_encode(tokenizer, cmd, out_sample->ids, 8U, &out_sample->token_count);
+    if (rc != TOKENIZER_STATUS_OK || out_sample->token_count == 0U) {
+        return -1;
+    }
+    out_sample->target[0] = (dx < -0.2f) ? 1.0f : 0.0f;
+    out_sample->target[1] = (dx > 0.2f) ? 1.0f : 0.0f;
+    out_sample->target[2] = tiny_clamp(dx / 6.0f, -1.0f, 1.0f);
+    out_sample->target[3] = tiny_clamp(dy / 6.0f, -1.0f, 1.0f);
+    return 0;
+}
+
+static int test_integration_generalization_unseen_values(void) {
+    Vocabulary vocab;
+    Tokenizer tokenizer;
+    TinySample train_set[320];
+    TinySample eval_set[220];
+    float weights[TINY_TOTAL_WEIGHT_COUNT];
+    unsigned int seed = 123456789U;
+    size_t i = 0U;
+    size_t epoch = 0U;
+    float init_loss = 0.0f;
+    float final_loss = 0.0f;
+    float mae_x = 0.0f;
+    float mae_y = 0.0f;
+    size_t dir_total = 0U;
+    size_t dir_hit = 0U;
+    memset(&vocab, 0, sizeof(vocab));
+    TFW_ASSERT_INT_EQ(TOKENIZER_STATUS_OK, tiny_init_vocab_tokenizer(&vocab, &tokenizer));
+    tiny_init_weights(weights, TINY_TOTAL_WEIGHT_COUNT);
+    for (i = 0U; i < 320U; ++i) {
+        TFW_ASSERT_INT_EQ(0, tiny_make_sample(&tokenizer, &seed, &train_set[i], -10.0f, 10.0f, -10.0f, 10.0f));
+    }
+    for (i = 0U; i < 220U; ++i) {
+        TFW_ASSERT_INT_EQ(0, tiny_make_sample(&tokenizer, &seed, &eval_set[i], -15.0f, 15.0f, -15.0f, 15.0f));
+    }
+    for (i = 0U; i < 320U; ++i) {
+        float l = 0.0f;
+        TFW_ASSERT_INT_EQ(0, tiny_train_one(weights, &train_set[i], 0.0f, &l));
+        init_loss += l;
+    }
+    init_loss /= 320.0f;
+    for (epoch = 0U; epoch < 25U; ++epoch) {
+        for (i = 0U; i < 320U; ++i) {
+            float l = 0.0f;
+            TFW_ASSERT_INT_EQ(0, tiny_train_one(weights, &train_set[i], 0.05f, &l));
+            final_loss += l;
+        }
+    }
+    final_loss /= (320.0f * 25.0f);
+    for (i = 0U; i < 220U; ++i) {
+        float logits[OUTPUT_DIM] = {0};
+        float act[OUTPUT_DIM] = {0};
+        float pred_dir = 0.0f;
+        float gt_dir = eval_set[i].target[2];
+        tiny_predict_logits(weights, eval_set[i].ids, eval_set[i].token_count, eval_set[i].state, logits);
+        TFW_ASSERT_INT_EQ(0, tiny_activate(logits, act));
+        mae_x += fabsf(act[2] - eval_set[i].target[2]);
+        mae_y += fabsf(act[3] - eval_set[i].target[3]);
+        if (fabsf(gt_dir) > 0.12f) {
+            dir_total += 1U;
+            pred_dir = (act[2] > 0.05f) ? 1.0f : ((act[2] < -0.05f) ? -1.0f : 0.0f);
+            if ((gt_dir > 0.0f && pred_dir > 0.0f) || (gt_dir < 0.0f && pred_dir < 0.0f)) {
+                dir_hit += 1U;
+            }
+        }
+        TFW_ASSERT_TRUE(fabsf(act[2]) <= 1.01f);
+        TFW_ASSERT_TRUE(fabsf(act[3]) <= 1.01f);
+    }
+    mae_x /= 220.0f;
+    mae_y /= 220.0f;
+    testfw_log_info("generalization metrics: init_loss=%.4f final_loss=%.4f mae_x=%.4f mae_y=%.4f dir=%zu/%zu",
+                    (double)init_loss,
+                    (double)final_loss,
+                    (double)mae_x,
+                    (double)mae_y,
+                    dir_hit,
+                    dir_total);
+    TFW_ASSERT_TRUE(final_loss < init_loss * 0.45f);
+    TFW_ASSERT_TRUE(mae_x < 0.32f);
+    TFW_ASSERT_TRUE(mae_y < 0.34f);
+    TFW_ASSERT_TRUE(dir_total > 100U);
+    TFW_ASSERT_TRUE((double)dir_hit / (double)dir_total > 0.86);
+    vocab_free(&vocab);
+    return 0;
+}
+
+static int test_stress_noise_robustness_grid(void) {
+    Vocabulary vocab;
+    Tokenizer tokenizer;
+    float weights[TINY_TOTAL_WEIGHT_COUNT];
+    unsigned int seed = 987654321U;
+    size_t i = 0U;
+    size_t k = 0U;
+    memset(&vocab, 0, sizeof(vocab));
+    TFW_ASSERT_INT_EQ(TOKENIZER_STATUS_OK, tiny_init_vocab_tokenizer(&vocab, &tokenizer));
+    tiny_init_weights(weights, TINY_TOTAL_WEIGHT_COUNT);
+    for (i = 0U; i < 280U; ++i) {
+        TinySample s;
+        float l = 0.0f;
+        TFW_ASSERT_INT_EQ(0, tiny_make_sample(&tokenizer, &seed, &s, -12.0f, 12.0f, -12.0f, 12.0f));
+        TFW_ASSERT_INT_EQ(0, tiny_train_one(weights, &s, 0.06f, &l));
+    }
+    for (k = 0U; k < 1200U; ++k) {
+        TinySample base;
+        TinySample noise;
+        float logits_a[OUTPUT_DIM] = {0};
+        float logits_b[OUTPUT_DIM] = {0};
+        float act_a[OUTPUT_DIM] = {0};
+        float act_b[OUTPUT_DIM] = {0};
+        size_t d = 0U;
+        TFW_ASSERT_INT_EQ(0, tiny_make_sample(&tokenizer, &seed, &base, -15.0f, 15.0f, -15.0f, 15.0f));
+        noise = base;
+        for (d = 0U; d < STATE_DIM; ++d) {
+            float eps = tiny_rand_range(&seed, -0.025f, 0.025f);
+            noise.state[d] = tiny_clamp(noise.state[d] + eps, -1.5f, 1.5f);
+        }
+        tiny_predict_logits(weights, base.ids, base.token_count, base.state, logits_a);
+        tiny_predict_logits(weights, noise.ids, noise.token_count, noise.state, logits_b);
+        TFW_ASSERT_INT_EQ(0, tiny_activate(logits_a, act_a));
+        TFW_ASSERT_INT_EQ(0, tiny_activate(logits_b, act_b));
+        TFW_ASSERT_TRUE(fabsf(act_a[2] - act_b[2]) < 0.35f);
+        TFW_ASSERT_TRUE(fabsf(act_a[3] - act_b[3]) < 0.35f);
+        TFW_ASSERT_TRUE(fabsf(act_b[2]) <= 1.01f);
+        TFW_ASSERT_TRUE(fabsf(act_b[3]) <= 1.01f);
+    }
+    testfw_log_info("noise robustness: validated 1200 perturbed samples");
+    vocab_free(&vocab);
+    return 0;
+}
 
 /**
  * @brief 创建可重复使用的临时文件路径。
@@ -314,11 +633,13 @@ TestCaseGroup testcases_get_stress_integration_group(void) {
         {"protocol_roundtrip_stress", "压力", "验证协议高频循环稳定性与边界安全", "10000次编码解码循环", "0(PASS)", test_stress_protocol_roundtrip},
         {"matmul_repeat_stress", "压力", "验证矩阵乘法重复计算稳定性", "2x2循环5000次", "0(PASS)", test_stress_matmul_repeat},
         {"tokenizer_long_text_stress", "压力", "验证Tokenizer在长文本输入下稳定性", "400 token长文本", "0(PASS)", test_stress_tokenizer_long_text},
+        {"noise_robustness_grid", "压力", "验证状态微扰下动作输出平滑且有界", "1200组扰动样本", "0(PASS)", test_stress_noise_robustness_grid},
         {"tokenizer_protocol_pipeline", "集成", "验证词表、tokenizer与协议端到端打通", "go left样本", "0(PASS)", test_integration_tokenizer_protocol_pipeline},
         {"weights_io_roundtrip", "集成", "验证权重二进制读写与C源码导出", "4个浮点权重样本", "0(PASS)", test_integration_weights_io_roundtrip},
         {"csv_and_model_flow", "集成", "验证CSV加载与模型前向主路径", "2行CSV+2 token输入", "0(PASS)", test_integration_csv_and_model_flow},
         {"vocab_binary_roundtrip", "集成", "验证词表二进制保存加载与编码一致性", "open door样本", "0(PASS)", test_integration_vocab_binary_roundtrip},
-        {"unknown_token_pipeline", "集成", "验证未知词在协议链路中映射到<unk>", "go mystery样本", "0(PASS)", test_integration_unknown_token_pipeline}
+        {"unknown_token_pipeline", "集成", "验证未知词在协议链路中映射到<unk>", "go mystery样本", "0(PASS)", test_integration_unknown_token_pipeline},
+        {"generalization_unseen_values", "集成", "验证训练后对未见值输入仍输出合理动作", "训练320样本+评估220样本", "0(PASS)", test_integration_generalization_unseen_values}
     };
     TestCaseGroup group;
     group.cases = cases;
