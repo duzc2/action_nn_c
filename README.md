@@ -1,103 +1,50 @@
 # action_c
 
-一个纯 C99 的轻量级“文本指令 + 状态输入 → 动作输出”项目，包含：
-- 训练数据准备
-- 最小训练闭环
-- 权重导出/加载（bin 与 C 源码）
-- 外部循环驱动的逐帧推理控制
-- 大规模自动化测试套件（含模型专项测试）
+## 项目做什么
 
-## 项目目标
+`action_c` 是一个 C99 控制决策样例工程。  
+它把“命令文本 + 当前状态”转换成“当前帧动作”。
 
-本项目用于验证一条可落地的嵌入式友好链路：
-1. 用 CSV 准备训练数据
-2. 在 C99 环境训练简化模型
-3. 导出可部署权重
-4. 在外部主循环中逐帧调用模型推理并执行小动作
+它适合以下问题：
+- 文本指令驱动控制（例如 move left / move right fast）
+- 小型实时控制决策（每帧调用一次模型）
+- 需要 C99 落地和可移植代码的项目
 
-它不是通用深度学习框架，而是面向“可解释、可移植、可测试”的工程样例。
+它不适合以下问题：
+- 大规模深度学习训练平台
+- GPU/分布式训练
+- 复杂强化学习训练系统
 
-## 主要能力
+## 应用示例
 
-- **纯 C99 实现**：不依赖第三方推理框架
-- **模型全链路**：数据、训练、导出、加载、推理全部在仓库内闭环
-- **外部循环控制**：模型只做单帧决策，循环由外部驱动
-- **多平台封装**：包含 PC/ESP32 驱动封装入口
-- **测试体系完整**：单元/集成/错误/边界/压力/模型专项（泛化、OOD、对抗、极限、预期错误）
-- **实时日志**：测试进度、目的、参数、期望值、实际值全部落盘
+- 机器人导航原型：命令 + 位姿误差 -> 本帧移动动作
+- 游戏控制原型：命令 + 环境状态 -> 键鼠动作向量
+- 工业控制原型：操作指令 + 传感器摘要 -> 执行器输出
 
-## 目录结构
+## 系统如何运行
 
-```text
-src/
-  core/        核心算子与兼容入口
-  tokenizer/   tokenizer 主实现与运行时封装
-  platform/    平台驱动主实现与 PC/ESP32 封装
-  model/       模型前向实现
-  train/       CSV 训练数据加载
-  tools/       profiler / min_train_loop / c99_full_demo
-test/
-  src/         全量测试与模型专项测试
-  include/     测试框架头文件
-docs/
-  user_manual.md
-  developer_manual.md
-```
+每一帧固定流程：
+1. `tokenizer_encode`：文本命令转 token ids
+2. 前向计算：token ids + state -> logits
+3. `op_actuator`：logits 按通道激活映射为动作
+4. `driver_stub_apply`：动作发送到平台层
+5. 外部循环决定下一帧是否继续
 
-## 快速开始
+说明：
+- 模型只负责“单帧决策”
+- 外部系统负责“任务生命周期”
 
-### 1) 配置与构建
+## 快速运行
 
 ```powershell
 cmake -S . -B build -G Ninja -DCMAKE_C_COMPILER=clang
-cmake --build build
-```
-
-### 2) 运行完整 Demo（数据 → 训练 → 导出 → 加载 → 推理）
-
-```powershell
+cmake --build build --target c99_full_demo
 .\build\c99_full_demo.exe
 ```
 
-运行后会生成：
-- `demo_train_data.csv`
-- `demo_weights.bin`
-- `demo_weights_export.c`
+## 文档
 
-### 3) 运行全量测试套件
-
-```powershell
-.\build\full_test_suite.exe
-```
-
-测试日志输出到：
-- `test/logs/test_run_YYYYMMDD_HHMMSS.log`
-
-## 从“能跑”到“会用”
-
-如果你要按工程流程落地，请先看应用手册：
-- [`docs/application_manual.md`](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/docs/application_manual.md)
-
-它覆盖完整使用流程：
-- 怎么设计模型与 I/O
-- 怎么配置参数
-- 怎么用 profiler 预估资源
-- 怎么准备数据与训练
-- 怎么导出和部署
-- 怎么做单步推理
-- 怎么做“一条命令多步推理”的外部循环控制
-
-## 可执行目标
-
-- `profiler`：根据配置生成 `src/include/network_def.h`
-- `min_train_loop`：最小训练闭环验证
-- `c99_full_demo`：端到端完整演示
-- `full_test_suite`：全量测试（含模型专项）
-
-## 文档导航
-
-- 用户手册：[`docs/user_manual.md`](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/docs/user_manual.md)
-- 开发手册：[`docs/developer_manual.md`](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/docs/developer_manual.md)
-- 应用手册：[`docs/application_manual.md`](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/docs/application_manual.md)
-- 实战手册：[`docs/usage_playbook.md`](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/docs/usage_playbook.md)
-- Demo 说明：[`demo_full_flow.md`](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/demo_full_flow.md)
+本项目只保留三份主文档：
+- 项目总览：README（本文件）
+- 完整用户手册：[user_manual.md](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/docs/user_manual.md)
+- 开发维护手册：[developer_manual.md](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/docs/developer_manual.md)
