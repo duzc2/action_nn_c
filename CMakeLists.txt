@@ -26,6 +26,9 @@ add_library(dnn_core STATIC
     src/core/weights_io.c
     src/core/protocol.c
     src/core/platform_driver.c
+    src/tokenizer/tokenizer_runtime.c
+    src/platform/pc/driver_pc.c
+    src/platform/esp32/driver_esp32.c
     src/model/transformer.c
     src/train/csv_loader.c
 )
@@ -48,9 +51,18 @@ target_include_directories(min_train_loop PRIVATE
 )
 target_link_libraries(min_train_loop PRIVATE dnn_core)
 
+add_executable(c99_full_demo
+    src/tools/c99_full_demo.c
+)
+target_include_directories(c99_full_demo PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/include
+)
+target_link_libraries(c99_full_demo PRIVATE dnn_core)
+
 if (UNIX OR MINGW)
     target_link_libraries(dnn_core PUBLIC m)
     target_link_libraries(profiler PRIVATE m)
+    target_link_libraries(c99_full_demo PRIVATE m)
 endif()
 
 # 全量 C99 测试套件：
@@ -58,6 +70,9 @@ endif()
 # - 通过自定义测试执行器输出进度条与实时日志。
 add_executable(full_test_suite
     test/src/test_framework.c
+    test/src/test_cases_unit_correctness.c
+    test/src/test_cases_error_boundary.c
+    test/src/test_cases_stress_integration.c
     test/src/test_suite.c
 )
 target_include_directories(full_test_suite PRIVATE
