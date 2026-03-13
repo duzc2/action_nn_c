@@ -1,67 +1,152 @@
 # 开发手册
 
-## 1. 开发目标
+## 1. 目标
 
-本仓库面向“可解释、可移植、可验证”的 C99 模型工程实践。  
-核心原则：
-- 不依赖外部深度学习运行时
-- 训练/推理/导出/测试全链路在仓库内闭环
-- 外部循环驱动控制，模型只负责单帧决策
+本文档说明代码结构、扩展方式、测试策略和交付标准。  
+目标读者是维护者和二次开发者。
 
-## 2. 架构总览
+## 2. 系统边界
 
-### 2.1 模块分层
+本仓库提供：
+- C99 推理链路
+- 最小训练闭环
+- 权重导出与回加载
+- 测试框架和模型专项测试
 
-- `src/include/`：公共头文件与接口声明
+本仓库不提供：
+- 通用训练框架
+- 自动微分
+- GPU 运行时
+
+## 3. 架构与职责
+
+### 3.1 模块目录
+
+- `src/include/`：稳定接口和配置
 - `src/core/`：核心算子与兼容入口
-- `src/tokenizer/`：分词、词表、运行时封装
-- `src/platform/`：平台驱动核心 + PC/ESP32 封装
-- `src/model/`：模型计算逻辑
-- `src/train/`：CSV 读取与训练输入构造
-- `src/tools/`：工具与 Demo 程序
-- `test/`：测试框架与分组测试
+- `src/tokenizer/`：词表与文本编码实现
+- `src/platform/`：驱动桩与平台封装
+- `src/model/`：模型层实现
+- `src/train/`：CSV 数据加载
+- `src/tools/`：工具程序与端到端示例
+- `test/`：测试框架和测试用例
 
-### 2.2 数据流
+### 3.2 核心数据对象
 
-1. 文本命令经过 tokenizer 编码为 token ids  
-2. 状态向量与 token 特征进入模型前向  
-3. 经过输出映射得到执行器动作  
-4. 外部控制器执行单帧动作并决定下一帧
+- `Tensor`：只保存视图，不持有生命周期  
+  [tensor.h](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/include/tensor.h#L21-L34)
+- `Vocabulary` / `Tokenizer`：文本到 token id 映射  
+  [tokenizer.h](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/include/tokenizer.h#L26-L43)
+- `ProtocolFrame`：RAW/TOK 统一帧  
+  [protocol.h](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/include/protocol.h#L31-L36)
+- `DriverStub`：平台动作输出抽象  
+  [platform_driver.h](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/include/platform_driver.h#L24-L29)
 
-## 3. 构建与运行
+### 3.3 执行链路
 
-### 3.1 配置
+固定链路：
+1. `tokenizer_encode`
+2. 模型前向
+3. `op_actuator`
+4. `driver_stub_apply`
+
+链路约束：
+- 控制循环由外部维护
+- 模型只做单帧决策
+
+## 4. 配置管理
+
+配置入口：  
+[config_user.h](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/include/config_user.h)
+
+配置分三类：
+- 结构参数：`EMBED_DIM / NUM_LAYERS / NUM_HEADS / FFN_DIM`
+- I/O 参数：`VOCAB_SIZE / STATE_DIM / OUTPUT_DIM / MAX_SEQ_LEN`
+- 输出映射：`IO_MAPPING_ACTIVATIONS / IO_MAPPING_NAMES`
+
+变更规则：
+- 先改配置，再跑 profiler，再跑全量测试
+- 训练后不要变更输出通道语义
+
+## 5. 工具链
+
+### 5.1 profiler
+
+用途：
+- 估算参数量、激活内存、FLOPs
+- 输出 `network_def.h`
+
+实现：  
+[profiler.c](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/tools/profiler.c)
+
+### 5.2 min_train_loop
+
+用途：
+- 验证最小训练闭环
+- 验证协议 RAW/TOK 两种输入
+
+实现：  
+[min_train_loop.c](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/tools/min_train_loop.c)
+
+### 5.3 c99_full_demo
+
+用途：
+- 端到端链路验证
+- 外部循环多步推理示例
+
+实现：  
+[c99_full_demo.c](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/tools/c99_full_demo.c)
+
+## 6. 开发流程
+
+标准顺序：
+1. 定义需求和 I/O
+2. 修改配置
+3. 跑 profiler
+4. 开发实现
+5. 增加测试
+6. 跑全量测试
+7. 更新文档
+
+构建命令：
 
 ```powershell
 cmake -S . -B build -G Ninja -DCMAKE_C_COMPILER=clang
+cmake --build build
 ```
 
-### 3.2 构建目标
+## 7. 扩展指南
 
-```powershell
-cmake --build build --target profiler
-cmake --build build --target min_train_loop
-cmake --build build --target c99_full_demo
-cmake --build build --target full_test_suite
-```
+### 7.1 新增模型算子
 
-### 3.3 运行
+步骤：
+1. 在 `src/include` 增加接口
+2. 在 `src/core` 或 `src/model` 实现
+3. 在 `CMakeLists.txt` 接入源码
+4. 增加单元测试和负向测试
 
-```powershell
-.\build\profiler.exe
-.\build\min_train_loop.exe
-.\build\c99_full_demo.exe
-.\build\full_test_suite.exe
-```
+### 7.2 新增协议字段
 
-## 4. 测试体系说明
+步骤：
+1. 修改 `protocol_encode_*`
+2. 修改 `protocol_decode_packet`
+3. 增加格式错误测试
+4. 校验旧格式兼容性
 
-### 4.1 测试分组
+### 7.3 新增平台驱动
 
-测试入口位于：
-- `test/src/test_suite.c`
+步骤：
+1. 新建 `src/platform/<target>/`
+2. 实现动作下发封装
+3. 复用或替换 `DriverStub`
+4. 增加平台回归测试
 
-当前分组包括：
+## 8. 测试体系
+
+测试入口：  
+[test_suite.c](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/test/src/test_suite.c)
+
+当前分组：
 - 单元
 - 正确性
 - 错误
@@ -70,52 +155,28 @@ cmake --build build --target full_test_suite
 - 集成
 - 模型专项
 
-### 4.2 模型专项目标
+模型专项覆盖：
+- 泛化
+- OOD
+- 对抗扰动
+- 长时序极限
+- 预期错误路径
 
-模型专项测试不只验证“必然正确样例”，还覆盖：
-- 泛化（插值、跨区间）
-- OOD（远分布输入）
-- 对抗扰动（状态/Token）
-- 极限闭环（长时序、多目标切换、延迟噪声、故障恢复）
-- 预期错误路径（空命令、超长 token、损坏协议包）
+模型专项文件：  
+[test_cases_model_special.c](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/test/src/test_cases_model_special.c)
 
-### 4.3 日志规范
+## 9. 代码质量要求
 
-日志文件位于 `test/logs/`，每次运行生成一个新文件。  
-日志包含：
-- case_id / 分类 / 名称
-- purpose / params / expected
-- 实际结果与断言统计
-- 分类汇总与总汇总
+- 保持 C99
+- 返回码必须可判定
+- 内存释放路径完整
+- 新增能力必须有测试
+- 禁止提交运行产物
 
-## 5. 如何新增一个模型测试
+## 10. 交付清单
 
-1. 在 `test/src/test_cases_model_special.c` 新增 `static int test_xxx(void)`  
-2. 用 `TFW_ASSERT_*` 添加断言，避免只打印不校验  
-3. 用 `testfw_log_info` 输出关键指标  
-4. 在 `testcases_get_model_special_group()` 注册该用例  
-5. 构建并运行 `full_test_suite`
-
-## 6. 如何新增模型能力
-
-1. 在 `src/model/` 或 `src/core/` 增加实现  
-2. 在 `src/include/` 增加/调整接口声明  
-3. 如需平台接入，更新 `src/platform/` 对应封装  
-4. 在 `CMakeLists.txt` 接入新源文件  
-5. 补充回归测试（至少 1 个正向 + 1 个负向预期）
-
-## 7. 代码约束与建议
-
-- 保持 C99 兼容
-- 优先确定性实现，减少随机依赖
-- 错误码必须可判定，不用隐式失败
-- 新增功能必须同步新增测试
-- 不提交运行产物和临时文件
-
-## 8. 交付检查清单
-
-- 功能可编译（clang）
+合并前必须完成：
+- clang 构建通过
 - `full_test_suite` 全绿
-- 关键日志可追踪（指标齐全）
-- 文档同步更新（README/用户手册/开发手册）
-
+- 日志可追踪关键指标
+- 文档同步更新
