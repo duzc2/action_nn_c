@@ -1,6 +1,6 @@
-- [ ] 能够选择将权重导出为 `weights.c` 文件
-- [ ] 导出的 `weights.c` 能成功编译并链接到推理引擎
-- [ ] Tokenizer 模块可独立编译
-- [ ] ESP32 接收端能正确处理 Token ID 序列
-- [ ] Profiler 工具准确性验证
-- [ ] PC 端物理模拟闭环验证通过
+- [x] 能够选择将权重导出为 `weights.c` 文件
+- [x] 导出的 `weights.c` 能成功编译并链接到推理引擎
+- [x] Tokenizer 模块可独立编译
+- [x] ESP32 接收端能正确处理 Token ID 序列
+- [x] Profiler 工具准确性验证
+- [x] PC 端物理模拟闭环验证通过
