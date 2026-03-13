@@ -5,6 +5,7 @@
 #include "../include/test_framework.h"
 
 #include <math.h>
+#include <stdlib.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -17,17 +18,69 @@
 #endif
 
 /**
- * @brief 全局统计信息，用于统一打印最终汇总。
+ * @brief 单个类别统计。
+ *
+ * 设计目的：
+ * - 按“单元/正确性/错误/边界/压力/集成”等分类聚合通过率与耗时。
+ * - 避免新增复杂容器，使用固定上限数组保证 C99 可移植性。
+ */
+typedef struct CategorySummary {
+    char category[32];
+    size_t total;
+    size_t passed;
+    size_t failed;
+    double elapsed_ms;
+} CategorySummary;
+
+/**
+ * @brief 测试套件总统计。
+ *
+ * 统计内容：
+ * - 用例通过/失败数
+ * - 断言总数与失败数
+ * - 总耗时
+ * - 分类汇总
  */
 typedef struct TestSummary {
     size_t passed;
     size_t failed;
+    size_t assertions_total;
+    size_t assertions_failed;
+    double elapsed_ms;
+    CategorySummary categories[32];
+    size_t category_count;
 } TestSummary;
 
 static FILE* g_test_log_fp = NULL;
+static size_t g_case_assert_total = 0U;
+static size_t g_case_assert_failed = 0U;
 
+/**
+ * @brief 重置单用例断言计数器。
+ */
+static void testfw_reset_case_assert_stats(void) {
+    g_case_assert_total = 0U;
+    g_case_assert_failed = 0U;
+}
+
+/**
+ * @brief 记录一次断言执行结果。
+ *
+ * @param passed 1=通过，0=失败
+ */
+static void testfw_record_assert(int passed) {
+    g_case_assert_total += 1U;
+    if (!passed) {
+        g_case_assert_failed += 1U;
+    }
+}
+
+/**
+ * @brief 创建日志目录，确保文件日志可用。
+ */
 static void testfw_try_create_log_dir(void) {
 #if defined(_WIN32)
+    (void)_mkdir("test");
     (void)_mkdir("test/logs");
 #else
     (void)mkdir("test", 0755);
@@ -35,6 +88,11 @@ static void testfw_try_create_log_dir(void) {
 #endif
 }
 
+/**
+ * @brief 初始化日志系统，生成本次测试日志文件。
+ *
+ * @return int 0=成功，非0=失败
+ */
 int testfw_init_logging(void) {
     time_t now = 0;
     struct tm* local_tm = NULL;
@@ -58,6 +116,9 @@ int testfw_init_logging(void) {
     return 0;
 }
 
+/**
+ * @brief 关闭日志系统并刷新文件缓冲。
+ */
 void testfw_shutdown_logging(void) {
     if (g_test_log_fp != NULL) {
         fflush(g_test_log_fp);
@@ -137,7 +198,102 @@ static double testfw_elapsed_ms(clock_t begin, clock_t end) {
 }
 
 /**
- * @brief 运行测试集合并输出进度条与实时日志。
+ * @brief 在汇总结构中查找/创建分类统计项。
+ *
+ * @param summary 总统计对象
+ * @param category 分类名
+ * @return CategorySummary* 分类统计指针；失败返回 NULL
+ */
+static CategorySummary* testfw_find_or_create_category(TestSummary* summary, const char* category) {
+    size_t i = 0U;
+    const char* safe_category = (category != NULL) ? category : "未分类";
+    if (summary == NULL) {
+        return NULL;
+    }
+    for (i = 0U; i < summary->category_count; ++i) {
+        if (strcmp(summary->categories[i].category, safe_category) == 0) {
+            return &summary->categories[i];
+        }
+    }
+    if (summary->category_count >= (sizeof(summary->categories) / sizeof(summary->categories[0]))) {
+        return NULL;
+    }
+    {
+        CategorySummary* created = &summary->categories[summary->category_count];
+        memset(created, 0, sizeof(*created));
+        (void)snprintf(created->category, sizeof(created->category), "%s", safe_category);
+        summary->category_count += 1U;
+        return created;
+    }
+}
+
+/**
+ * @brief 打印套件汇总与分类汇总。
+ *
+ * @param summary 总统计对象
+ * @param case_count 用例总数
+ */
+static void testfw_print_summary(const TestSummary* summary, size_t case_count) {
+    size_t i = 0U;
+    double pass_rate = 0.0;
+    double assert_pass_rate = 0.0;
+    if (summary == NULL || case_count == 0U) {
+        return;
+    }
+    pass_rate = ((double)summary->passed * 100.0) / (double)case_count;
+    if (summary->assertions_total > 0U) {
+        assert_pass_rate = ((double)(summary->assertions_total - summary->assertions_failed) * 100.0)
+                           / (double)summary->assertions_total;
+    }
+    printf("\n========================================\n");
+    printf(" 测试完成：通过 %zu，失败 %zu，总计 %zu\n", summary->passed, summary->failed, case_count);
+    printf(" 套件耗时：%.3f ms，用例通过率：%.2f%%\n", summary->elapsed_ms, pass_rate);
+    printf(" 断言统计：总计 %zu，失败 %zu，通过率 %.2f%%\n",
+           summary->assertions_total,
+           summary->assertions_failed,
+           assert_pass_rate);
+    printf("========================================\n");
+    printf(" 分类汇总：\n");
+    for (i = 0U; i < summary->category_count; ++i) {
+        const CategorySummary* c = &summary->categories[i];
+        double cat_rate = (c->total > 0U) ? ((double)c->passed * 100.0) / (double)c->total : 0.0;
+        printf(" - [%s] total=%zu pass=%zu fail=%zu pass_rate=%.2f%% elapsed=%.3fms\n",
+               c->category,
+               c->total,
+               c->passed,
+               c->failed,
+               cat_rate,
+               c->elapsed_ms);
+    }
+    fflush(stdout);
+    if (g_test_log_fp != NULL) {
+        fprintf(g_test_log_fp, "\n========================================\n");
+        fprintf(g_test_log_fp, " 测试完成：通过 %zu，失败 %zu，总计 %zu\n", summary->passed, summary->failed, case_count);
+        fprintf(g_test_log_fp, " 套件耗时：%.3f ms，用例通过率：%.2f%%\n", summary->elapsed_ms, pass_rate);
+        fprintf(g_test_log_fp, " 断言统计：总计 %zu，失败 %zu，通过率 %.2f%%\n",
+                summary->assertions_total,
+                summary->assertions_failed,
+                assert_pass_rate);
+        fprintf(g_test_log_fp, "========================================\n");
+        fprintf(g_test_log_fp, " 分类汇总：\n");
+        for (i = 0U; i < summary->category_count; ++i) {
+            const CategorySummary* c = &summary->categories[i];
+            double cat_rate = (c->total > 0U) ? ((double)c->passed * 100.0) / (double)c->total : 0.0;
+            fprintf(g_test_log_fp,
+                    " - [%s] total=%zu pass=%zu fail=%zu pass_rate=%.2f%% elapsed=%.3fms\n",
+                    c->category,
+                    c->total,
+                    c->passed,
+                    c->failed,
+                    cat_rate,
+                    c->elapsed_ms);
+        }
+        fflush(g_test_log_fp);
+    }
+}
+
+/**
+ * @brief 运行测试集合并输出进度条与结构化实时日志。
  *
  * @param cases      测试数组
  * @param case_count 测试数量
@@ -146,8 +302,10 @@ static double testfw_elapsed_ms(clock_t begin, clock_t end) {
 int testfw_run_all(const TestCase* cases, size_t case_count) {
     size_t i = 0U;
     TestSummary summary;
-    summary.passed = 0U;
-    summary.failed = 0U;
+    clock_t suite_begin = 0;
+    clock_t suite_end = 0;
+    double cumulative_elapsed = 0.0;
+    memset(&summary, 0, sizeof(summary));
 
     if (testfw_init_logging() != 0) {
         printf("无法创建测试日志文件，测试中止。\n");
@@ -161,6 +319,7 @@ int testfw_run_all(const TestCase* cases, size_t case_count) {
         return 1;
     }
 
+    suite_begin = clock();
     printf("========================================\n");
     printf(" C99 全量测试套件开始执行（共 %zu 项）\n", case_count);
     printf("========================================\n");
@@ -178,7 +337,11 @@ int testfw_run_all(const TestCase* cases, size_t case_count) {
         double elapsed = 0.0;
         int rc = 0;
         char bar[34];
+        size_t case_assert_total = 0U;
+        size_t case_assert_failed = 0U;
+        size_t case_assert_passed = 0U;
         int percent = (int)(((i + 1U) * 100U) / case_count);
+        CategorySummary* category_summary = NULL;
 
         printf("\n[执行] (%zu/%zu) [%s] %s\n",
                i + 1U,
@@ -188,44 +351,65 @@ int testfw_run_all(const TestCase* cases, size_t case_count) {
         fflush(stdout);
         testfw_log_case_meta(&cases[i], i + 1U, case_count);
 
+        testfw_reset_case_assert_stats();
         begin = clock();
         rc = cases[i].fn();
         end = clock();
         elapsed = testfw_elapsed_ms(begin, end);
+        cumulative_elapsed += elapsed;
+        case_assert_total = g_case_assert_total;
+        case_assert_failed = g_case_assert_failed;
+        case_assert_passed = case_assert_total - case_assert_failed;
+        summary.assertions_total += case_assert_total;
+        summary.assertions_failed += case_assert_failed;
+        category_summary = testfw_find_or_create_category(&summary, cases[i].category);
+        if (category_summary != NULL) {
+            category_summary->total += 1U;
+            category_summary->elapsed_ms += elapsed;
+        }
 
         testfw_build_progress_bar(i + 1U, case_count, bar, 33U);
         if (rc == 0) {
             summary.passed += 1U;
+            if (category_summary != NULL) {
+                category_summary->passed += 1U;
+            }
             printf("[结果] PASS %s %3d%% 用时 %.3f ms\n", bar, percent, elapsed);
-            testfw_log_case_actual("实际返回值=0(PASS), 期望返回值=0, 用时=%.3fms, 进度=%d%%", elapsed, percent);
+            testfw_log_case_actual("status=PASS rc=0 expected=0 elapsed_ms=%.3f progress=%d%% assert_total=%zu assert_failed=%zu",
+                                   elapsed,
+                                   percent,
+                                   case_assert_total,
+                                   case_assert_failed);
         } else {
             summary.failed += 1U;
+            if (category_summary != NULL) {
+                category_summary->failed += 1U;
+            }
             printf("[结果] FAIL %s %3d%% 用时 %.3f ms\n", bar, percent, elapsed);
-            testfw_log_case_actual("实际返回值=%d(FAIL), 期望返回值=0, 用时=%.3fms, 进度=%d%%", rc, elapsed, percent);
+            testfw_log_case_actual("status=FAIL rc=%d expected=0 elapsed_ms=%.3f progress=%d%% assert_total=%zu assert_failed=%zu",
+                                   rc,
+                                   elapsed,
+                                   percent,
+                                   case_assert_total,
+                                   case_assert_failed);
         }
+        testfw_log_info("case_index=%zu case_name=%s category=%s elapsed_ms=%.3f cumulative_ms=%.3f assert_passed=%zu assert_failed=%zu",
+                        i + 1U,
+                        (cases[i].name != NULL) ? cases[i].name : "unknown",
+                        (cases[i].category != NULL) ? cases[i].category : "未分类",
+                        elapsed,
+                        cumulative_elapsed,
+                        case_assert_passed,
+                        case_assert_failed);
         fflush(stdout);
         if (g_test_log_fp != NULL) {
             fprintf(g_test_log_fp, "[进度] %s %d%%\n", bar, percent);
             fflush(g_test_log_fp);
         }
     }
-
-    printf("\n========================================\n");
-    printf(" 测试完成：通过 %zu，失败 %zu，总计 %zu\n",
-           summary.passed,
-           summary.failed,
-           case_count);
-    printf("========================================\n");
-    fflush(stdout);
-    if (g_test_log_fp != NULL) {
-        fprintf(g_test_log_fp, "========================================\n");
-        fprintf(g_test_log_fp, " 测试完成：通过 %zu，失败 %zu，总计 %zu\n",
-                summary.passed,
-                summary.failed,
-                case_count);
-        fprintf(g_test_log_fp, "========================================\n");
-        fflush(g_test_log_fp);
-    }
+    suite_end = clock();
+    summary.elapsed_ms = testfw_elapsed_ms(suite_begin, suite_end);
+    testfw_print_summary(&summary, case_count);
 
     testfw_shutdown_logging();
 
@@ -236,11 +420,14 @@ void testfw_log_case_meta(const TestCase* tc, size_t index, size_t total) {
     if (tc == NULL) {
         return;
     }
-    testfw_log_info("测试进度: %zu/%zu", index, total);
-    testfw_log_info("测试内容: [%s] %s", tc->category, tc->name);
-    testfw_log_info("测试目的: %s", (tc->purpose != NULL) ? tc->purpose : "未提供");
-    testfw_log_info("测试参数: %s", (tc->params != NULL) ? tc->params : "未提供");
-    testfw_log_info("期望返回值: %s", (tc->expected != NULL) ? tc->expected : "0(PASS)");
+    testfw_log_info("case_id=%zu/%zu category=%s name=%s",
+                    index,
+                    total,
+                    (tc->category != NULL) ? tc->category : "未分类",
+                    (tc->name != NULL) ? tc->name : "unknown");
+    testfw_log_info("purpose=%s", (tc->purpose != NULL) ? tc->purpose : "未提供");
+    testfw_log_info("params=%s", (tc->params != NULL) ? tc->params : "未提供");
+    testfw_log_info("expected=%s", (tc->expected != NULL) ? tc->expected : "0(PASS)");
 }
 
 void testfw_log_case_actual(const char* fmt, ...) {
@@ -288,9 +475,11 @@ void testfw_log_error(const char* fmt, ...) {
  */
 int testfw_assert_int_eq(int expected, int actual, const char* expr, const char* file, int line) {
     if (expected != actual) {
+        testfw_record_assert(0);
         testfw_log_error("断言失败：%s，期望=%d，实际=%d，位置=%s:%d", expr, expected, actual, file, line);
         return 0;
     }
+    testfw_record_assert(1);
     return 1;
 }
 
@@ -306,9 +495,11 @@ int testfw_assert_int_eq(int expected, int actual, const char* expr, const char*
  */
 int testfw_assert_size_eq(size_t expected, size_t actual, const char* expr, const char* file, int line) {
     if (expected != actual) {
+        testfw_record_assert(0);
         testfw_log_error("断言失败：%s，期望=%zu，实际=%zu，位置=%s:%d", expr, expected, actual, file, line);
         return 0;
     }
+    testfw_record_assert(1);
     return 1;
 }
 
@@ -331,6 +522,7 @@ int testfw_assert_float_near(float expected,
                              int line) {
     float diff = fabsf(expected - actual);
     if (diff > eps) {
+        testfw_record_assert(0);
         testfw_log_error("断言失败：%s，期望=%.7f，实际=%.7f，误差=%.7f，阈值=%.7f，位置=%s:%d",
                          expr,
                          (double)expected,
@@ -341,6 +533,7 @@ int testfw_assert_float_near(float expected,
                          line);
         return 0;
     }
+    testfw_record_assert(1);
     return 1;
 }
 
@@ -355,8 +548,10 @@ int testfw_assert_float_near(float expected,
  */
 int testfw_assert_true(int condition, const char* expr, const char* file, int line) {
     if (!condition) {
+        testfw_record_assert(0);
         testfw_log_error("断言失败：%s，位置=%s:%d", expr, file, line);
         return 0;
     }
+    testfw_record_assert(1);
     return 1;
 }
