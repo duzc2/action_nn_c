@@ -25,7 +25,6 @@
 - `src/include/`：稳定接口和配置
 - `src/core/`：核心算子与兼容入口
 - `src/tokenizer/`：词表与文本编码实现
-- `src/platform/`：驱动桩与平台封装
 - `src/model/`：模型层实现
 - `src/train/`：CSV 数据加载
 - `src/tools/`：工具程序与端到端示例
@@ -39,8 +38,8 @@
   [tokenizer.h](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/include/tokenizer.h#L26-L43)
 - `ProtocolFrame`：RAW/TOK 统一帧  
   [protocol.h](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/include/protocol.h#L31-L36)
-- `DriverStub`：平台动作输出抽象  
-  [platform_driver.h](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/include/platform_driver.h#L24-L29)
+- `WorkflowLoopOptions`：推理循环配置与动作回调  
+  [workflow.h](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/include/workflow.h#L26-L34)
 
 ### 3.3 执行链路
 
@@ -48,7 +47,7 @@
 1. `tokenizer_encode`
 2. 模型前向
 3. `op_actuator`
-4. `driver_stub_apply`
+4. `action_callback`
 
 链路约束：
 - 控制循环由外部维护
@@ -133,13 +132,13 @@ cmake --build build
 3. 增加格式错误测试
 4. 校验旧格式兼容性
 
-### 7.3 新增平台驱动
+### 7.3 新增执行层回调
 
 步骤：
-1. 新建 `src/platform/<target>/`
-2. 实现动作下发封装
-3. 复用或替换 `DriverStub`
-4. 增加平台回归测试
+1. 在业务入口实现 `on_action` 回调
+2. 对接目标设备 SDK
+3. 将回调赋值给 `WorkflowLoopOptions.action_callback`
+4. 增加执行层回归测试
 
 ## 8. 测试体系
 

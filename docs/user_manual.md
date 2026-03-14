@@ -62,13 +62,29 @@
 1. 文本编码：`tokenizer_encode`
 2. 前向计算：`token + state -> logits`
 3. 输出映射：`op_actuator`
-4. 动作下发：`driver_stub_apply`
+4. 动作下发：`action_callback`
 5. 外部循环判断是否继续
+
+### 3.1 执行层回调的意义
+
+执行层改为回调接口。  
+模型计算动作后，通过回调交给业务层。
+
+你只需要实现一个函数：
+- `int on_action(const float* action_values, size_t action_count, void* user_data)`
+
+然后把它赋值给工作流配置：
+- `options.action_callback = on_action`
+
+这样做的意义：
+- 算法层和设备层彻底解耦
+- 不需要维护平台目录和平台分支
+- 业务方按自己的设备 SDK 对接
 
 关键接口：
 - [tokenizer.h](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/include/tokenizer.h)
 - [ops.h](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/include/ops.h)
-- [platform_driver.h](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/include/platform_driver.h)
+- [workflow.h](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/include/workflow.h)
 
 ## 4. config_user.h 全项说明
 

@@ -27,7 +27,7 @@
 1. `tokenizer_encode`：文本命令转 token ids
 2. 前向计算：token ids + state -> logits
 3. `op_actuator`：logits 按通道激活映射为动作
-4. `driver_stub_apply`：动作发送到平台层
+4. `action_callback`：动作发送到执行层
 5. 外部循环决定下一帧是否继续
 
 说明：

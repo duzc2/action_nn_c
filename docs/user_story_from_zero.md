@@ -412,8 +412,18 @@ cmake --build build --target my_train_loop
 ```c
 #include <stdio.h>
 #include <string.h>
-#include "../include/platform_driver.h"
 #include "../include/workflow.h"
+
+static int on_action(const float* action_values, size_t action_count, void* user_data) {
+    size_t i = 0U;
+    (void)user_data;
+    printf("[action]");
+    for (i = 0U; i < action_count; ++i) {
+        printf(" ch%zu=%.4f", i, (double)action_values[i]);
+    }
+    printf("\n");
+    return 0;
+}
 
 int main(void) {
     WorkflowLoopOptions options;
@@ -424,7 +434,8 @@ int main(void) {
     options.goal_x = 15.0f;
     options.goal_y = 15.0f;
     options.max_frames = 300U;
-    options.driver_type = DRIVER_TYPE_PC;
+    options.action_callback = on_action;
+    options.action_user_data = NULL;
 
     rc = workflow_run_goal_loop(&options);
     if (rc != WORKFLOW_STATUS_OK) {
@@ -465,6 +476,33 @@ cmake --build build --target my_infer_app
 - 当前状态摘要
 - 当前动作向量
 - 停止条件触发日志
+
+### 11.6 谁在调用执行层，怎么对接
+
+当前调用链：
+1. 你的 `my_infer_app.c` 调 `workflow_run_goal_loop`
+2. `workflow_run_goal_loop` 每帧算出动作
+3. `workflow_run_goal_loop` 调你传入的 `action_callback` 下发动作
+
+对应代码位置：
+- 调用工作流入口：`my_infer_app.c` 示例里的 `workflow_run_goal_loop(&options)`
+- 工作流回调触发点：[workflow.c](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/core/workflow.c#L293-L301)
+- 回调配置定义：[workflow.h](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/include/workflow.h#L26-L34)
+
+当前行为说明：
+- 你传什么回调，就执行什么逻辑
+- 示例回调直接打印动作
+- 不是空调用，是真实被调用
+
+如何切换平台：
+- PC：`on_action` 里调用 PC 设备 SDK
+- ESP32：`on_action` 里调用 ESP32 设备 SDK
+
+如何对接真实执行层：
+1. 在 `my_infer_app.c` 里实现 `on_action`
+2. 在 `on_action` 里调用你的设备 SDK
+3. 保持回调签名不变：`int on_action(const float* action_values, size_t action_count, void* user_data)`
+4. 通过回调选择平台，不改工作流内部代码
 
 ## 12. 第 10 课：测试与验收（逐项执行）
 
