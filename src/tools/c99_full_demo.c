@@ -10,7 +10,6 @@
 #include "../include/config_user.h"
 #include "../include/csv_loader.h"
 #include "../include/ops.h"
-#include "../include/platform_driver.h"
 #include "../include/tensor.h"
 #include "../include/tokenizer.h"
 #include "../include/weights_io.h"
@@ -36,7 +35,6 @@ typedef struct DemoContext {
     Vocabulary vocab;
     Tokenizer tokenizer;
     CsvDataset dataset;
-    DriverStub pc_driver;
 } DemoContext;
 
 typedef struct Pose2D {
@@ -370,9 +368,6 @@ static int run_inference(DemoContext* ctx,
     printf("inference command=\"%s\"\n", command);
     printf("actuator=[%.4f, %.4f, %.4f, %.4f]\n",
            (double)act[0], (double)act[1], (double)act[2], (double)act[3]);
-    if (driver_stub_apply(&ctx->pc_driver, act, OUTPUT_DIM) != DRIVER_STATUS_OK) {
-        return -4;
-    }
     return 0;
 }
 
@@ -507,7 +502,6 @@ static void cleanup_context(DemoContext* ctx) {
         return;
     }
     csv_free_dataset(&ctx->dataset);
-    driver_stub_shutdown(&ctx->pc_driver);
     vocab_free(&ctx->vocab);
 }
 
@@ -557,17 +551,11 @@ int main(int argc, char** argv) {
         return 2;
     }
 
-    if (driver_stub_init(&ctx.pc_driver, DRIVER_TYPE_PC) != DRIVER_STATUS_OK) {
-        fprintf(stderr, "driver_stub_init failed\n");
-        cleanup_context(&ctx);
-        return 3;
-    }
-
     rc = csv_load_dataset(csv_path, &ctx.dataset);
     if (rc != 0 || ctx.dataset.samples == NULL || ctx.dataset.count == 0U) {
         fprintf(stderr, "csv_load_dataset failed: %d\n", rc);
         cleanup_context(&ctx);
-        return 4;
+        return 3;
     }
     printf("loaded dataset count=%zu\n", ctx.dataset.count);
 
@@ -576,20 +564,20 @@ int main(int argc, char** argv) {
     if (rc != 0) {
         fprintf(stderr, "train_dataset failed: %d\n", rc);
         cleanup_context(&ctx);
-        return 5;
+        return 4;
     }
 
     rc = weights_save_binary(weight_bin_path, weights, DEMO_TOTAL_WEIGHT_COUNT);
     if (rc != WEIGHTS_IO_STATUS_OK) {
         fprintf(stderr, "weights_save_binary failed: %d\n", rc);
         cleanup_context(&ctx);
-        return 6;
+        return 5;
     }
     rc = weights_export_c_source(weight_c_path, "g_demo_weights", weights, DEMO_TOTAL_WEIGHT_COUNT);
     if (rc != WEIGHTS_IO_STATUS_OK) {
         fprintf(stderr, "weights_export_c_source failed: %d\n", rc);
         cleanup_context(&ctx);
-        return 7;
+        return 6;
     }
     printf("exported weights: %s , %s\n", weight_bin_path, weight_c_path);
 
@@ -598,7 +586,7 @@ int main(int argc, char** argv) {
         fprintf(stderr, "weights_load_binary failed: rc=%d count=%zu\n", rc, loaded_count);
         free(loaded_weights);
         cleanup_context(&ctx);
-        return 8;
+        return 7;
     }
     printf("reloaded weight count=%zu\n", loaded_count);
 
@@ -608,7 +596,7 @@ int main(int argc, char** argv) {
         free(loaded_weights);
         loaded_weights = NULL;
         cleanup_context(&ctx);
-        return 9;
+        return 8;
     }
 
     rc = run_external_goal_loop(&ctx, loaded_weights, &target_pose, &start_pose, 300U);
@@ -617,7 +605,7 @@ int main(int argc, char** argv) {
         free(loaded_weights);
         loaded_weights = NULL;
         cleanup_context(&ctx);
-        return 10;
+        return 9;
     }
     free(loaded_weights);
     loaded_weights = NULL;

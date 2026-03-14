@@ -211,14 +211,14 @@ int workflow_train_from_csv(const WorkflowTrainOptions* options) {
 int workflow_run_goal_loop(const WorkflowLoopOptions* options) {
     Vocabulary vocab;
     Tokenizer tokenizer;
-    DriverStub driver;
     float* weights = NULL;
     size_t weight_count = 0U;
     float x = 0.0f;
     float y = 0.0f;
     size_t frame = 0U;
     int rc = 0;
-    if (options == NULL || options->vocab_path == NULL || options->weights_bin_path == NULL || options->max_frames == 0U) {
+    if (options == NULL || options->vocab_path == NULL || options->weights_bin_path == NULL || options->max_frames == 0U ||
+        options->action_callback == NULL) {
         return WORKFLOW_STATUS_INVALID_ARGUMENT;
     }
     if (STATE_DIM != 8 || OUTPUT_DIM != 4) {
@@ -226,7 +226,6 @@ int workflow_run_goal_loop(const WorkflowLoopOptions* options) {
     }
     memset(&vocab, 0, sizeof(vocab));
     memset(&tokenizer, 0, sizeof(tokenizer));
-    memset(&driver, 0, sizeof(driver));
     rc = weights_load_binary(options->weights_bin_path, &weights, &weight_count);
     if (rc != WEIGHTS_IO_STATUS_OK || weights == NULL || weight_count != TOTAL_WEIGHT_COUNT) {
         free(weights);
@@ -236,12 +235,6 @@ int workflow_run_goal_loop(const WorkflowLoopOptions* options) {
     if (rc != WORKFLOW_STATUS_OK) {
         free(weights);
         return rc;
-    }
-    rc = driver_stub_init(&driver, options->driver_type);
-    if (rc != DRIVER_STATUS_OK) {
-        vocab_free(&vocab);
-        free(weights);
-        return WORKFLOW_STATUS_INTERNAL_ERROR;
     }
     for (frame = 0U; frame < options->max_frames; ++frame) {
         float dx = options->goal_x - x;
@@ -272,14 +265,12 @@ int workflow_run_goal_loop(const WorkflowLoopOptions* options) {
         state[7] = 1.0f;
         rc = tokenizer_encode(&tokenizer, cmd, ids, MAX_SEQ_LEN, &count);
         if (rc != TOKENIZER_STATUS_OK || count == 0U) {
-            driver_stub_shutdown(&driver);
             vocab_free(&vocab);
             free(weights);
             return WORKFLOW_STATUS_DATA_ERROR;
         }
         predict_logits(weights, ids, count, state, logits);
         if (activate_output(logits, act) != WORKFLOW_STATUS_OK) {
-            driver_stub_shutdown(&driver);
             vocab_free(&vocab);
             free(weights);
             return WORKFLOW_STATUS_INTERNAL_ERROR;
@@ -294,13 +285,17 @@ int workflow_run_goal_loop(const WorkflowLoopOptions* options) {
         }
         x += sx;
         y += sy;
-        (void)driver_stub_apply(&driver, act, OUTPUT_DIM);
+        rc = options->action_callback(act, OUTPUT_DIM, options->action_user_data);
+        if (rc != 0) {
+            vocab_free(&vocab);
+            free(weights);
+            return WORKFLOW_STATUS_INTERNAL_ERROR;
+        }
         printf("frame=%03zu cmd=%s act=(%.3f,%.3f,%.3f,%.3f) pose=(%.3f,%.3f)\n",
                frame + 1U, cmd,
                (double)act[0], (double)act[1], (double)act[2], (double)act[3],
                (double)x, (double)y);
     }
-    driver_stub_shutdown(&driver);
     vocab_free(&vocab);
     free(weights);
     return WORKFLOW_STATUS_OK;

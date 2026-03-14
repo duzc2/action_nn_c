@@ -3,7 +3,6 @@
 
 #include <stddef.h>
 
-#include "platform_driver.h"
 #include "tokenizer.h"
 
 typedef enum WorkflowStatus {
@@ -30,7 +29,8 @@ typedef struct WorkflowLoopOptions {
     float goal_x;
     float goal_y;
     size_t max_frames;
-    DriverType driver_type;
+    int (*action_callback)(const float* action_values, size_t action_count, void* user_data);
+    void* action_user_data;
 } WorkflowLoopOptions;
 
 int workflow_prepare_tokenizer(const char* vocab_path, Vocabulary* vocab, Tokenizer* tokenizer);

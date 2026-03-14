@@ -4,7 +4,6 @@
 
 #include "../include/config_user.h"
 #include "../include/ops.h"
-#include "../include/platform_driver.h"
 #include "../include/protocol.h"
 #include "../include/tensor.h"
 #include "../include/tokenizer.h"
@@ -228,6 +227,18 @@ static int activate_actuators(const float* logits, float* out_act) {
     return (rc == TENSOR_STATUS_OK) ? 0 : -4;
 }
 
+static void apply_action_with_tag(const char* tag, const float* act, size_t count) {
+    size_t i = 0U;
+    if (tag == NULL || act == NULL || count == 0U) {
+        return;
+    }
+    printf("[action][%s]", tag);
+    for (i = 0U; i < count; ++i) {
+        printf(" ch%zu=%.4f", i, (double)act[i]);
+    }
+    printf("\n");
+}
+
 /**
  * @brief 执行一次最小训练步（前向+均方误差+SGD）。
  *
@@ -293,8 +304,6 @@ static void train_one_step(float* weights,
 int main(int argc, char** argv) {
     Vocabulary vocab;
     Tokenizer tokenizer;
-    DriverStub pc_driver;
-    DriverStub esp32_driver;
     TrainSample samples[4];
     size_t sample_count = 0U;
     float weights[VOCAB_SIZE * OUTPUT_DIM];
@@ -309,8 +318,6 @@ int main(int argc, char** argv) {
 
     memset(&vocab, 0, sizeof(vocab));
     memset(&tokenizer, 0, sizeof(tokenizer));
-    memset(&pc_driver, 0, sizeof(pc_driver));
-    memset(&esp32_driver, 0, sizeof(esp32_driver));
     memset(weights, 0, sizeof(weights));
 
     rc = build_demo_vocab(&vocab);
@@ -324,13 +331,6 @@ int main(int argc, char** argv) {
         vocab_free(&vocab);
         return 1;
     }
-    if (driver_stub_init(&pc_driver, DRIVER_TYPE_PC) != DRIVER_STATUS_OK ||
-        driver_stub_init(&esp32_driver, DRIVER_TYPE_ESP32) != DRIVER_STATUS_OK) {
-        fprintf(stderr, "driver init failed\n");
-        vocab_free(&vocab);
-        return 1;
-    }
-
     build_demo_samples(samples, &sample_count);
     printf("start minimal train loop: samples=%zu, epochs=%zu\n", sample_count, epochs);
 
@@ -347,8 +347,6 @@ int main(int argc, char** argv) {
 
             if (resolve_sample_tokens(&samples[i], &tokenizer, ids, 16U, &id_count) != 0) {
                 fprintf(stderr, "resolve_sample_tokens failed at sample=%zu\n", i);
-                driver_stub_shutdown(&pc_driver);
-                driver_stub_shutdown(&esp32_driver);
                 vocab_free(&vocab);
                 return 2;
             }
@@ -363,9 +361,9 @@ int main(int argc, char** argv) {
             epoch_loss += loss;
 
             if ((i % 2U) == 0U) {
-                (void)driver_stub_apply(&pc_driver, act, OUTPUT_DIM);
+                apply_action_with_tag("PC", act, OUTPUT_DIM);
             } else {
-                (void)driver_stub_apply(&esp32_driver, act, OUTPUT_DIM);
+                apply_action_with_tag("ESP32", act, OUTPUT_DIM);
             }
         }
         printf("epoch=%zu avg_loss=%.6f\n", epoch + 1U, (double)(epoch_loss / (float)sample_count));
@@ -374,16 +372,12 @@ int main(int argc, char** argv) {
     rc = weights_save_binary("build/min_weights.bin", weights, VOCAB_SIZE * OUTPUT_DIM);
     if (rc != WEIGHTS_IO_STATUS_OK) {
         fprintf(stderr, "weights_save_binary failed: %d\n", rc);
-        driver_stub_shutdown(&pc_driver);
-        driver_stub_shutdown(&esp32_driver);
         vocab_free(&vocab);
         return 3;
     }
     rc = weights_load_binary("build/min_weights.bin", &loaded_weights, &loaded_count);
     if (rc != WEIGHTS_IO_STATUS_OK || loaded_weights == NULL || loaded_count != (size_t)(VOCAB_SIZE * OUTPUT_DIM)) {
         fprintf(stderr, "weights_load_binary failed: %d count=%zu\n", rc, loaded_count);
-        driver_stub_shutdown(&pc_driver);
-        driver_stub_shutdown(&esp32_driver);
         vocab_free(&vocab);
         return 4;
     }
@@ -392,15 +386,11 @@ int main(int argc, char** argv) {
     loaded_weights = NULL;
     if (rc != WEIGHTS_IO_STATUS_OK) {
         fprintf(stderr, "weights_export_c_source failed: %d\n", rc);
-        driver_stub_shutdown(&pc_driver);
-        driver_stub_shutdown(&esp32_driver);
         vocab_free(&vocab);
         return 5;
     }
     printf("weights exported: build/min_weights.bin and build/weights.c\n");
 
-    driver_stub_shutdown(&pc_driver);
-    driver_stub_shutdown(&esp32_driver);
     vocab_free(&vocab);
     printf("minimal train loop completed\n");
     return 0;
