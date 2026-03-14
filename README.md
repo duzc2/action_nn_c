@@ -48,3 +48,6 @@ cmake --build build --target c99_full_demo
 - 项目总览：README（本文件）
 - 完整用户手册：[user_manual.md](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/docs/user_manual.md)
 - 开发维护手册：[developer_manual.md](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/docs/developer_manual.md)
+
+新增专题文档：
+- 网络结构设计手册：[network_design_manual.md](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/docs/network_design_manual.md)
