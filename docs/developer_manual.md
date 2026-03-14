@@ -38,7 +38,7 @@
   [tokenizer.h](../src/include/tokenizer.h#L26-L43)
 - `ProtocolFrame`：RAW/TOK 统一帧  
   [protocol.h](../src/include/protocol.h#L31-L36)
-- `WorkflowLoopOptions`：推理循环配置与动作回调  
+- `WorkflowRuntime`：推理运行时上下文（词表/权重/状态）  
   [workflow.h](../src/include/workflow.h#L26-L34)
 
 ### 3.3 执行链路
@@ -137,7 +137,7 @@ cmake --build build
 步骤：
 1. 在业务入口实现 `on_action` 回调
 2. 对接目标设备 SDK
-3. 将回调赋值给 `WorkflowLoopOptions.action_callback`
+3. 在外部循环中调用 `workflow_run_step`
 4. 增加执行层回归测试
 
 ## 8. 测试体系
