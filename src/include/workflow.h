@@ -26,11 +26,15 @@ typedef struct WorkflowTrainOptions {
 typedef struct WorkflowLoopOptions {
     const char* vocab_path;
     const char* weights_bin_path;
-    float goal_x;
-    float goal_y;
     size_t max_frames;
+    int (*build_input_callback)(size_t frame,
+                                char* out_command,
+                                size_t command_capacity,
+                                float* out_state,
+                                size_t state_dim,
+                                void* user_data);
     int (*action_callback)(const float* action_values, size_t action_count, void* user_data);
-    void* action_user_data;
+    void* user_data;
 } WorkflowLoopOptions;
 
 int workflow_prepare_tokenizer(const char* vocab_path, Vocabulary* vocab, Tokenizer* tokenizer);

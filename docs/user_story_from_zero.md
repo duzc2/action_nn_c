@@ -409,33 +409,102 @@ cmake --build build --target my_train_loop
 
 ### 11.2 创建代码骨架
 
+这段 `build_input` 是推理输入回调。  
+它不参与训练，不会写入模型参数。  
+训练只读取第 10 课的 `train.csv / eval.csv / badcase.csv`。
+
 ```c
 #include <stdio.h>
+#include <math.h>
 #include <string.h>
 #include "../include/workflow.h"
 
+typedef struct AppContext {
+    float x;
+    float y;
+    float goal_x;
+    float goal_y;
+    size_t max_frames;
+} AppContext;
+
+static int build_input(size_t frame,
+                       char* out_command,
+                       size_t command_capacity,
+                       float* out_state,
+                       size_t state_dim,
+                       void* user_data) {
+    AppContext* ctx = (AppContext*)user_data;
+    float dx = 0.0f;
+    float dy = 0.0f;
+    if (ctx == NULL || out_command == NULL || out_state == NULL) return -1;
+    if (state_dim < 8U || command_capacity < 16U) return -1;
+    if (frame >= ctx->max_frames) return 1;
+
+    dx = ctx->goal_x - ctx->x;
+    dy = ctx->goal_y - ctx->y;
+    if (fabsf(dx) < 0.3f && fabsf(dy) < 0.3f) return 1;
+
+    if (dx > 2.0f) strcpy(out_command, "move right fast");
+    else if (dx > 0.0f) strcpy(out_command, "move right");
+    else if (dx < -2.0f) strcpy(out_command, "move left fast");
+    else if (dx < 0.0f) strcpy(out_command, "move left");
+    else strcpy(out_command, "move stop");
+
+    out_state[0] = ctx->x / 20.0f;
+    out_state[1] = ctx->y / 20.0f;
+    out_state[2] = dx / 20.0f;
+    out_state[3] = dy / 20.0f;
+    out_state[4] = fabsf(dx) / 20.0f;
+    out_state[5] = fabsf(dy) / 20.0f;
+    out_state[6] = (fabsf(dx) + fabsf(dy)) / 40.0f;
+    out_state[7] = 1.0f;
+    return 0;
+}
+
 static int on_action(const float* action_values, size_t action_count, void* user_data) {
+    AppContext* ctx = (AppContext*)user_data;
     size_t i = 0U;
-    (void)user_data;
+    float dx = 0.0f;
+    float dy = 0.0f;
+    float step_x = 0.0f;
+    float step_y = 0.0f;
+    if (ctx == NULL || action_values == NULL || action_count < 4U) return -1;
+
+    dx = ctx->goal_x - ctx->x;
+    dy = ctx->goal_y - ctx->y;
+    step_x = action_values[2] * 0.5f;
+    step_y = ((action_values[3] + 1.0f) * 0.5f) * 0.4f;
+    if (fabsf(step_x) > fabsf(dx)) step_x = dx;
+    if (fabsf(step_y) > fabsf(dy)) step_y = dy;
+    ctx->x += step_x;
+    ctx->y += step_y;
+
     printf("[action]");
     for (i = 0U; i < action_count; ++i) {
         printf(" ch%zu=%.4f", i, (double)action_values[i]);
     }
-    printf("\n");
+    printf(" pose=(%.3f,%.3f)\n", (double)ctx->x, (double)ctx->y);
     return 0;
 }
 
 int main(void) {
     WorkflowLoopOptions options;
+    AppContext ctx;
     int rc = 0;
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.x = 0.0f;
+    ctx.y = 0.0f;
+    ctx.goal_x = 15.0f;
+    ctx.goal_y = 15.0f;
+    ctx.max_frames = 300U;
+
     memset(&options, 0, sizeof(options));
     options.vocab_path = "vocab.txt";
     options.weights_bin_path = "build/my_weights.bin";
-    options.goal_x = 15.0f;
-    options.goal_y = 15.0f;
-    options.max_frames = 300U;
+    options.max_frames = ctx.max_frames;
+    options.build_input_callback = build_input;
     options.action_callback = on_action;
-    options.action_user_data = NULL;
+    options.user_data = &ctx;
 
     rc = workflow_run_goal_loop(&options);
     if (rc != WORKFLOW_STATUS_OK) {
@@ -446,6 +515,9 @@ int main(void) {
     return 0;
 }
 ```
+
+`build_input` 只用于推理阶段动态生成输入。  
+训练阶段仍然使用第 10 课的 `train.csv` 数据。
 
 ### 11.3 接入 CMake
 
@@ -481,7 +553,7 @@ cmake --build build --target my_infer_app
 
 当前调用链：
 1. 你的 `my_infer_app.c` 调 `workflow_run_goal_loop`
-2. `workflow_run_goal_loop` 每帧算出动作
+2. `workflow_run_goal_loop` 调 `build_input_callback` 获取命令和状态
 3. `workflow_run_goal_loop` 调你传入的 `action_callback` 下发动作
 
 对应代码位置：
@@ -494,15 +566,15 @@ cmake --build build --target my_infer_app
 - 示例回调直接打印动作
 - 不是空调用，是真实被调用
 
-如何切换平台：
-- PC：`on_action` 里调用 PC 设备 SDK
-- ESP32：`on_action` 里调用 ESP32 设备 SDK
+如何切换执行端：
+- 回调 A：`on_action` 里调用执行端 A 的 SDK
+- 回调 B：`on_action` 里调用执行端 B 的 SDK
 
 如何对接真实执行层：
-1. 在 `my_infer_app.c` 里实现 `on_action`
-2. 在 `on_action` 里调用你的设备 SDK
-3. 保持回调签名不变：`int on_action(const float* action_values, size_t action_count, void* user_data)`
-4. 通过回调选择平台，不改工作流内部代码
+1. 在 `my_infer_app.c` 里实现 `build_input` 和 `on_action`
+2. 在 `build_input` 中读取你的业务状态并生成命令文本
+3. 在 `on_action` 中调用你的设备 SDK
+4. 保持两个回调签名不变
 
 ## 12. 第 10 课：测试与验收（逐项执行）
 
