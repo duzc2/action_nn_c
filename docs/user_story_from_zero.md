@@ -341,71 +341,26 @@ data/
 
 ```c
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
-/* 读取网络配置常量，如 VOCAB_SIZE / STATE_DIM / OUTPUT_DIM */
-#include "../include/config_user.h"
-/* 读取 CSV 数据集 */
-#include "../include/csv_loader.h"
-/* 文本编码接口 */
-#include "../include/tokenizer.h"
-/* 权重导出接口 */
-#include "../include/weights_io.h"
+#include "../include/workflow.h"
 
 int main(void) {
-    /* 训练入口的核心对象：数据集、词表、编码器 */
-    CsvDataset ds;
-    Vocabulary vocab;
-    Tokenizer tokenizer;
+    WorkflowTrainOptions options;
     int rc = 0;
+    memset(&options, 0, sizeof(options));
+    options.csv_path = "data/train.csv";
+    options.vocab_path = "vocab.txt";
+    options.out_weights_bin = "build/my_weights.bin";
+    options.out_weights_c = "build/my_weights.c";
+    options.out_symbol = "g_my_weights";
+    options.epochs = 20U;
+    options.learning_rate = 0.05f;
 
-    /* 先清零，避免未初始化字段导致随机错误 */
-    memset(&ds, 0, sizeof(ds));
-    memset(&vocab, 0, sizeof(vocab));
-    memset(&tokenizer, 0, sizeof(tokenizer));
-
-    /* 加载训练数据。无数据时立即退出。 */
-    rc = csv_load_dataset("data/train.csv", &ds);
-    if (rc != 0 || ds.count == 0U) {
-        fprintf(stderr, "load train.csv failed rc=%d count=%zu\n", rc, ds.count);
+    rc = workflow_train_from_csv(&options);
+    if (rc != WORKFLOW_STATUS_OK) {
+        fprintf(stderr, "workflow_train_from_csv failed rc=%d\n", rc);
         return 1;
     }
-
-    /* 从 vocab.txt 读取词表。失败时释放已加载的数据。 */
-    rc = vocab_load_text("vocab.txt", &vocab);
-    if (rc != TOKENIZER_STATUS_OK) {
-        fprintf(stderr, "load vocab.txt failed rc=%d\n", rc);
-        csv_free_dataset(&ds);
-        return 1;
-    }
-
-    /* 初始化 tokenizer。失败时释放词表和数据。 */
-    rc = tokenizer_init(&tokenizer, &vocab, 0);
-    if (rc != TOKENIZER_STATUS_OK) {
-        fprintf(stderr, "tokenizer init failed rc=%d\n", rc);
-        vocab_free(&vocab);
-        csv_free_dataset(&ds);
-        return 1;
-    }
-
-    /* 训练循环写在这里：
-       1) tokenizer_encode 把命令转 token ids
-       2) 前向计算得到 logits
-       3) 计算 loss
-       4) 反向更新参数
-    */
-
-    /* 训练完成后导出权重：
-       - my_weights.bin 给运行时加载
-       - my_weights.c 给编译内嵌
-    */
-    /* weights_save_binary("build/my_weights.bin", weights, weight_count); */
-    /* weights_export_c_source("build/my_weights.c", "g_my_weights", weights, weight_count); */
-
-    /* 释放资源 */
-    vocab_free(&vocab);
-    csv_free_dataset(&ds);
+    printf("train done\n");
     return 0;
 }
 ```
@@ -456,62 +411,27 @@ cmake --build build --target my_train_loop
 
 ```c
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
-
-/* 读取维度配置 */
-#include "../include/config_user.h"
-/* 文本编码接口 */
-#include "../include/tokenizer.h"
-/* 激活映射接口 */
-#include "../include/ops.h"
-/* 动作下发接口 */
 #include "../include/platform_driver.h"
-/* 权重加载接口 */
-#include "../include/weights_io.h"
-
-/* 单帧推理函数。外部循环每帧调用一次。 */
-static int run_one_frame(const Tokenizer* tokenizer,
-                         const float* weights,
-                         const char* cmd,
-                         const float* state,
-                         float* out_act) {
-    /* token 缓冲区大小由 MAX_SEQ_LEN 控制 */
-    int ids[MAX_SEQ_LEN];
-    size_t count = 0U;
-    memset(ids, 0, sizeof(ids));
-    /* 固定步骤：
-       1) tokenizer_encode
-       2) 前向计算
-       3) op_actuator
-       4) 写出 out_act
-    */
-    /* 骨架阶段先保留参数，避免编译告警 */
-    (void)tokenizer;
-    (void)weights;
-    (void)cmd;
-    (void)state;
-    (void)out_act;
-    return 0;
-}
+#include "../include/workflow.h"
 
 int main(void) {
-    /* 主流程：
-       1) 加载权重
-       2) 从 vocab.txt 加载词表
-       3) 初始化 tokenizer
-       3) 外部循环逐帧执行
-       4) 调用 driver_stub_apply 下发动作
-       5) 命中停止条件后退出
-    */
-    /* 1) 加载权重
-       2) 初始化 tokenizer
-       3) while 循环:
-            - 生成 state
-            - run_one_frame
-            - driver_stub_apply
-            - 判断停止条件
-    */
+    WorkflowLoopOptions options;
+    int rc = 0;
+    memset(&options, 0, sizeof(options));
+    options.vocab_path = "vocab.txt";
+    options.weights_bin_path = "build/my_weights.bin";
+    options.goal_x = 15.0f;
+    options.goal_y = 15.0f;
+    options.max_frames = 300U;
+    options.driver_type = DRIVER_TYPE_PC;
+
+    rc = workflow_run_goal_loop(&options);
+    if (rc != WORKFLOW_STATUS_OK) {
+        fprintf(stderr, "workflow_run_goal_loop failed rc=%d\n", rc);
+        return 1;
+    }
+    printf("infer done\n");
     return 0;
 }
 ```
