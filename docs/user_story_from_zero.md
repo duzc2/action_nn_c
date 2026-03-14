@@ -318,32 +318,117 @@ data/
 
 数据覆盖常规、边界、错误三类输入。
 
-## 10. 第 8 课：实现训练程序
+## 10. 第 8 课：实现训练程序（可直接执行）
 
 ### 10.1 目标
 
-你需要一个自己的训练入口。  
-文件名建议：`src/tools/my_train_loop.c`。
+你要实现一个可执行训练程序。  
+程序文件名使用 `src/tools/my_train_loop.c`。  
+程序输入是 `train.csv`。  
+程序输出是权重文件。
 
-### 10.2 训练程序固定流程
+### 10.2 先创建文件
 
-1. 初始化词表与 tokenizer  
-2. 读取 CSV  
-3. 前向计算  
-4. 计算 loss  
-5. 更新参数  
-6. 导出权重
+创建文件：
+- `src/tools/my_train_loop.c`
 
-### 10.3 关键接口
+把下面代码骨架复制到文件中，再按你的业务补全。
 
-- [tokenizer.h](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/include/tokenizer.h)
-- [csv_loader.h](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/include/csv_loader.h)
-- [ops.h](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/include/ops.h)
-- [weights_io.h](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/include/weights_io.h)
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
-### 10.4 CMake 接入步骤
+/* 读取网络配置常量，如 VOCAB_SIZE / STATE_DIM / OUTPUT_DIM */
+#include "../include/config_user.h"
+/* 读取 CSV 数据集 */
+#include "../include/csv_loader.h"
+/* 文本编码接口 */
+#include "../include/tokenizer.h"
+/* 权重导出接口 */
+#include "../include/weights_io.h"
 
-在 [CMakeLists.txt](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/CMakeLists.txt) 增加：
+/* 构建最小词表。词表顺序决定 token id，必须稳定。 */
+static int build_vocab(Vocabulary* vocab) {
+    int rc = vocab_init(vocab, VOCAB_SIZE);
+    if (rc != TOKENIZER_STATUS_OK) return rc;
+    rc = vocab_add_token(vocab, "<unk>", NULL);
+    if (rc != TOKENIZER_STATUS_OK) return rc;
+    rc = vocab_add_token(vocab, "move", NULL);
+    if (rc != TOKENIZER_STATUS_OK) return rc;
+    rc = vocab_add_token(vocab, "left", NULL);
+    if (rc != TOKENIZER_STATUS_OK) return rc;
+    rc = vocab_add_token(vocab, "right", NULL);
+    if (rc != TOKENIZER_STATUS_OK) return rc;
+    rc = vocab_add_token(vocab, "stop", NULL);
+    if (rc != TOKENIZER_STATUS_OK) return rc;
+    rc = vocab_add_token(vocab, "fast", NULL);
+    if (rc != TOKENIZER_STATUS_OK) return rc;
+    rc = vocab_add_token(vocab, "slow", NULL);
+    return rc;
+}
+
+int main(void) {
+    /* 训练入口的核心对象：数据集、词表、编码器 */
+    CsvDataset ds;
+    Vocabulary vocab;
+    Tokenizer tokenizer;
+    int rc = 0;
+
+    /* 先清零，避免未初始化字段导致随机错误 */
+    memset(&ds, 0, sizeof(ds));
+    memset(&vocab, 0, sizeof(vocab));
+    memset(&tokenizer, 0, sizeof(tokenizer));
+
+    /* 加载训练数据。无数据时立即退出。 */
+    rc = csv_load_dataset("data/train.csv", &ds);
+    if (rc != 0 || ds.count == 0U) {
+        fprintf(stderr, "load train.csv failed rc=%d count=%zu\n", rc, ds.count);
+        return 1;
+    }
+
+    /* 构建词表。失败时释放已加载的数据。 */
+    rc = build_vocab(&vocab);
+    if (rc != TOKENIZER_STATUS_OK) {
+        fprintf(stderr, "build vocab failed rc=%d\n", rc);
+        csv_free_dataset(&ds);
+        return 1;
+    }
+
+    /* 初始化 tokenizer。失败时释放词表和数据。 */
+    rc = tokenizer_init(&tokenizer, &vocab, 0);
+    if (rc != TOKENIZER_STATUS_OK) {
+        fprintf(stderr, "tokenizer init failed rc=%d\n", rc);
+        vocab_free(&vocab);
+        csv_free_dataset(&ds);
+        return 1;
+    }
+
+    /* 训练循环写在这里：
+       1) tokenizer_encode 把命令转 token ids
+       2) 前向计算得到 logits
+       3) 计算 loss
+       4) 反向更新参数
+    */
+
+    /* 训练完成后导出权重：
+       - my_weights.bin 给运行时加载
+       - my_weights.c 给编译内嵌
+    */
+    /* weights_save_binary("build/my_weights.bin", weights, weight_count); */
+    /* weights_export_c_source("build/my_weights.c", "g_my_weights", weights, weight_count); */
+
+    /* 释放资源 */
+    vocab_free(&vocab);
+    csv_free_dataset(&ds);
+    return 0;
+}
+```
+
+### 10.3 接入 CMake
+
+打开 [CMakeLists.txt](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/CMakeLists.txt)。  
+加入下面配置：
 
 ```cmake
 add_executable(my_train_loop
@@ -355,119 +440,212 @@ target_include_directories(my_train_loop PRIVATE
 target_link_libraries(my_train_loop PRIVATE dnn_core)
 ```
 
-### 10.5 训练执行命令
+### 10.4 执行训练
 
 ```powershell
 cmake --build build --target my_train_loop
 .\build\my_train_loop.exe
 ```
 
-### 10.6 完成标准
+### 10.5 训练成功检查
 
-你看到稳定的 loss 输出。  
-你得到权重文件和导出 C 文件。
+你要看到以下结果：
+- 控制台有 epoch 和 loss 输出
+- `build/my_weights.bin` 存在
+- `build/my_weights.c` 存在
 
-## 11. 第 9 课：实现推理程序
+如果失败，按顺序检查：
+1. `data/train.csv` 是否存在
+2. CSV 列数是否正确
+3. `STATE_DIM` 和 `OUTPUT_DIM` 是否匹配数据
+
+## 11. 第 9 课：实现推理程序（可直接执行）
 
 ### 11.1 目标
 
-你需要一个自己的推理入口。  
-文件名建议：`src/tools/my_infer_app.c`。
+你要实现一个推理应用。  
+程序文件名使用 `src/tools/my_infer_app.c`。  
+程序读取权重并执行外部循环。
 
-### 11.2 单帧推理流程
+### 11.2 创建代码骨架
 
-1. 读取当前命令  
-2. 构造当前 state  
-3. 编码命令  
-4. 前向推理  
-5. 激活映射  
-6. 动作下发
+```c
+#include <stdio.h>
+#include <string.h>
 
-### 11.3 外部循环流程
+/* 读取维度配置 */
+#include "../include/config_user.h"
+/* 文本编码接口 */
+#include "../include/tokenizer.h"
+/* 激活映射接口 */
+#include "../include/ops.h"
+/* 动作下发接口 */
+#include "../include/platform_driver.h"
+/* 权重加载接口 */
+#include "../include/weights_io.h"
 
-1. 维护任务状态  
-2. 每帧调用单帧推理  
-3. 每帧更新状态  
-4. 判断停止条件
+/* 单帧推理函数。外部循环每帧调用一次。 */
+static int run_one_frame(const Tokenizer* tokenizer,
+                         const float* weights,
+                         const char* cmd,
+                         const float* state,
+                         float* out_act) {
+    /* token 缓冲区大小由 MAX_SEQ_LEN 控制 */
+    int ids[MAX_SEQ_LEN];
+    size_t count = 0U;
+    memset(ids, 0, sizeof(ids));
+    /* 固定步骤：
+       1) tokenizer_encode
+       2) 前向计算
+       3) op_actuator
+       4) 写出 out_act
+    */
+    /* 骨架阶段先保留参数，避免编译告警 */
+    (void)tokenizer;
+    (void)weights;
+    (void)cmd;
+    (void)state;
+    (void)out_act;
+    return 0;
+}
 
-### 11.4 关键接口
+int main(void) {
+    /* 主流程：
+       1) 加载权重
+       2) 初始化 tokenizer
+       3) 外部循环逐帧执行
+       4) 调用 driver_stub_apply 下发动作
+       5) 命中停止条件后退出
+    */
+    /* 1) 加载权重
+       2) 初始化 tokenizer
+       3) while 循环:
+            - 生成 state
+            - run_one_frame
+            - driver_stub_apply
+            - 判断停止条件
+    */
+    return 0;
+}
+```
 
-- [tokenizer_encode](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/include/tokenizer.h#L127-L131)
-- [op_actuator](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/include/ops.h#L62-L69)
-- [driver_stub_apply](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/include/platform_driver.h#L52)
+### 11.3 接入 CMake
 
-### 11.5 完成标准
+在 [CMakeLists.txt](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/CMakeLists.txt) 加入：
 
-每帧日志可追踪。  
-动作语义和规格一致。  
-任务可按条件停止。
+```cmake
+add_executable(my_infer_app
+    src/tools/my_infer_app.c
+)
+target_include_directories(my_infer_app PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/include
+)
+target_link_libraries(my_infer_app PRIVATE dnn_core)
+```
 
-## 12. 第 10 课：跑测试并验收
+### 11.4 推理执行
 
-### 12.1 执行命令
+```powershell
+cmake --build build --target my_infer_app
+.\build\my_infer_app.exe
+```
+
+### 11.5 推理成功检查
+
+你要看到：
+- 每帧日志
+- 当前命令
+- 当前状态摘要
+- 当前动作向量
+- 停止条件触发日志
+
+## 12. 第 10 课：测试与验收（逐项执行）
+
+### 12.1 执行测试命令
 
 ```powershell
 cmake --build build --target full_test_suite
 .\build\full_test_suite.exe
 ```
 
-### 12.2 你要检查的项目
+### 12.2 验收检查表
 
-- 泛化样本结果
-- OOD 样本结果
-- 对抗扰动样本结果
-- 长时序稳定性
-- 错误路径行为
+新建 `acceptance_checklist.md`，填下面表格：
 
-### 12.3 验收报告模板
+```markdown
+| 项目 | 检查方法 | 结果 | 备注 |
+|---|---|---|---|
+| 功能正确 | 回放常规样本 |  |  |
+| 泛化能力 | eval.csv 指标 |  |  |
+| 异常稳定 | badcase.csv 回放 |  |  |
+| 时延达标 | 单帧耗时统计 |  |  |
+| 内存达标 | profiler 报告 |  |  |
+```
 
-新建 `acceptance_report.md`：
+### 12.3 输出验收报告
+
+新建 `acceptance_report.md`，按模板填写：
 
 ```markdown
 # 验收报告
 
-## 功能验收
-- 结论：
+## 1. 输入输出契约
+- 是否冻结：
+- 是否一致：
 
-## 性能验收
-- 结论：
+## 2. 训练结果
+- 最终 loss：
+- 权重文件：
 
-## 稳定性验收
-- 结论：
+## 3. 推理结果
+- 是否稳定运行：
+- 停止条件是否生效：
 
-## 风险项
-- 列表：
+## 4. 风险项
+- 风险 1：
+- 风险 2：
 ```
 
-## 13. 第 11 课：迭代方法
+## 13. 第 11 课：迭代方法（一轮一轮做）
 
-每轮迭代只改一类变量：
-1. 先改数据
-2. 再改状态定义
-3. 最后改网络规模
+每轮只改一个维度。  
+你按下面顺序执行：
+1. 改数据
+2. 跑训练
+3. 跑推理
+4. 跑测试
+5. 记录结果
 
-每轮迭代都重复四步：
-1. profiler
-2. 训练
-3. 推理回归
-4. 全量测试
+迭代记录模板：
 
-## 14. 全流程执行顺序
+```markdown
+| 轮次 | 仅修改项 | 训练结果 | 推理结果 | 测试结果 | 结论 |
+|---|---|---|---|---|---|
+| 1 |  |  |  |  |  |
+| 2 |  |  |  |  |  |
+```
 
-1. 写需求规格
-2. 冻结动作接口
-3. 定义状态向量
-4. 定义命令词表
-5. 设定初版结构
-6. 跑资源预估
-7. 生成训练数据
-8. 写训练程序并训练
-9. 写推理程序并接入外部循环
-10. 跑测试并输出验收报告
+## 14. 全流程执行命令总表
 
-## 15. 你现在可以怎么开始
+```powershell
+cmake -S . -B build -G Ninja -DCMAKE_C_COMPILER=clang
+cmake --build build --target profiler
+.\build\profiler.exe
+cmake --build build --target my_train_loop
+.\build\my_train_loop.exe
+cmake --build build --target my_infer_app
+.\build\my_infer_app.exe
+cmake --build build --target full_test_suite
+.\build\full_test_suite.exe
+```
 
-今天直接做三件事：
-1. 新建 `project_spec.md`
-2. 写完整动作接口表和状态字段表
-3. 运行 profiler，记录第一版资源报告
+## 15. 今天的落地任务
+
+按这个清单执行：
+1. 创建 `project_spec.md`
+2. 创建 `data/train.csv`、`data/eval.csv`、`data/badcase.csv`
+3. 创建 `src/tools/my_train_loop.c`
+4. 创建 `src/tools/my_infer_app.c`
+5. 修改 `CMakeLists.txt` 增加两个目标
+6. 运行第 14 章命令总表
+7. 生成 `acceptance_report.md`
