@@ -523,9 +523,11 @@ int main(int argc, char** argv) {
     const char* csv_path = "demo_train_data.csv";
     const char* weight_bin_path = "demo_weights.bin";
     const char* weight_c_path = "demo_weights_export.c";
+    const char* weight_fn_c_path = "demo_network_functions.c";
     float weights[DEMO_TOTAL_WEIGHT_COUNT];
     float* loaded_weights = NULL;
     size_t loaded_count = 0U;
+    const int activations[OUTPUT_DIM] = IO_MAPPING_ACTIVATIONS;
     const float infer_state[STATE_DIM] = { 0.95f, 0.12f, 0.35f, 0.0f, 0.05f, 0.20f, 0.0f, 0.0f };
     Pose2D start_pose = { 0.0f, 0.0f };
     Pose2D target_pose = { 15.0f, 15.0f };
@@ -579,6 +581,19 @@ int main(int argc, char** argv) {
         cleanup_context(&ctx);
         return 6;
     }
+    rc = weights_export_c_function_network(weight_fn_c_path,
+                                           "g_demo_network",
+                                           weights,
+                                           VOCAB_SIZE,
+                                           MAX_SEQ_LEN,
+                                           STATE_DIM,
+                                           OUTPUT_DIM,
+                                           activations);
+    if (rc != WEIGHTS_IO_STATUS_OK) {
+        fprintf(stderr, "weights_export_c_function_network failed: %d\n", rc);
+        cleanup_context(&ctx);
+        return 7;
+    }
     printf("exported weights: %s , %s\n", weight_bin_path, weight_c_path);
 
     rc = weights_load_binary(weight_bin_path, &loaded_weights, &loaded_count);
@@ -586,7 +601,7 @@ int main(int argc, char** argv) {
         fprintf(stderr, "weights_load_binary failed: rc=%d count=%zu\n", rc, loaded_count);
         free(loaded_weights);
         cleanup_context(&ctx);
-        return 7;
+        return 8;
     }
     printf("reloaded weight count=%zu\n", loaded_count);
 
@@ -596,7 +611,7 @@ int main(int argc, char** argv) {
         free(loaded_weights);
         loaded_weights = NULL;
         cleanup_context(&ctx);
-        return 8;
+        return 9;
     }
 
     rc = run_external_goal_loop(&ctx, loaded_weights, &target_pose, &start_pose, 300U);
@@ -605,7 +620,7 @@ int main(int argc, char** argv) {
         free(loaded_weights);
         loaded_weights = NULL;
         cleanup_context(&ctx);
-        return 9;
+        return 10;
     }
     free(loaded_weights);
     loaded_weights = NULL;
