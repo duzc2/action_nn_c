@@ -94,6 +94,64 @@ size_t workflow_weights_count(void) {
     return TOTAL_WEIGHT_COUNT;
 }
 
+int workflow_runtime_init(WorkflowRuntime* runtime, const char* vocab_path, const char* weights_bin_path) {
+    int rc = 0;
+    if (runtime == NULL || vocab_path == NULL || weights_bin_path == NULL) {
+        return WORKFLOW_STATUS_INVALID_ARGUMENT;
+    }
+    if (STATE_DIM != 8 || OUTPUT_DIM != 4) {
+        return WORKFLOW_STATUS_INVALID_ARGUMENT;
+    }
+    memset(runtime, 0, sizeof(*runtime));
+    rc = weights_load_binary(weights_bin_path, &runtime->weights, &runtime->weight_count);
+    if (rc != WEIGHTS_IO_STATUS_OK || runtime->weights == NULL || runtime->weight_count != TOTAL_WEIGHT_COUNT) {
+        free(runtime->weights);
+        runtime->weights = NULL;
+        runtime->weight_count = 0U;
+        return WORKFLOW_STATUS_IO_ERROR;
+    }
+    rc = workflow_prepare_tokenizer(vocab_path, &runtime->vocab, &runtime->tokenizer);
+    if (rc != WORKFLOW_STATUS_OK) {
+        free(runtime->weights);
+        runtime->weights = NULL;
+        runtime->weight_count = 0U;
+        return rc;
+    }
+    runtime->ready = 1;
+    return WORKFLOW_STATUS_OK;
+}
+
+void workflow_runtime_shutdown(WorkflowRuntime* runtime) {
+    if (runtime == NULL) {
+        return;
+    }
+    vocab_free(&runtime->vocab);
+    free(runtime->weights);
+    memset(runtime, 0, sizeof(*runtime));
+}
+
+int workflow_run_step(WorkflowRuntime* runtime, const char* command, const float* state, float* out_action) {
+    int ids[MAX_SEQ_LEN];
+    size_t count = 0U;
+    float logits[OUTPUT_DIM];
+    int rc = 0;
+    if (runtime == NULL || command == NULL || state == NULL || out_action == NULL || runtime->ready != 1) {
+        return WORKFLOW_STATUS_INVALID_ARGUMENT;
+    }
+    if (command[0] == '\0') {
+        return WORKFLOW_STATUS_DATA_ERROR;
+    }
+    memset(ids, 0, sizeof(ids));
+    memset(logits, 0, sizeof(logits));
+    rc = tokenizer_encode(&runtime->tokenizer, command, ids, MAX_SEQ_LEN, &count);
+    if (rc != TOKENIZER_STATUS_OK || count == 0U) {
+        return WORKFLOW_STATUS_DATA_ERROR;
+    }
+    predict_logits(runtime->weights, ids, count, state, logits);
+    rc = activate_output(logits, out_action);
+    return (rc == WORKFLOW_STATUS_OK) ? WORKFLOW_STATUS_OK : WORKFLOW_STATUS_INTERNAL_ERROR;
+}
+
 int workflow_train_from_csv(const WorkflowTrainOptions* options) {
     CsvDataset ds;
     Vocabulary vocab;
@@ -195,84 +253,5 @@ int workflow_train_from_csv(const WorkflowTrainOptions* options) {
     }
     vocab_free(&vocab);
     csv_free_dataset(&ds);
-    return WORKFLOW_STATUS_OK;
-}
-
-int workflow_run_goal_loop(const WorkflowLoopOptions* options) {
-    Vocabulary vocab;
-    Tokenizer tokenizer;
-    float* weights = NULL;
-    size_t weight_count = 0U;
-    size_t frame = 0U;
-    int rc = 0;
-    char command[128];
-    if (options == NULL || options->vocab_path == NULL || options->weights_bin_path == NULL || options->max_frames == 0U ||
-        options->build_input_callback == NULL || options->action_callback == NULL) {
-        return WORKFLOW_STATUS_INVALID_ARGUMENT;
-    }
-    if (STATE_DIM != 8 || OUTPUT_DIM != 4) {
-        return WORKFLOW_STATUS_INVALID_ARGUMENT;
-    }
-    memset(&vocab, 0, sizeof(vocab));
-    memset(&tokenizer, 0, sizeof(tokenizer));
-    rc = weights_load_binary(options->weights_bin_path, &weights, &weight_count);
-    if (rc != WEIGHTS_IO_STATUS_OK || weights == NULL || weight_count != TOTAL_WEIGHT_COUNT) {
-        free(weights);
-        return WORKFLOW_STATUS_IO_ERROR;
-    }
-    rc = workflow_prepare_tokenizer(options->vocab_path, &vocab, &tokenizer);
-    if (rc != WORKFLOW_STATUS_OK) {
-        free(weights);
-        return rc;
-    }
-    for (frame = 0U; frame < options->max_frames; ++frame) {
-        float state[STATE_DIM];
-        float act[OUTPUT_DIM];
-        int ids[MAX_SEQ_LEN];
-        size_t count = 0U;
-        float logits[OUTPUT_DIM];
-        memset(state, 0, sizeof(state));
-        memset(act, 0, sizeof(act));
-        memset(ids, 0, sizeof(ids));
-        memset(logits, 0, sizeof(logits));
-        memset(command, 0, sizeof(command));
-        rc = options->build_input_callback(frame,
-                                           command,
-                                           sizeof(command),
-                                           state,
-                                           STATE_DIM,
-                                           options->user_data);
-        if (rc > 0) {
-            break;
-        }
-        if (rc < 0 || command[0] == '\0') {
-            vocab_free(&vocab);
-            free(weights);
-            return WORKFLOW_STATUS_DATA_ERROR;
-        }
-        rc = tokenizer_encode(&tokenizer, command, ids, MAX_SEQ_LEN, &count);
-        if (rc != TOKENIZER_STATUS_OK || count == 0U) {
-            vocab_free(&vocab);
-            free(weights);
-            return WORKFLOW_STATUS_DATA_ERROR;
-        }
-        predict_logits(weights, ids, count, state, logits);
-        if (activate_output(logits, act) != WORKFLOW_STATUS_OK) {
-            vocab_free(&vocab);
-            free(weights);
-            return WORKFLOW_STATUS_INTERNAL_ERROR;
-        }
-        rc = options->action_callback(act, OUTPUT_DIM, options->user_data);
-        if (rc != 0) {
-            vocab_free(&vocab);
-            free(weights);
-            return WORKFLOW_STATUS_INTERNAL_ERROR;
-        }
-        printf("frame=%03zu cmd=%s act=(%.3f,%.3f,%.3f,%.3f)\n",
-               frame + 1U, command,
-               (double)act[0], (double)act[1], (double)act[2], (double)act[3]);
-    }
-    vocab_free(&vocab);
-    free(weights);
     return WORKFLOW_STATUS_OK;
 }

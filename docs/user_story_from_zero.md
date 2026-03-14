@@ -424,7 +424,6 @@ typedef struct AppContext {
     float y;
     float goal_x;
     float goal_y;
-    size_t max_frames;
 } AppContext;
 
 static int build_input(size_t frame,
@@ -436,9 +435,9 @@ static int build_input(size_t frame,
     AppContext* ctx = (AppContext*)user_data;
     float dx = 0.0f;
     float dy = 0.0f;
+    (void)frame;
     if (ctx == NULL || out_command == NULL || out_state == NULL) return -1;
     if (state_dim < 8U || command_capacity < 16U) return -1;
-    if (frame >= ctx->max_frames) return 1;
 
     dx = ctx->goal_x - ctx->x;
     dy = ctx->goal_y - ctx->y;
@@ -488,29 +487,51 @@ static int on_action(const float* action_values, size_t action_count, void* user
 }
 
 int main(void) {
-    WorkflowLoopOptions options;
+    WorkflowRuntime runtime;
     AppContext ctx;
+    size_t frame = 0U;
     int rc = 0;
+    memset(&runtime, 0, sizeof(runtime));
     memset(&ctx, 0, sizeof(ctx));
     ctx.x = 0.0f;
     ctx.y = 0.0f;
     ctx.goal_x = 15.0f;
     ctx.goal_y = 15.0f;
-    ctx.max_frames = 300U;
 
-    memset(&options, 0, sizeof(options));
-    options.vocab_path = "vocab.txt";
-    options.weights_bin_path = "build/my_weights.bin";
-    options.max_frames = ctx.max_frames;
-    options.build_input_callback = build_input;
-    options.action_callback = on_action;
-    options.user_data = &ctx;
-
-    rc = workflow_run_goal_loop(&options);
+    rc = workflow_runtime_init(&runtime, "vocab.txt", "build/my_weights.bin");
     if (rc != WORKFLOW_STATUS_OK) {
-        fprintf(stderr, "workflow_run_goal_loop failed rc=%d\n", rc);
+        fprintf(stderr, "workflow_runtime_init failed rc=%d\n", rc);
         return 1;
     }
+
+    for (frame = 0U; frame < 300U; ++frame) {
+        char command[128];
+        float state[8];
+        float act[4];
+        int brc = 0;
+        memset(command, 0, sizeof(command));
+        memset(state, 0, sizeof(state));
+        memset(act, 0, sizeof(act));
+
+        brc = build_input(frame, command, sizeof(command), state, 8U, &ctx);
+        if (brc > 0) break;
+        if (brc < 0) {
+            workflow_runtime_shutdown(&runtime);
+            return 1;
+        }
+        rc = workflow_run_step(&runtime, command, state, act);
+        if (rc != WORKFLOW_STATUS_OK) {
+            workflow_runtime_shutdown(&runtime);
+            fprintf(stderr, "workflow_run_step failed rc=%d\n", rc);
+            return 1;
+        }
+        if (on_action(act, 4U, &ctx) != 0) {
+            workflow_runtime_shutdown(&runtime);
+            return 1;
+        }
+    }
+
+    workflow_runtime_shutdown(&runtime);
     printf("infer done\n");
     return 0;
 }
@@ -552,29 +573,31 @@ cmake --build build --target my_infer_app
 ### 11.6 谁在调用执行层，怎么对接
 
 当前调用链：
-1. 你的 `my_infer_app.c` 调 `workflow_run_goal_loop`
-2. `workflow_run_goal_loop` 调 `build_input_callback` 获取命令和状态
-3. `workflow_run_goal_loop` 调你传入的 `action_callback` 下发动作
+1. 你的 `my_infer_app.c` 调 `workflow_runtime_init`
+2. 你的外部循环每帧准备 `command + state`
+3. 你的外部循环调 `workflow_run_step`
+4. 你的外部循环调执行层（例如 `on_action`）
+5. 结束时调 `workflow_runtime_shutdown`
 
 对应代码位置：
-- 调用工作流入口：`my_infer_app.c` 示例里的 `workflow_run_goal_loop(&options)`
-- 工作流回调触发点：[workflow.c](../src/core/workflow.c#L293-L301)
-- 回调配置定义：[workflow.h](../src/include/workflow.h#L26-L34)
+- 运行时初始化接口：[workflow.h](../src/include/workflow.h)
+- 单步推理接口：[workflow.h](../src/include/workflow.h)
+- 接口实现：[workflow.c](../src/core/workflow.c)
 
 当前行为说明：
-- 你传什么回调，就执行什么逻辑
-- 示例回调直接打印动作
-- 不是空调用，是真实被调用
+- 什么时候跑下一帧由外部循环决定
+- 每帧输入是你传给 `workflow_run_step` 的参数
+- 工作流不再内置循环节拍决策
 
 如何切换执行端：
 - 回调 A：`on_action` 里调用执行端 A 的 SDK
 - 回调 B：`on_action` 里调用执行端 B 的 SDK
 
 如何对接真实执行层：
-1. 在 `my_infer_app.c` 里实现 `build_input` 和 `on_action`
-2. 在 `build_input` 中读取你的业务状态并生成命令文本
-3. 在 `on_action` 中调用你的设备 SDK
-4. 保持两个回调签名不变
+1. 在业务循环里读取你的真实输入，组装 `command + state`
+2. 调 `workflow_run_step(&runtime, command, state, act)`
+3. 把 `act` 交给你的设备 SDK
+4. 当你判断应停止时，结束循环并 `workflow_runtime_shutdown`
 
 ### 11.7 导出文件怎么用（按场景选）
 
@@ -592,15 +615,12 @@ cmake --build build --target my_infer_app
 
 调用方式：
 ```c
-WorkflowLoopOptions options;
-memset(&options, 0, sizeof(options));
-options.vocab_path = "vocab.txt";
-options.weights_bin_path = "build/my_weights.bin";
-options.max_frames = 300U;
-options.build_input_callback = build_input;
-options.action_callback = on_action;
-options.user_data = &ctx;
-workflow_run_goal_loop(&options);
+WorkflowRuntime runtime;
+float act[4];
+workflow_runtime_init(&runtime, "vocab.txt", "build/my_weights.bin");
+workflow_run_step(&runtime, command, state, act);
+on_action(act, 4U, &ctx);
+workflow_runtime_shutdown(&runtime);
 ```
 
 #### 场景 B：固件内嵌常量权重（不走文件系统）

@@ -23,23 +23,19 @@ typedef struct WorkflowTrainOptions {
     float learning_rate;
 } WorkflowTrainOptions;
 
-typedef struct WorkflowLoopOptions {
-    const char* vocab_path;
-    const char* weights_bin_path;
-    size_t max_frames;
-    int (*build_input_callback)(size_t frame,
-                                char* out_command,
-                                size_t command_capacity,
-                                float* out_state,
-                                size_t state_dim,
-                                void* user_data);
-    int (*action_callback)(const float* action_values, size_t action_count, void* user_data);
-    void* user_data;
-} WorkflowLoopOptions;
+typedef struct WorkflowRuntime {
+    Vocabulary vocab;
+    Tokenizer tokenizer;
+    float* weights;
+    size_t weight_count;
+    int ready;
+} WorkflowRuntime;
 
 int workflow_prepare_tokenizer(const char* vocab_path, Vocabulary* vocab, Tokenizer* tokenizer);
 size_t workflow_weights_count(void);
 int workflow_train_from_csv(const WorkflowTrainOptions* options);
-int workflow_run_goal_loop(const WorkflowLoopOptions* options);
+int workflow_runtime_init(WorkflowRuntime* runtime, const char* vocab_path, const char* weights_bin_path);
+void workflow_runtime_shutdown(WorkflowRuntime* runtime);
+int workflow_run_step(WorkflowRuntime* runtime, const char* command, const float* state, float* out_action);
 
 #endif
