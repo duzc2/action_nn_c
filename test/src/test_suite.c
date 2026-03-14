@@ -49,5 +49,6 @@ int main(void) {
     count = append_case_group(all_cases, 96U, count, testcases_get_error_boundary_group());
     count = append_case_group(all_cases, 96U, count, testcases_get_stress_integration_group());
     count = append_case_group(all_cases, 96U, count, testcases_get_model_special_group());
+    count = append_case_group(all_cases, 96U, count, testcases_get_generated_artifacts_group());
     return testfw_run_all(all_cases, count);
 }

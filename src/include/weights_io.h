@@ -35,11 +35,12 @@ int weights_save_binary(const char* file_path, const float* weights, size_t coun
 int weights_load_binary(const char* file_path, float** out_weights, size_t* out_count);
 
 /**
- * @brief 将权重导出为可直接编译的 weights.c 源码文件。
+ * @brief 将权重导出为可直接编译的 C 源码模块（函数接口）。
  *
- * 导出内容：
- * - const size_t <symbol>_count
- * - const float <symbol>[]
+ * 导出函数：
+ * - size_t <symbol>_count(void)
+ * - const float* <symbol>_data(void)
+ * - int <symbol>_copy(float* out, size_t out_capacity)
  *
  * @param file_path  输出 C 源文件路径
  * @param symbol     导出符号前缀（必须是合法 C 标识符）
@@ -51,5 +52,14 @@ int weights_export_c_source(const char* file_path,
                             const char* symbol,
                             const float* weights,
                             size_t count);
+
+int weights_export_c_function_network(const char* file_path,
+                                      const char* symbol,
+                                      const float* weights,
+                                      size_t vocab_size,
+                                      size_t max_token_count,
+                                      size_t state_dim,
+                                      size_t output_dim,
+                                      const int* activations);
 
 #endif /* WEIGHTS_IO_H */
