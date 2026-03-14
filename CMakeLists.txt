@@ -26,6 +26,7 @@ add_library(dnn_core STATIC
     src/core/weights_io.c
     src/core/protocol.c
     src/core/platform_driver.c
+    src/core/workflow.c
     src/tokenizer/tokenizer_runtime.c
     src/platform/pc/driver_pc.c
     src/platform/esp32/driver_esp32.c
