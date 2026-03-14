@@ -576,6 +576,83 @@ cmake --build build --target my_infer_app
 3. 在 `on_action` 中调用你的设备 SDK
 4. 保持两个回调签名不变
 
+### 11.7 导出文件怎么用（按场景选）
+
+训练后你会得到两类导出物：
+- `build/my_weights.bin`
+- `build/my_weights.c`
+
+另外你也可以导出函数网络文件（可选）：
+- `build/my_network_functions.c`
+
+#### 场景 A：常规上线 / 可热更新（推荐）
+
+使用 `build/my_weights.bin`。  
+适合要替换模型、做版本回滚、做远程下发的场景。
+
+调用方式：
+```c
+WorkflowLoopOptions options;
+memset(&options, 0, sizeof(options));
+options.vocab_path = "vocab.txt";
+options.weights_bin_path = "build/my_weights.bin";
+options.max_frames = 300U;
+options.build_input_callback = build_input;
+options.action_callback = on_action;
+options.user_data = &ctx;
+workflow_run_goal_loop(&options);
+```
+
+#### 场景 B：固件内嵌常量权重（不走文件系统）
+
+使用 `build/my_weights.c`。  
+它导出的是数据模块函数，不是网络结构函数：
+- `<symbol>_count()`
+- `<symbol>_data()`
+- `<symbol>_copy()`
+
+调用方式（示例）：
+```c
+size_t n = g_my_weights_count();
+const float* w = g_my_weights_data();
+```
+
+适合 ROM 固化、无文件系统环境。  
+你在业务代码里直接使用 `w` 做前向计算，或拷贝到你自己的运行缓存。
+
+#### 场景 C：函数网络直调（节点函数图）
+
+使用 `build/my_network_functions.c`（可选导出）。  
+适合追求固定拓扑、无动态加载、代码调用路径可控的场景。
+
+调用方式（示例）：
+```c
+float token_onehot[32U * 128U] = {0};
+float state[8] = {0};
+float out[4] = {0};
+g_my_network_forward(token_onehot, state, out);
+```
+
+导出该文件需要你在“持有 weights 数组”的训练代码里调用：
+```c
+weights_export_c_function_network("build/my_network_functions.c",
+                                  "g_my_network",
+                                  weights,
+                                  VOCAB_SIZE,
+                                  MAX_SEQ_LEN,
+                                  STATE_DIM,
+                                  OUTPUT_DIM,
+                                  activations);
+```
+
+#### 三种方式怎么选
+
+- 优先用 `bin`：工程化最稳，切换模型最方便
+- 要内嵌常量就用 `weights.c`：部署简单、无文件依赖
+- 要函数图就用 `network_functions.c`：结构固定、可做极限场景优化
+
+同一个项目可以三种并存，运行时按配置选择加载路径。
+
 ## 12. 第 10 课：测试与验收（逐项执行）
 
 ### 12.1 执行测试命令
