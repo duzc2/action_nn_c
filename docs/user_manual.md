@@ -238,3 +238,6 @@ chcp 65001
   - 第 0 章：零基础术语课
   - 第 5.4 节：参数语义层次
   - 第 6 章：五个设计坐标轴
+
+完整用户故事阅读：
+- [user_story_from_zero.md](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/docs/user_story_from_zero.md)
