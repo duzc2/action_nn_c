@@ -56,7 +56,7 @@
 接口：  
 [protocol.h](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/include/protocol.h#L39-L95)
 
-## 3. 系统执行流程（必须理解）
+## 3. 系统执行流程
 
 每一帧固定 5 步：
 1. 文本编码：`tokenizer_encode`
@@ -163,7 +163,7 @@ cmake --build build --target min_train_loop
 4. 每帧更新状态并执行动作  
 5. 在外部判断结束条件
 
-你可以参考：
+参考代码：
 - 全链路参考：[c99_full_demo.c](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/tools/c99_full_demo.c)
 - 外部循环实现：[run_external_goal_loop](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/tools/c99_full_demo.c#L398-L514)
 
@@ -226,15 +226,15 @@ chcp 65001
 
 ## 12. 学习路径
 
-建议顺序：
-1. 看本手册第 1~4 章（建立概念）
-2. 做第 5~7 章（跑通链路）
+学习顺序：
+1. 看本手册第 1~4 章
+2. 做第 5~7 章
 3. 按第 8 章写你的业务入口
 4. 用第 10 章做回归验收
 
 网络结构专题阅读：
 - [network_design_manual.md](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/docs/network_design_manual.md)
 - 重点章节：
-  - 零基础术语课（第 0 章，含“契约”解释）
-  - 参数语义层次（5.4）
-  - 宏观抽象坐标轴（第 6 章）
+  - 第 0 章：零基础术语课
+  - 第 5.4 节：参数语义层次
+  - 第 6 章：五个设计坐标轴
