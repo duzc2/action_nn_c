@@ -104,6 +104,8 @@ int vocab_save_binary(const Vocabulary* vocab, const char* file_path);
  */
 int vocab_load_binary(const char* file_path, Vocabulary* out_vocab);
 
+int vocab_load_text(const char* file_path, Vocabulary* out_vocab);
+
 /**
  * @brief 初始化 Tokenizer。
  *
