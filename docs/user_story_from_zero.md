@@ -95,7 +95,7 @@
 
 ### 4.2 对应配置项
 
-在 [config_user.h](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/include/config_user.h) 设置：
+在 [config_user.h](../src/include/config_user.h) 设置：
 - `OUTPUT_DIM`
 - `IO_MAPPING_NAMES`
 - `IO_MAPPING_ACTIVATIONS`
@@ -367,7 +367,7 @@ int main(void) {
 
 ### 10.3 接入 CMake
 
-打开 [CMakeLists.txt](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/CMakeLists.txt)。  
+打开 [CMakeLists.txt](../CMakeLists.txt)。  
 加入下面配置：
 
 ```cmake
@@ -521,7 +521,7 @@ int main(void) {
 
 ### 11.3 接入 CMake
 
-在 [CMakeLists.txt](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/CMakeLists.txt) 加入：
+在 [CMakeLists.txt](../CMakeLists.txt) 加入：
 
 ```cmake
 add_executable(my_infer_app
@@ -558,8 +558,8 @@ cmake --build build --target my_infer_app
 
 对应代码位置：
 - 调用工作流入口：`my_infer_app.c` 示例里的 `workflow_run_goal_loop(&options)`
-- 工作流回调触发点：[workflow.c](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/core/workflow.c#L293-L301)
-- 回调配置定义：[workflow.h](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/include/workflow.h#L26-L34)
+- 工作流回调触发点：[workflow.c](../src/core/workflow.c#L293-L301)
+- 回调配置定义：[workflow.h](../src/include/workflow.h#L26-L34)
 
 当前行为说明：
 - 你传什么回调，就执行什么逻辑

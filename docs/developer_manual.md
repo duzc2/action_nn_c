@@ -33,13 +33,13 @@
 ### 3.2 核心数据对象
 
 - `Tensor`：只保存视图，不持有生命周期  
-  [tensor.h](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/include/tensor.h#L21-L34)
+  [tensor.h](../src/include/tensor.h#L21-L34)
 - `Vocabulary` / `Tokenizer`：文本到 token id 映射  
-  [tokenizer.h](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/include/tokenizer.h#L26-L43)
+  [tokenizer.h](../src/include/tokenizer.h#L26-L43)
 - `ProtocolFrame`：RAW/TOK 统一帧  
-  [protocol.h](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/include/protocol.h#L31-L36)
+  [protocol.h](../src/include/protocol.h#L31-L36)
 - `WorkflowLoopOptions`：推理循环配置与动作回调  
-  [workflow.h](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/include/workflow.h#L26-L34)
+  [workflow.h](../src/include/workflow.h#L26-L34)
 
 ### 3.3 执行链路
 
@@ -56,7 +56,7 @@
 ## 4. 配置管理
 
 配置入口：  
-[config_user.h](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/include/config_user.h)
+[config_user.h](../src/include/config_user.h)
 
 配置分三类：
 - 结构参数：`EMBED_DIM / NUM_LAYERS / NUM_HEADS / FFN_DIM`
@@ -76,7 +76,7 @@
 - 输出 `network_def.h`
 
 实现：  
-[profiler.c](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/tools/profiler.c)
+[profiler.c](../src/tools/profiler.c)
 
 ### 5.2 min_train_loop
 
@@ -85,7 +85,7 @@
 - 验证协议 RAW/TOK 两种输入
 
 实现：  
-[min_train_loop.c](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/tools/min_train_loop.c)
+[min_train_loop.c](../src/tools/min_train_loop.c)
 
 ### 5.3 c99_full_demo
 
@@ -94,7 +94,7 @@
 - 外部循环多步推理示例
 
 实现：  
-[c99_full_demo.c](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/tools/c99_full_demo.c)
+[c99_full_demo.c](../src/tools/c99_full_demo.c)
 
 ## 6. 开发流程
 
@@ -143,7 +143,7 @@ cmake --build build
 ## 8. 测试体系
 
 测试入口：  
-[test_suite.c](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/test/src/test_suite.c)
+[test_suite.c](../test/src/test_suite.c)
 
 当前分组：
 - 单元
@@ -162,7 +162,7 @@ cmake --build build
 - 预期错误路径
 
 模型专项文件：  
-[test_cases_model_special.c](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/test/src/test_cases_model_special.c)
+[test_cases_model_special.c](../test/src/test_cases_model_special.c)
 
 ## 9. 代码质量要求
 
