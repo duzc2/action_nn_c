@@ -231,3 +231,6 @@ chcp 65001
 2. 做第 5~7 章（跑通链路）
 3. 按第 8 章写你的业务入口
 4. 用第 10 章做回归验收
+
+网络结构专题阅读：
+- [network_design_manual.md](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/docs/network_design_manual.md)
