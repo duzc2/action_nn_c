@@ -234,3 +234,7 @@ chcp 65001
 
 网络结构专题阅读：
 - [network_design_manual.md](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/docs/network_design_manual.md)
+- 重点章节：
+  - 零基础术语课（第 0 章，含“契约”解释）
+  - 参数语义层次（5.4）
+  - 宏观抽象坐标轴（第 6 章）
