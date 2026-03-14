@@ -71,16 +71,6 @@ static void predict_logits(const float* w,
     }
 }
 
-static const char* choose_cmd(float dx) {
-    if (fabsf(dx) < 0.3f) {
-        return "move stop";
-    }
-    if (dx > 0.0f) {
-        return (fabsf(dx) > 2.0f) ? "move right fast" : "move right";
-    }
-    return (fabsf(dx) > 2.0f) ? "move left fast" : "move left";
-}
-
 int workflow_prepare_tokenizer(const char* vocab_path, Vocabulary* vocab, Tokenizer* tokenizer) {
     int rc = 0;
     if (vocab_path == NULL || vocab == NULL || tokenizer == NULL) {
@@ -213,12 +203,11 @@ int workflow_run_goal_loop(const WorkflowLoopOptions* options) {
     Tokenizer tokenizer;
     float* weights = NULL;
     size_t weight_count = 0U;
-    float x = 0.0f;
-    float y = 0.0f;
     size_t frame = 0U;
     int rc = 0;
+    char command[128];
     if (options == NULL || options->vocab_path == NULL || options->weights_bin_path == NULL || options->max_frames == 0U ||
-        options->action_callback == NULL) {
+        options->build_input_callback == NULL || options->action_callback == NULL) {
         return WORKFLOW_STATUS_INVALID_ARGUMENT;
     }
     if (STATE_DIM != 8 || OUTPUT_DIM != 4) {
@@ -237,33 +226,31 @@ int workflow_run_goal_loop(const WorkflowLoopOptions* options) {
         return rc;
     }
     for (frame = 0U; frame < options->max_frames; ++frame) {
-        float dx = options->goal_x - x;
-        float dy = options->goal_y - y;
         float state[STATE_DIM];
         float act[OUTPUT_DIM];
         int ids[MAX_SEQ_LEN];
         size_t count = 0U;
         float logits[OUTPUT_DIM];
-        const char* cmd = choose_cmd(dx);
-        float sx = 0.0f;
-        float sy = 0.0f;
         memset(state, 0, sizeof(state));
         memset(act, 0, sizeof(act));
         memset(ids, 0, sizeof(ids));
         memset(logits, 0, sizeof(logits));
-        if (fabsf(dx) < 0.3f && fabsf(dy) < 0.3f) {
-            printf("done frame=%zu pose=(%.3f,%.3f)\n", frame, (double)x, (double)y);
+        memset(command, 0, sizeof(command));
+        rc = options->build_input_callback(frame,
+                                           command,
+                                           sizeof(command),
+                                           state,
+                                           STATE_DIM,
+                                           options->user_data);
+        if (rc > 0) {
             break;
         }
-        state[0] = x / 20.0f;
-        state[1] = y / 20.0f;
-        state[2] = dx / 20.0f;
-        state[3] = dy / 20.0f;
-        state[4] = fabsf(dx) / 20.0f;
-        state[5] = fabsf(dy) / 20.0f;
-        state[6] = (fabsf(dx) + fabsf(dy)) / 40.0f;
-        state[7] = 1.0f;
-        rc = tokenizer_encode(&tokenizer, cmd, ids, MAX_SEQ_LEN, &count);
+        if (rc < 0 || command[0] == '\0') {
+            vocab_free(&vocab);
+            free(weights);
+            return WORKFLOW_STATUS_DATA_ERROR;
+        }
+        rc = tokenizer_encode(&tokenizer, command, ids, MAX_SEQ_LEN, &count);
         if (rc != TOKENIZER_STATUS_OK || count == 0U) {
             vocab_free(&vocab);
             free(weights);
@@ -275,26 +262,15 @@ int workflow_run_goal_loop(const WorkflowLoopOptions* options) {
             free(weights);
             return WORKFLOW_STATUS_INTERNAL_ERROR;
         }
-        sx = act[2] * 0.5f;
-        sy = ((act[3] + 1.0f) * 0.5f) * 0.4f;
-        if (fabsf(sx) > fabsf(dx)) {
-            sx = dx;
-        }
-        if (fabsf(sy) > fabsf(dy)) {
-            sy = dy;
-        }
-        x += sx;
-        y += sy;
-        rc = options->action_callback(act, OUTPUT_DIM, options->action_user_data);
+        rc = options->action_callback(act, OUTPUT_DIM, options->user_data);
         if (rc != 0) {
             vocab_free(&vocab);
             free(weights);
             return WORKFLOW_STATUS_INTERNAL_ERROR;
         }
-        printf("frame=%03zu cmd=%s act=(%.3f,%.3f,%.3f,%.3f) pose=(%.3f,%.3f)\n",
-               frame + 1U, cmd,
-               (double)act[0], (double)act[1], (double)act[2], (double)act[3],
-               (double)x, (double)y);
+        printf("frame=%03zu cmd=%s act=(%.3f,%.3f,%.3f,%.3f)\n",
+               frame + 1U, command,
+               (double)act[0], (double)act[1], (double)act[2], (double)act[3]);
     }
     vocab_free(&vocab);
     free(weights);
