@@ -31,21 +31,21 @@
 
 命令通过 tokenizer 编码为 token ids。  
 接口：`tokenizer_encode`  
-[tokenizer.h](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/include/tokenizer.h#L127-L131)
+[tokenizer.h](../src/include/tokenizer.h#L127-L131)
 
 ### 2.2 状态向量
 
 状态是连续特征向量。  
 维度由 `STATE_DIM` 指定。  
 默认是 8 维。  
-[config_user.h](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/include/config_user.h#L36-L43)
+[config_user.h](../src/include/config_user.h#L36-L43)
 
 ### 2.3 动作向量
 
 动作是输出向量。  
 维度由 `OUTPUT_DIM` 指定。  
 每个通道激活函数由 `IO_MAPPING_ACTIVATIONS` 指定。  
-[config_user.h](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/include/config_user.h#L51-L56)
+[config_user.h](../src/include/config_user.h#L51-L56)
 
 ### 2.4 协议帧
 
@@ -54,7 +54,7 @@
 - `TOK|<count>|id0,id1,...\n`
 
 接口：  
-[protocol.h](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/include/protocol.h#L39-L95)
+[protocol.h](../src/include/protocol.h#L39-L95)
 
 ## 3. 系统执行流程
 
@@ -82,14 +82,14 @@
 - 业务方按自己的设备 SDK 对接
 
 关键接口：
-- [tokenizer.h](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/include/tokenizer.h)
-- [ops.h](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/include/ops.h)
-- [workflow.h](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/include/workflow.h)
+- [tokenizer.h](../src/include/tokenizer.h)
+- [ops.h](../src/include/ops.h)
+- [workflow.h](../src/include/workflow.h)
 
 ## 4. config_user.h 全项说明
 
 配置文件：  
-[config_user.h](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/include/config_user.h)
+[config_user.h](../src/include/config_user.h)
 
 ### 4.1 网络规模
 
@@ -134,7 +134,7 @@ cmake --build build --target profiler
 - FLOPs
 
 实现：  
-[profiler.c](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/tools/profiler.c)
+[profiler.c](../src/tools/profiler.c)
 
 ## 6. 训练数据怎么设计
 
@@ -142,7 +142,7 @@ CSV 格式固定为：
 - `command,state[8],target[4]`
 
 数据加载接口：  
-[csv_loader.h](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/include/csv_loader.h)
+[csv_loader.h](../src/include/csv_loader.h)
 
 数据最小要求：
 - 训练集和评估集要有分布差异
@@ -152,7 +152,7 @@ CSV 格式固定为：
 ## 7. 怎么训练自己的网络
 
 训练示例入口：  
-[min_train_loop.c](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/tools/min_train_loop.c)
+[min_train_loop.c](../src/tools/min_train_loop.c)
 
 运行：
 
@@ -166,7 +166,7 @@ cmake --build build --target min_train_loop
 - `build/weights.c`
 
 权重接口：
-- [weights_io.h](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/include/weights_io.h)
+- [weights_io.h](../src/include/weights_io.h)
 
 ## 8. 怎么写自己的业务代码
 
@@ -180,8 +180,8 @@ cmake --build build --target min_train_loop
 5. 在外部判断结束条件
 
 参考代码：
-- 全链路参考：[c99_full_demo.c](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/tools/c99_full_demo.c)
-- 外部循环实现：[run_external_goal_loop](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/tools/c99_full_demo.c#L398-L514)
+- 全链路参考：[c99_full_demo.c](../src/tools/c99_full_demo.c)
+- 外部循环实现：[run_external_goal_loop](../src/tools/c99_full_demo.c#L398-L514)
 
 ## 9. 完整例子：目标点控制
 
@@ -249,11 +249,11 @@ chcp 65001
 4. 用第 10 章做回归验收
 
 网络结构专题阅读：
-- [network_design_manual.md](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/docs/network_design_manual.md)
+- [network_design_manual.md](./network_design_manual.md)
 - 重点章节：
   - 第 0 章：零基础术语课
   - 第 5.4 节：参数语义层次
   - 第 6 章：五个设计坐标轴
 
 完整用户故事阅读：
-- [user_story_from_zero.md](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/docs/user_story_from_zero.md)
+- [user_story_from_zero.md](./user_story_from_zero.md)

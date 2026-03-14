@@ -71,9 +71,9 @@
 - 当前帧动作，维度为 4
 
 实现位置：
-- 样例数据写入：[write_demo_training_csv](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/tools/c99_full_demo.c#L57-L85)
-- 前向与训练入口：[predict_logits](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/tools/c99_full_demo.c#L155-L188)、[train_one_sample](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/tools/c99_full_demo.c#L234-L285)
-- 外部循环：[run_external_goal_loop](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/tools/c99_full_demo.c#L398-L514)
+- 样例数据写入：[write_demo_training_csv](../src/tools/c99_full_demo.c#L57-L85)
+- 前向与训练入口：[predict_logits](../src/tools/c99_full_demo.c#L155-L188)、[train_one_sample](../src/tools/c99_full_demo.c#L234-L285)
+- 外部循环：[run_external_goal_loop](../src/tools/c99_full_demo.c#L398-L514)
 
 结论：
 - 这是控制问题。
@@ -108,7 +108,7 @@
 - bias：`OUTPUT_DIM`
 
 定义位置：
-- [DemoModelLayout](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/tools/c99_full_demo.c#L25-L30)
+- [DemoModelLayout](../src/tools/c99_full_demo.c#L25-L30)
 
 这么设计的原因：
 - 参数总量可直接计算
@@ -122,7 +122,7 @@
 ## 5. config_user.h 中每类结构参数的设计意义
 
 配置文件：
-- [config_user.h](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/include/config_user.h)
+- [config_user.h](../src/include/config_user.h)
 
 ### 5.1 I/O 契约类参数
 
@@ -319,7 +319,7 @@ profiler 是结构选型迭代工具。
 - FLOPs
 
 实现位置：
-- [profiler.c](file:///c:/Users/ASUS/Desktop/ai-build-ai/action_c/src/tools/profiler.c#L178-L231)
+- [profiler.c](../src/tools/profiler.c#L178-L231)
 
 ## 11. 示例到业务的迁移方法
 
