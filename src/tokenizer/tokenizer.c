@@ -304,6 +304,60 @@ int vocab_load_binary(const char* file_path, Vocabulary* out_vocab) {
     return TOKENIZER_STATUS_OK;
 }
 
+int vocab_load_text(const char* file_path, Vocabulary* out_vocab) {
+    FILE* fp = NULL;
+    char line[512];
+    int rc = 0;
+    size_t line_count = 0U;
+    if (file_path == NULL || out_vocab == NULL) {
+        return TOKENIZER_STATUS_INVALID_ARGUMENT;
+    }
+    memset(out_vocab, 0, sizeof(*out_vocab));
+    fp = fopen(file_path, "r");
+    if (fp == NULL) {
+        return TOKENIZER_STATUS_IO_ERROR;
+    }
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        size_t n = strlen(line);
+        while (n > 0U && (line[n - 1U] == '\n' || line[n - 1U] == '\r')) {
+            line[--n] = '\0';
+        }
+        if (n > 0U) {
+            line_count += 1U;
+        }
+    }
+    if (line_count == 0U) {
+        fclose(fp);
+        return TOKENIZER_STATUS_FORMAT_ERROR;
+    }
+    if (fseek(fp, 0L, SEEK_SET) != 0) {
+        fclose(fp);
+        return TOKENIZER_STATUS_IO_ERROR;
+    }
+    rc = vocab_init(out_vocab, line_count);
+    if (rc != TOKENIZER_STATUS_OK) {
+        fclose(fp);
+        return rc;
+    }
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        size_t n = strlen(line);
+        while (n > 0U && (line[n - 1U] == '\n' || line[n - 1U] == '\r')) {
+            line[--n] = '\0';
+        }
+        if (n == 0U) {
+            continue;
+        }
+        rc = vocab_add_token(out_vocab, line, NULL);
+        if (rc != TOKENIZER_STATUS_OK) {
+            vocab_free(out_vocab);
+            fclose(fp);
+            return rc;
+        }
+    }
+    fclose(fp);
+    return TOKENIZER_STATUS_OK;
+}
+
 /**
  * @brief 初始化 Tokenizer。
  *

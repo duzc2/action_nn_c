@@ -144,6 +144,11 @@
 当输入命令里出现词表中没有的词时，tokenizer 会把该词映射到 `<unk>`。  
 你必须保留 `<unk>`，否则未知词无法被稳定处理。
 
+词表来源规则：
+- `vocab.txt` 是唯一词表来源
+- 训练和推理都读取同一个 `vocab.txt`
+- 不在代码里手写第二份 token 列表
+
 ```text
 <unk>
 move
@@ -348,26 +353,6 @@ data/
 /* 权重导出接口 */
 #include "../include/weights_io.h"
 
-/* 构建最小词表。词表顺序决定 token id，必须稳定。 */
-static int build_vocab(Vocabulary* vocab) {
-    int rc = vocab_init(vocab, VOCAB_SIZE);
-    if (rc != TOKENIZER_STATUS_OK) return rc;
-    rc = vocab_add_token(vocab, "<unk>", NULL);
-    if (rc != TOKENIZER_STATUS_OK) return rc;
-    rc = vocab_add_token(vocab, "move", NULL);
-    if (rc != TOKENIZER_STATUS_OK) return rc;
-    rc = vocab_add_token(vocab, "left", NULL);
-    if (rc != TOKENIZER_STATUS_OK) return rc;
-    rc = vocab_add_token(vocab, "right", NULL);
-    if (rc != TOKENIZER_STATUS_OK) return rc;
-    rc = vocab_add_token(vocab, "stop", NULL);
-    if (rc != TOKENIZER_STATUS_OK) return rc;
-    rc = vocab_add_token(vocab, "fast", NULL);
-    if (rc != TOKENIZER_STATUS_OK) return rc;
-    rc = vocab_add_token(vocab, "slow", NULL);
-    return rc;
-}
-
 int main(void) {
     /* 训练入口的核心对象：数据集、词表、编码器 */
     CsvDataset ds;
@@ -387,10 +372,10 @@ int main(void) {
         return 1;
     }
 
-    /* 构建词表。失败时释放已加载的数据。 */
-    rc = build_vocab(&vocab);
+    /* 从 vocab.txt 读取词表。失败时释放已加载的数据。 */
+    rc = vocab_load_text("vocab.txt", &vocab);
     if (rc != TOKENIZER_STATUS_OK) {
-        fprintf(stderr, "build vocab failed rc=%d\n", rc);
+        fprintf(stderr, "load vocab.txt failed rc=%d\n", rc);
         csv_free_dataset(&ds);
         return 1;
     }
@@ -471,6 +456,7 @@ cmake --build build --target my_train_loop
 
 ```c
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* 读取维度配置 */
@@ -512,7 +498,8 @@ static int run_one_frame(const Tokenizer* tokenizer,
 int main(void) {
     /* 主流程：
        1) 加载权重
-       2) 初始化 tokenizer
+       2) 从 vocab.txt 加载词表
+       3) 初始化 tokenizer
        3) 外部循环逐帧执行
        4) 调用 driver_stub_apply 下发动作
        5) 命中停止条件后退出
