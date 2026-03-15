@@ -4,3 +4,10 @@ build-clangcl/
 build-clang-ninja/
 test/logs/
 build-demo/
+demo/goal/data/
+demo/step/data/
+test/data/tmp/
+*.bin
+demo_*_export.c
+demo_network_*_functions.c
+test_weights_export.c

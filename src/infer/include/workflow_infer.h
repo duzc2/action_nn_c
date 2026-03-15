@@ -19,5 +19,6 @@ size_t workflow_weights_count(void);
 int workflow_runtime_init(WorkflowRuntime* runtime, const char* vocab_path, const char* weights_bin_path);
 void workflow_runtime_shutdown(WorkflowRuntime* runtime);
 int workflow_run_step(WorkflowRuntime* runtime, const char* command, const float* state, float* out_action);
+int workflow_run_step_goal(WorkflowRuntime* runtime, const float* state, float* out_action);
 
 #endif

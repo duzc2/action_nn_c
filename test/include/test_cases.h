@@ -45,6 +45,4 @@ TestCaseGroup testcases_get_stress_integration_group(void);
  */
 TestCaseGroup testcases_get_model_special_group(void);
 
-TestCaseGroup testcases_get_generated_artifacts_group(void);
-
 #endif /* TEST_CASES_H */
