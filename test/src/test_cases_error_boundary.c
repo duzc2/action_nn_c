@@ -6,6 +6,12 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <errno.h>
+#if defined(_WIN32)
+#include <direct.h>
+#else
+#include <sys/stat.h>
+#endif
 
 #include "../../src/include/csv_loader.h"
 #include "../../src/include/ops.h"
@@ -21,8 +27,23 @@
  * @param out 输出缓冲区
  * @param cap 输出缓冲区容量
  */
+static int create_dir_if_missing(const char* path) {
+#if defined(_WIN32)
+    int rc = _mkdir(path);
+#else
+    int rc = mkdir(path, 0755);
+#endif
+    if (rc == 0 || errno == EEXIST) {
+        return 0;
+    }
+    return -1;
+}
+
 static void make_test_file_path(const char* name, char* out, size_t cap) {
-    (void)snprintf(out, cap, "%s", name);
+    (void)create_dir_if_missing("test");
+    (void)create_dir_if_missing("test/data");
+    (void)create_dir_if_missing("test/data/tmp");
+    (void)snprintf(out, cap, "test/data/tmp/%s", name);
 }
 
 /**

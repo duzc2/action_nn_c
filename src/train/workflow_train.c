@@ -70,12 +70,81 @@ static void predict_logits(const float* w,
     }
 }
 
+static int train_with_samples(const Tokenizer* tokenizer,
+                              const WorkflowTrainSample* samples,
+                              size_t sample_count,
+                              size_t epochs,
+                              float learning_rate,
+                              float* weights) {
+    size_t epoch = 0U;
+    int rc = 0;
+    for (epoch = 0U; epoch < epochs; ++epoch) {
+        size_t i = 0U;
+        float loss_sum = 0.0f;
+        for (i = 0U; i < sample_count; ++i) {
+            const WorkflowTrainSample* s = &samples[i];
+            int ids[MAX_SEQ_LEN];
+            size_t count = 0U;
+            float logits[OUTPUT_DIM];
+            float pred[OUTPUT_DIM];
+            float grad[OUTPUT_DIM];
+            size_t t = 0U;
+            size_t j = 0U;
+            if (s->state == NULL || s->target == NULL) {
+                return WORKFLOW_STATUS_INVALID_ARGUMENT;
+            }
+            memset(ids, 0, sizeof(ids));
+            memset(logits, 0, sizeof(logits));
+            memset(pred, 0, sizeof(pred));
+            memset(grad, 0, sizeof(grad));
+            if (s->command != NULL && s->command[0] != '\0') {
+                rc = tokenizer_encode(tokenizer, s->command, ids, MAX_SEQ_LEN, &count);
+                if (rc != TOKENIZER_STATUS_OK || count == 0U) {
+                    return WORKFLOW_STATUS_DATA_ERROR;
+                }
+            }
+            predict_logits(weights, ids, count, s->state, logits);
+            if (activate_output(logits, pred) != WORKFLOW_STATUS_OK) {
+                return WORKFLOW_STATUS_INTERNAL_ERROR;
+            }
+            for (j = 0U; j < OUTPUT_DIM; ++j) {
+                float err = pred[j] - s->target[j];
+                grad[j] = err;
+                loss_sum += err * err;
+            }
+            for (t = 0U; t < count; ++t) {
+                size_t id = (ids[t] >= 0) ? (size_t)ids[t] : 0U;
+                if (id >= VOCAB_SIZE) {
+                    id = 0U;
+                }
+                for (j = 0U; j < OUTPUT_DIM; ++j) {
+                    weights[id * OUTPUT_DIM + j] -= (learning_rate * grad[j]) / (float)count;
+                }
+            }
+            for (t = 0U; t < STATE_DIM; ++t) {
+                size_t base = TOKEN_WEIGHT_COUNT + t * OUTPUT_DIM;
+                for (j = 0U; j < OUTPUT_DIM; ++j) {
+                    weights[base + j] -= learning_rate * grad[j] * s->state[t];
+                }
+            }
+            for (j = 0U; j < OUTPUT_DIM; ++j) {
+                weights[TOKEN_WEIGHT_COUNT + STATE_WEIGHT_COUNT + j] -= learning_rate * grad[j];
+            }
+        }
+        printf("epoch=%zu avg_loss=%.6f\n",
+               epoch + 1U,
+               (double)(loss_sum / (float)(sample_count * OUTPUT_DIM)));
+    }
+    return WORKFLOW_STATUS_OK;
+}
+
 int workflow_train_from_csv(const WorkflowTrainOptions* options) {
     CsvDataset ds;
     Vocabulary vocab;
     Tokenizer tokenizer;
+    WorkflowTrainSample samples[512];
     float weights[TOTAL_WEIGHT_COUNT];
-    size_t epoch = 0U;
+    size_t i = 0U;
     int rc = 0;
     if (options == NULL || options->csv_path == NULL || options->vocab_path == NULL ||
         options->out_weights_bin == NULL || options->out_weights_c == NULL || options->out_symbol == NULL) {
@@ -95,67 +164,26 @@ int workflow_train_from_csv(const WorkflowTrainOptions* options) {
     if (rc != 0 || ds.count == 0U) {
         return WORKFLOW_STATUS_IO_ERROR;
     }
+    if (ds.count > sizeof(samples) / sizeof(samples[0])) {
+        csv_free_dataset(&ds);
+        return WORKFLOW_STATUS_INVALID_ARGUMENT;
+    }
     rc = workflow_prepare_tokenizer(options->vocab_path, &vocab, &tokenizer);
     if (rc != WORKFLOW_STATUS_OK) {
         csv_free_dataset(&ds);
         return rc;
     }
     init_weights(weights, TOTAL_WEIGHT_COUNT);
-    for (epoch = 0U; epoch < options->epochs; ++epoch) {
-        size_t i = 0U;
-        float loss_sum = 0.0f;
-        for (i = 0U; i < ds.count; ++i) {
-            const CsvSample* s = &ds.samples[i];
-            int ids[MAX_SEQ_LEN];
-            size_t count = 0U;
-            float logits[OUTPUT_DIM];
-            float pred[OUTPUT_DIM];
-            float grad[OUTPUT_DIM];
-            size_t t = 0U;
-            size_t j = 0U;
-            memset(ids, 0, sizeof(ids));
-            memset(logits, 0, sizeof(logits));
-            memset(pred, 0, sizeof(pred));
-            memset(grad, 0, sizeof(grad));
-            rc = tokenizer_encode(&tokenizer, s->command, ids, MAX_SEQ_LEN, &count);
-            if (rc != TOKENIZER_STATUS_OK || count == 0U) {
-                vocab_free(&vocab);
-                csv_free_dataset(&ds);
-                return WORKFLOW_STATUS_DATA_ERROR;
-            }
-            predict_logits(weights, ids, count, s->state, logits);
-            if (activate_output(logits, pred) != WORKFLOW_STATUS_OK) {
-                vocab_free(&vocab);
-                csv_free_dataset(&ds);
-                return WORKFLOW_STATUS_INTERNAL_ERROR;
-            }
-            for (j = 0U; j < OUTPUT_DIM; ++j) {
-                float err = pred[j] - s->target[j];
-                grad[j] = err;
-                loss_sum += err * err;
-            }
-            for (t = 0U; t < count; ++t) {
-                size_t id = (ids[t] >= 0) ? (size_t)ids[t] : 0U;
-                if (id >= VOCAB_SIZE) {
-                    id = 0U;
-                }
-                for (j = 0U; j < OUTPUT_DIM; ++j) {
-                    weights[id * OUTPUT_DIM + j] -= (options->learning_rate * grad[j]) / (float)count;
-                }
-            }
-            for (t = 0U; t < STATE_DIM; ++t) {
-                size_t base = TOKEN_WEIGHT_COUNT + t * OUTPUT_DIM;
-                for (j = 0U; j < OUTPUT_DIM; ++j) {
-                    weights[base + j] -= options->learning_rate * grad[j] * s->state[t];
-                }
-            }
-            for (j = 0U; j < OUTPUT_DIM; ++j) {
-                weights[TOKEN_WEIGHT_COUNT + STATE_WEIGHT_COUNT + j] -= options->learning_rate * grad[j];
-            }
-        }
-        printf("epoch=%zu avg_loss=%.6f\n",
-               epoch + 1U,
-               (double)(loss_sum / (float)(ds.count * OUTPUT_DIM)));
+    for (i = 0U; i < ds.count; ++i) {
+        samples[i].command = ds.samples[i].command;
+        samples[i].state = ds.samples[i].state;
+        samples[i].target = ds.samples[i].target;
+    }
+    rc = train_with_samples(&tokenizer, samples, ds.count, options->epochs, options->learning_rate, weights);
+    if (rc != WORKFLOW_STATUS_OK) {
+        vocab_free(&vocab);
+        csv_free_dataset(&ds);
+        return rc;
     }
     rc = weights_save_binary(options->out_weights_bin, weights, TOTAL_WEIGHT_COUNT);
     if (rc != WEIGHTS_IO_STATUS_OK) {
@@ -171,5 +199,52 @@ int workflow_train_from_csv(const WorkflowTrainOptions* options) {
     }
     vocab_free(&vocab);
     csv_free_dataset(&ds);
+    return WORKFLOW_STATUS_OK;
+}
+
+int workflow_train_from_memory(const WorkflowTrainMemoryOptions* options) {
+    Vocabulary vocab;
+    Tokenizer tokenizer;
+    float weights[TOTAL_WEIGHT_COUNT];
+    int rc = 0;
+    if (options == NULL || options->samples == NULL || options->sample_count == 0U || options->vocab_path == NULL ||
+        options->out_weights_bin == NULL || options->out_weights_c == NULL || options->out_symbol == NULL) {
+        return WORKFLOW_STATUS_INVALID_ARGUMENT;
+    }
+    if (options->epochs == 0U || options->learning_rate <= 0.0f) {
+        return WORKFLOW_STATUS_INVALID_ARGUMENT;
+    }
+    if (STATE_DIM != 8 || OUTPUT_DIM != 4) {
+        return WORKFLOW_STATUS_INVALID_ARGUMENT;
+    }
+    memset(&vocab, 0, sizeof(vocab));
+    memset(&tokenizer, 0, sizeof(tokenizer));
+    memset(weights, 0, sizeof(weights));
+    rc = workflow_prepare_tokenizer(options->vocab_path, &vocab, &tokenizer);
+    if (rc != WORKFLOW_STATUS_OK) {
+        return rc;
+    }
+    init_weights(weights, TOTAL_WEIGHT_COUNT);
+    rc = train_with_samples(&tokenizer,
+                            options->samples,
+                            options->sample_count,
+                            options->epochs,
+                            options->learning_rate,
+                            weights);
+    if (rc != WORKFLOW_STATUS_OK) {
+        vocab_free(&vocab);
+        return rc;
+    }
+    rc = weights_save_binary(options->out_weights_bin, weights, TOTAL_WEIGHT_COUNT);
+    if (rc != WEIGHTS_IO_STATUS_OK) {
+        vocab_free(&vocab);
+        return WORKFLOW_STATUS_IO_ERROR;
+    }
+    rc = weights_export_c_source(options->out_weights_c, options->out_symbol, weights, TOTAL_WEIGHT_COUNT);
+    if (rc != WEIGHTS_IO_STATUS_OK) {
+        vocab_free(&vocab);
+        return WORKFLOW_STATUS_IO_ERROR;
+    }
+    vocab_free(&vocab);
     return WORKFLOW_STATUS_OK;
 }

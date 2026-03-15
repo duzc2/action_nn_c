@@ -142,3 +142,15 @@ int workflow_run_step(WorkflowRuntime* runtime, const char* command, const float
     rc = activate_output(logits, out_action);
     return (rc == WORKFLOW_STATUS_OK) ? WORKFLOW_STATUS_OK : WORKFLOW_STATUS_INTERNAL_ERROR;
 }
+
+int workflow_run_step_goal(WorkflowRuntime* runtime, const float* state, float* out_action) {
+    float logits[OUTPUT_DIM];
+    int rc = 0;
+    if (runtime == NULL || state == NULL || out_action == NULL || runtime->ready != 1) {
+        return WORKFLOW_STATUS_INVALID_ARGUMENT;
+    }
+    memset(logits, 0, sizeof(logits));
+    predict_logits(runtime->weights, NULL, 0U, state, logits);
+    rc = activate_output(logits, out_action);
+    return (rc == WORKFLOW_STATUS_OK) ? WORKFLOW_STATUS_OK : WORKFLOW_STATUS_INTERNAL_ERROR;
+}

@@ -59,18 +59,12 @@ target_include_directories(min_train_loop PRIVATE
 )
 target_link_libraries(min_train_loop PRIVATE dnn_train)
 
-add_executable(c99_full_demo
-    src/tools/c99_full_demo.c
-)
-target_include_directories(c99_full_demo PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/include
-)
-target_link_libraries(c99_full_demo PRIVATE dnn_train)
+add_subdirectory(demo/goal)
+add_subdirectory(demo/step)
 
 if (UNIX OR MINGW)
     target_link_libraries(dnn_infer PUBLIC m)
     target_link_libraries(profiler PRIVATE m)
-    target_link_libraries(c99_full_demo PRIVATE m)
     target_link_libraries(dnn_train PUBLIC m)
 endif()
 
@@ -83,10 +77,7 @@ add_executable(full_test_suite
     test/src/test_cases_error_boundary.c
     test/src/test_cases_stress_integration.c
     test/src/test_cases_model_special.c
-    test/src/test_cases_generated_artifacts.c
     test/src/test_suite.c
-    demo_weights_export.c
-    demo_network_functions.c
 )
 target_include_directories(full_test_suite PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/include
