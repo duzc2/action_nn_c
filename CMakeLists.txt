@@ -19,20 +19,30 @@ if (MSVC)
     add_compile_options(/utf-8)
 endif()
 
-add_library(dnn_core STATIC
+add_library(dnn_infer STATIC
     src/core/tensor.c
     src/core/ops.c
     src/core/tokenizer.c
     src/core/weights_io.c
     src/core/protocol.c
-    src/core/workflow.c
+    src/infer/workflow_runtime.c
     src/tokenizer/tokenizer_runtime.c
     src/model/transformer.c
+)
+target_include_directories(dnn_infer PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/infer/include
+)
+
+add_library(dnn_train STATIC
+    src/train/workflow_train.c
     src/train/csv_loader.c
 )
-target_include_directories(dnn_core PUBLIC
+target_include_directories(dnn_train PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/train/include
 )
+target_link_libraries(dnn_train PUBLIC dnn_infer)
 
 add_executable(profiler
     src/tools/profiler.c
@@ -47,7 +57,7 @@ add_executable(min_train_loop
 target_include_directories(min_train_loop PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/include
 )
-target_link_libraries(min_train_loop PRIVATE dnn_core)
+target_link_libraries(min_train_loop PRIVATE dnn_train)
 
 add_executable(c99_full_demo
     src/tools/c99_full_demo.c
@@ -55,12 +65,13 @@ add_executable(c99_full_demo
 target_include_directories(c99_full_demo PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/include
 )
-target_link_libraries(c99_full_demo PRIVATE dnn_core)
+target_link_libraries(c99_full_demo PRIVATE dnn_train)
 
 if (UNIX OR MINGW)
-    target_link_libraries(dnn_core PUBLIC m)
+    target_link_libraries(dnn_infer PUBLIC m)
     target_link_libraries(profiler PRIVATE m)
     target_link_libraries(c99_full_demo PRIVATE m)
+    target_link_libraries(dnn_train PUBLIC m)
 endif()
 
 # 全量 C99 测试套件：
@@ -81,7 +92,7 @@ target_include_directories(full_test_suite PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/include
     ${CMAKE_CURRENT_SOURCE_DIR}/test/include
 )
-target_link_libraries(full_test_suite PRIVATE dnn_core)
+target_link_libraries(full_test_suite PRIVATE dnn_train)
 
 if (UNIX OR MINGW)
     target_link_libraries(full_test_suite PRIVATE m)

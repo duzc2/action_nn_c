@@ -39,7 +39,7 @@
 - `ProtocolFrame`：RAW/TOK 统一帧  
   [protocol.h](../src/include/protocol.h#L31-L36)
 - `WorkflowRuntime`：推理运行时上下文（词表/权重/状态）  
-  [workflow.h](../src/include/workflow.h#L26-L34)
+  [workflow_infer.h](../src/infer/include/workflow_infer.h)
 
 ### 3.3 执行链路
 
@@ -68,6 +68,10 @@
 - 训练后不要变更输出通道语义
 
 ## 5. 工具链
+
+库拆分：
+- `dnn_infer`：仅推理链路（tokenizer/weights_io/workflow runtime）
+- `dnn_train`：训练链路（workflow_train/csv_loader），并依赖 `dnn_infer`
 
 ### 5.1 profiler
 

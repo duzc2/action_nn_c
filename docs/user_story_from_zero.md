@@ -341,7 +341,7 @@ data/
 
 ```c
 #include <stdio.h>
-#include "../include/workflow.h"
+#include "../train/include/workflow_train.h"
 
 int main(void) {
     WorkflowTrainOptions options;
@@ -376,8 +376,9 @@ add_executable(my_train_loop
 )
 target_include_directories(my_train_loop PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/train/include
 )
-target_link_libraries(my_train_loop PRIVATE dnn_core)
+target_link_libraries(my_train_loop PRIVATE dnn_train)
 ```
 
 ### 10.4 执行训练
@@ -417,7 +418,7 @@ cmake --build build --target my_train_loop
 #include <stdio.h>
 #include <math.h>
 #include <string.h>
-#include "../include/workflow.h"
+#include "../infer/include/workflow_infer.h"
 
 typedef struct AppContext {
     float x;
@@ -550,8 +551,9 @@ add_executable(my_infer_app
 )
 target_include_directories(my_infer_app PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/infer/include
 )
-target_link_libraries(my_infer_app PRIVATE dnn_core)
+target_link_libraries(my_infer_app PRIVATE dnn_infer)
 ```
 
 ### 11.4 推理执行
@@ -580,9 +582,9 @@ cmake --build build --target my_infer_app
 5. 结束时调 `workflow_runtime_shutdown`
 
 对应代码位置：
-- 运行时初始化接口：[workflow.h](../src/include/workflow.h)
-- 单步推理接口：[workflow.h](../src/include/workflow.h)
-- 接口实现：[workflow.c](../src/core/workflow.c)
+- 运行时初始化接口：[workflow_infer.h](../src/infer/include/workflow_infer.h)
+- 单步推理接口：[workflow_infer.h](../src/infer/include/workflow_infer.h)
+- 接口实现：[workflow_runtime.c](../src/infer/workflow_runtime.c)
 
 当前行为说明：
 - 什么时候跑下一帧由外部循环决定

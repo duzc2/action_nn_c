@@ -1,0 +1,12 @@
+#ifndef WORKFLOW_STATUS_H
+#define WORKFLOW_STATUS_H
+
+typedef enum WorkflowStatus {
+    WORKFLOW_STATUS_OK = 0,
+    WORKFLOW_STATUS_INVALID_ARGUMENT = -1,
+    WORKFLOW_STATUS_IO_ERROR = -2,
+    WORKFLOW_STATUS_DATA_ERROR = -3,
+    WORKFLOW_STATUS_INTERNAL_ERROR = -4
+} WorkflowStatus;
+
+#endif
