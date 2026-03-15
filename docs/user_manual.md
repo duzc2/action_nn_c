@@ -84,7 +84,7 @@
 关键接口：
 - [tokenizer.h](../src/include/tokenizer.h)
 - [ops.h](../src/include/ops.h)
-- [workflow.h](../src/include/workflow.h)
+- [workflow_infer.h](../src/infer/include/workflow_infer.h)
 
 ## 4. config_user.h 全项说明
 

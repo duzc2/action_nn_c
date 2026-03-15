@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <time.h>
 
 #include "../include/config_user.h"
 #include "../include/csv_loader.h"
@@ -390,6 +391,161 @@ static float clamp_abs_step(float step, float remain) {
     return step;
 }
 
+static int clamp_int(int v, int lo, int hi) {
+    if (v < lo) {
+        return lo;
+    }
+    if (v > hi) {
+        return hi;
+    }
+    return v;
+}
+
+static float clamp_float(float v, float lo, float hi) {
+    if (v < lo) {
+        return lo;
+    }
+    if (v > hi) {
+        return hi;
+    }
+    return v;
+}
+
+static void clear_screen_draw_mode(void) {
+    printf("\x1b[2J\x1b[H");
+}
+
+static void wait_enter_for_next_frame(void) {
+    char linebuf[16];
+    printf("Press Enter to compute next frame...");
+    fflush(stdout);
+    if (fgets(linebuf, sizeof(linebuf), stdin) == NULL) {
+        clearerr(stdin);
+    }
+}
+
+static void render_cli_frame(const Pose2D* pose,
+                             const Pose2D* goal,
+                             size_t frame,
+                             const char* command,
+                             const float* act,
+                             int width,
+                             int height,
+                             float world_x_max,
+                             float world_y_max) {
+    char canvas[32][96];
+    int x = 0;
+    int y = 0;
+    int pose_col = 0;
+    int pose_row = 0;
+    int goal_col = 0;
+    int goal_row = 0;
+    if (pose == NULL || goal == NULL || command == NULL || act == NULL) {
+        return;
+    }
+    if (width < 10 || width > 90 || height < 5 || height > 30) {
+        return;
+    }
+    for (y = 0; y < height; ++y) {
+        for (x = 0; x < width; ++x) {
+            canvas[y][x] = '.';
+        }
+        canvas[y][width] = '\0';
+    }
+    pose_col = clamp_int((int)lroundf((pose->x / world_x_max) * (float)(width - 1)), 0, width - 1);
+    pose_row = clamp_int((int)lroundf((pose->y / world_y_max) * (float)(height - 1)), 0, height - 1);
+    goal_col = clamp_int((int)lroundf((goal->x / world_x_max) * (float)(width - 1)), 0, width - 1);
+    goal_row = clamp_int((int)lroundf((goal->y / world_y_max) * (float)(height - 1)), 0, height - 1);
+    canvas[height - 1 - goal_row][goal_col] = 'G';
+    canvas[height - 1 - pose_row][pose_col] = '@';
+
+    printf("\x1b[H");
+    printf("CLI Draw Mode | frame=%03zu | cmd=\"%s\"\n", frame + 1U, command);
+    printf("pose=(%.2f, %.2f) goal=(%.2f, %.2f) act=(%.3f, %.3f, %.3f, %.3f)\n",
+           (double)pose->x,
+           (double)pose->y,
+           (double)goal->x,
+           (double)goal->y,
+           (double)act[0],
+           (double)act[1],
+           (double)act[2],
+           (double)act[3]);
+    printf("+");
+    for (x = 0; x < width; ++x) {
+        printf("-");
+    }
+    printf("+\n");
+    for (y = 0; y < height; ++y) {
+        printf("|%s|\n", canvas[y]);
+    }
+    printf("+");
+    for (x = 0; x < width; ++x) {
+        printf("-");
+    }
+    printf("+\n");
+}
+
+static int run_cli_draw_mode(DemoContext* ctx,
+                             const float* loaded_weights,
+                             const Pose2D* goal,
+                             Pose2D* io_pose,
+                             size_t frames) {
+    static const char* commands[] = {
+        "move left",
+        "move right",
+        "move left fast",
+        "move right fast",
+        "move left slow",
+        "move right slow",
+        "move stop",
+        "stop",
+        "move left fast now",
+        "move right slow now"
+    };
+    size_t frame = 0U;
+    if (ctx == NULL || loaded_weights == NULL || goal == NULL || io_pose == NULL || frames == 0U) {
+        return -1;
+    }
+    srand((unsigned int)time(NULL));
+    clear_screen_draw_mode();
+    for (frame = 0U; frame < frames; ++frame) {
+        const char* command = commands[rand() % (sizeof(commands) / sizeof(commands[0]))];
+        float state[STATE_DIM];
+        int token_ids[MAX_SEQ_LEN];
+        size_t token_count = 0U;
+        float logits[OUTPUT_DIM];
+        float act[OUTPUT_DIM];
+        float step_x = 0.0f;
+        float step_y = 0.0f;
+        int rc = TOKENIZER_STATUS_OK;
+        memset(state, 0, sizeof(state));
+        memset(token_ids, 0, sizeof(token_ids));
+        memset(logits, 0, sizeof(logits));
+        memset(act, 0, sizeof(act));
+        state[0] = io_pose->x / 15.0f;
+        state[1] = io_pose->y / 15.0f;
+        state[2] = (goal->x - io_pose->x) / 15.0f;
+        state[3] = (goal->y - io_pose->y) / 15.0f;
+        state[4] = (fabsf(goal->x - io_pose->x) + fabsf(goal->y - io_pose->y)) / 30.0f;
+        rc = tokenizer_encode(&ctx->tokenizer, command, token_ids, MAX_SEQ_LEN, &token_count);
+        if (rc != TOKENIZER_STATUS_OK || token_count == 0U) {
+            return -2;
+        }
+        predict_logits(loaded_weights, token_ids, token_count, state, logits);
+        if (activate_output(logits, act) != 0) {
+            return -3;
+        }
+        step_x = clamp_float(act[2] * 0.70f, -0.60f, 0.60f);
+        step_y = clamp_float(act[3] * 0.40f, -0.40f, 0.40f);
+        io_pose->x = clamp_float(io_pose->x + step_x, 0.0f, 15.0f);
+        io_pose->y = clamp_float(io_pose->y + step_y, 0.0f, 15.0f);
+        render_cli_frame(io_pose, goal, frame, command, act, 45, 18, 15.0f, 15.0f);
+        wait_enter_for_next_frame();
+    }
+    printf("draw mode finished: final pose=(%.3f, %.3f)\n", (double)io_pose->x, (double)io_pose->y);
+    return 0;
+}
+
 static int run_external_goal_loop(DemoContext* ctx,
                                   const float* loaded_weights,
                                   const Pose2D* goal,
@@ -621,6 +777,17 @@ int main(int argc, char** argv) {
         loaded_weights = NULL;
         cleanup_context(&ctx);
         return 10;
+    }
+    {
+        Pose2D draw_pose = { 7.5f, 7.5f };
+        rc = run_cli_draw_mode(&ctx, loaded_weights, &target_pose, &draw_pose, 120U);
+        if (rc != 0) {
+            fprintf(stderr, "run_cli_draw_mode failed: %d\n", rc);
+            free(loaded_weights);
+            loaded_weights = NULL;
+            cleanup_context(&ctx);
+            return 11;
+        }
     }
     free(loaded_weights);
     loaded_weights = NULL;
