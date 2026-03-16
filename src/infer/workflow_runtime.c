@@ -90,9 +90,6 @@ int workflow_runtime_init(WorkflowRuntime* runtime, const char* vocab_path, cons
     if (runtime == NULL || vocab_path == NULL || weights_bin_path == NULL) {
         return WORKFLOW_STATUS_INVALID_ARGUMENT;
     }
-    if (STATE_DIM != 8 || OUTPUT_DIM != 4) {
-        return WORKFLOW_STATUS_INVALID_ARGUMENT;
-    }
     memset(runtime, 0, sizeof(*runtime));
     rc = weights_load_binary(weights_bin_path, &runtime->weights, &runtime->weight_count);
     if (rc != WEIGHTS_IO_STATUS_OK || runtime->weights == NULL || runtime->weight_count != TOTAL_WEIGHT_COUNT) {

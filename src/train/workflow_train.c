@@ -153,9 +153,6 @@ int workflow_train_from_csv(const WorkflowTrainOptions* options) {
     if (options->epochs == 0U || options->learning_rate <= 0.0f) {
         return WORKFLOW_STATUS_INVALID_ARGUMENT;
     }
-    if (STATE_DIM != 8 || OUTPUT_DIM != 4) {
-        return WORKFLOW_STATUS_INVALID_ARGUMENT;
-    }
     memset(&ds, 0, sizeof(ds));
     memset(&vocab, 0, sizeof(vocab));
     memset(&tokenizer, 0, sizeof(tokenizer));
@@ -212,9 +209,6 @@ int workflow_train_from_memory(const WorkflowTrainMemoryOptions* options) {
         return WORKFLOW_STATUS_INVALID_ARGUMENT;
     }
     if (options->epochs == 0U || options->learning_rate <= 0.0f) {
-        return WORKFLOW_STATUS_INVALID_ARGUMENT;
-    }
-    if (STATE_DIM != 8 || OUTPUT_DIM != 4) {
         return WORKFLOW_STATUS_INVALID_ARGUMENT;
     }
     memset(&vocab, 0, sizeof(vocab));
