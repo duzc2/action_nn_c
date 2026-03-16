@@ -9,10 +9,16 @@
 #include "../../src/infer/include/workflow_infer.h"
 #include "sevenseg_shared.h"
 
+/**
+ * @brief 拼接目录与文件名，构造数据文件路径。
+ */
 static void build_path(char* out_path, size_t cap, const char* dir, const char* file_name) {
     (void)snprintf(out_path, cap, "%s/%s", dir, file_name);
 }
 
+/**
+ * @brief 单数字推理：数字文本 + 状态输入 -> 七段开关结果。
+ */
 static int infer_digit(WorkflowRuntime* runtime, int digit, int out_seg[7]) {
     char command[32];
     float state[STATE_DIM];
@@ -36,6 +42,9 @@ static int infer_digit(WorkflowRuntime* runtime, int digit, int out_seg[7]) {
     return 0;
 }
 
+/**
+ * @brief 通过 0~9 全量对照表做快速自检。
+ */
 static int self_check(WorkflowRuntime* runtime) {
     int digit = 0;
     int mismatches = 0;
@@ -54,6 +63,9 @@ static int self_check(WorkflowRuntime* runtime) {
     return mismatches;
 }
 
+/**
+ * @brief 基于二进制权重的交互式推理示例入口。
+ */
 int main(int argc, char** argv) {
     const char* data_dir = "demo/sevenseg/data";
     char vocab_path[260];

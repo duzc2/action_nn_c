@@ -31,6 +31,9 @@ enum {
     GOAL_EPISODES = 5
 };
 
+/**
+ * @brief 创建目录（若已存在则视为成功）。
+ */
 static int create_dir_if_missing(const char* path) {
 #if defined(_WIN32)
     int rc = _mkdir(path);
@@ -43,6 +46,9 @@ static int create_dir_if_missing(const char* path) {
     return -1;
 }
 
+/**
+ * @brief 确保 goal 演示数据目录层级存在。
+ */
 static int ensure_goal_data_dir(void) {
     if (create_dir_if_missing("demo") != 0) {
         return -1;
@@ -56,6 +62,9 @@ static int ensure_goal_data_dir(void) {
     return 0;
 }
 
+/**
+ * @brief 将字符串数组按行写入文本文件。
+ */
 static int write_rows_to_text(const char* file_path, const char* const* rows, size_t row_count) {
     FILE* fp = NULL;
     size_t i = 0U;
@@ -76,6 +85,9 @@ static int write_rows_to_text(const char* file_path, const char* const* rows, si
     return 0;
 }
 
+/**
+ * @brief 写出 goal 演示词表。
+ */
 static int write_vocab(const char* file_path) {
     static const char* tokens[] = {
         "<unk>", "goal",
@@ -85,6 +97,9 @@ static int write_vocab(const char* file_path) {
     return write_rows_to_text(file_path, tokens, sizeof(tokens) / sizeof(tokens[0]));
 }
 
+/**
+ * @brief 按剩余距离裁剪步长，避免越过目标点。
+ */
 static float clamp_abs_step(float step, float remain) {
     if (fabsf(step) > fabsf(remain)) {
         return remain;
@@ -92,6 +107,9 @@ static float clamp_abs_step(float step, float remain) {
     return step;
 }
 
+/**
+ * @brief 浮点数区间裁剪。
+ */
 static float clamp_float(float v, float lo, float hi) {
     if (v < lo) {
         return lo;
@@ -102,6 +120,9 @@ static float clamp_float(float v, float lo, float hi) {
     return v;
 }
 
+/**
+ * @brief 整数区间裁剪。
+ */
 static int clamp_int(int v, int lo, int hi) {
     if (v < lo) {
         return lo;
@@ -112,10 +133,16 @@ static int clamp_int(int v, int lo, int hi) {
     return v;
 }
 
+/**
+ * @brief 清屏并将光标移动到左上角。
+ */
 static void clear_screen_draw_mode(void) {
     printf("\x1b[2J\x1b[H");
 }
 
+/**
+ * @brief 等待用户回车，用于逐帧观察。
+ */
 static void wait_enter_for_next_frame(void) {
     char linebuf[16];
     printf("Press Enter to compute next frame...");
@@ -125,6 +152,9 @@ static void wait_enter_for_next_frame(void) {
     }
 }
 
+/**
+ * @brief 生成 goal 命令文本（如 "goal 15 4"）。
+ */
 static void format_goal_command(int gx, int gy, char* out_cmd, size_t cap) {
     if (out_cmd == NULL || cap == 0U) {
         return;
@@ -132,6 +162,9 @@ static void format_goal_command(int gx, int gy, char* out_cmd, size_t cap) {
     (void)snprintf(out_cmd, cap, "goal %d %d", gx, gy);
 }
 
+/**
+ * @brief 随机采样目标点与回合最大步数。
+ */
 static void pick_random_goal(Pose2D* out_goal, int* out_max_steps) {
     if (out_goal == NULL || out_max_steps == NULL) {
         return;
@@ -141,6 +174,9 @@ static void pick_random_goal(Pose2D* out_goal, int* out_max_steps) {
     *out_max_steps = GOAL_MIN_STEPS + (rand() % (GOAL_MAX_STEPS - GOAL_MIN_STEPS + 1));
 }
 
+/**
+ * @brief 构建包含位姿与目标信息的状态向量。
+ */
 static void build_state_with_goal(const Pose2D* pose, const Pose2D* goal, float* state) {
     float remain_x = goal->x - pose->x;
     float remain_y = goal->y - pose->y;
@@ -152,6 +188,9 @@ static void build_state_with_goal(const Pose2D* pose, const Pose2D* goal, float*
     state[4] = (fabsf(remain_x) + fabsf(remain_y)) / 30.0f;
 }
 
+/**
+ * @brief 渲染 goal 任务单帧终端画面。
+ */
 static void render_cli_goal_frame(const Pose2D* pose,
                                   const Pose2D* goal,
                                   size_t frame,
@@ -203,6 +242,13 @@ static void render_cli_goal_frame(const Pose2D* pose,
     printf("+\n");
 }
 
+/**
+ * @brief 生成 goal 任务训练样本。
+ *
+ * 关键算法：
+ * - 目标方向由 rx/ry 符号决定；
+ * - 连续动作幅值由归一化距离裁剪到 [-1,1]。
+ */
 static int build_goal_training_samples(WorkflowTrainSample* out_samples,
                                        char commands[][32],
                                        float states[][STATE_DIM],
@@ -269,6 +315,13 @@ static int build_goal_training_samples(WorkflowTrainSample* out_samples,
     return 0;
 }
 
+/**
+ * @brief 执行单回合目标跟随循环。
+ *
+ * 关键保护点：
+ * - 每帧先检测是否到达，避免额外一步造成超调。
+ * - 对输出步长设置最小推进阈值，减轻模型输出过小导致停滞的问题。
+ */
 static int run_goal_loop(WorkflowRuntime* runtime, const Pose2D* goal, const char* goal_command, Pose2D* io_pose, size_t max_frames) {
     size_t frame = 0U;
     if (runtime == NULL || goal == NULL || goal_command == NULL || io_pose == NULL || max_frames == 0U) {
@@ -320,6 +373,9 @@ static int run_goal_loop(WorkflowRuntime* runtime, const Pose2D* goal, const cha
     return 1;
 }
 
+/**
+ * @brief Goal 演示主流程：训练 -> 导出 -> 推理 -> 多回合交互可视化。
+ */
 int main(void) {
     const char* vocab_path = "demo/goal/data/demo_vocab_goal.txt";
     const char* weight_bin_path = "demo/goal/data/demo_weights_goal.bin";

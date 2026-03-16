@@ -32,6 +32,9 @@ typedef struct StepCommandSpec {
 
 enum { MAX_STEP_SAMPLES = 2048 };
 
+/**
+ * @brief 创建目录（若已存在则视为成功）。
+ */
 static int create_dir_if_missing(const char* path) {
 #if defined(_WIN32)
     int rc = _mkdir(path);
@@ -44,6 +47,9 @@ static int create_dir_if_missing(const char* path) {
     return -1;
 }
 
+/**
+ * @brief 确保 step 演示数据目录层级存在。
+ */
 static int ensure_step_data_dir(void) {
     if (create_dir_if_missing("demo") != 0) {
         return -1;
@@ -57,6 +63,9 @@ static int ensure_step_data_dir(void) {
     return 0;
 }
 
+/**
+ * @brief 将字符串数组按行写入文本文件。
+ */
 static int write_rows_to_text(const char* file_path, const char* const* rows, size_t row_count) {
     FILE* fp = NULL;
     size_t i = 0U;
@@ -77,6 +86,9 @@ static int write_rows_to_text(const char* file_path, const char* const* rows, si
     return 0;
 }
 
+/**
+ * @brief 写出 step 演示词表。
+ */
 static int write_vocab(const char* file_path) {
     static const char* tokens[] = {
         "<unk>", "move", "left", "right", "up", "down", "stop", "fast", "slow"
@@ -112,6 +124,12 @@ static const StepCommandSpec kStepCommandSpecs[] = {
     { "stop", 0.00f, 0.00f }
 };
 
+/**
+ * @brief 校验“命令文本”与“目标动作”方向是否一致。
+ *
+ * 背景：
+ * - 该保护用于构造训练集时尽早发现标签错误，避免将异常样本写入训练流程。
+ */
 static int validate_step_target_for_command(const char* command, const float* target) {
     const float eps = 0.0001f;
     int has_left = 0;
@@ -160,6 +178,9 @@ static int validate_step_target_for_command(const char* command, const float* ta
     return 0;
 }
 
+/**
+ * @brief 构造 step 任务训练样本。
+ */
 static int build_step_training_samples(WorkflowTrainSample* out_samples,
                                        char commands[][32],
                                        float states[][STATE_DIM],
@@ -205,6 +226,9 @@ static int build_step_training_samples(WorkflowTrainSample* out_samples,
     return 0;
 }
 
+/**
+ * @brief 浮点数区间裁剪。
+ */
 static float clamp_float(float v, float lo, float hi) {
     if (v < lo) {
         return lo;
@@ -215,6 +239,9 @@ static float clamp_float(float v, float lo, float hi) {
     return v;
 }
 
+/**
+ * @brief 整数区间裁剪。
+ */
 static int clamp_int(int v, int lo, int hi) {
     if (v < lo) {
         return lo;
@@ -225,10 +252,16 @@ static int clamp_int(int v, int lo, int hi) {
     return v;
 }
 
+/**
+ * @brief 清屏并将光标移动到左上角。
+ */
 static void clear_screen_draw_mode(void) {
     printf("\x1b[2J\x1b[H");
 }
 
+/**
+ * @brief 等待用户回车，用于逐帧观察。
+ */
 static void wait_enter_for_next_frame(void) {
     char linebuf[16];
     printf("Press Enter to compute next frame...");
@@ -238,12 +271,18 @@ static void wait_enter_for_next_frame(void) {
     }
 }
 
+/**
+ * @brief 构建只含当前位置的状态向量。
+ */
 static void build_state_step_only(const Pose2D* pose, float* state) {
     memset(state, 0, sizeof(float) * STATE_DIM);
     state[0] = pose->x / 15.0f;
     state[1] = pose->y / 15.0f;
 }
 
+/**
+ * @brief 渲染 step 任务单帧终端画面。
+ */
 static void render_cli_step_frame(const Pose2D* pose,
                                   size_t frame,
                                   const char* command,
@@ -284,6 +323,12 @@ static void render_cli_step_frame(const Pose2D* pose,
     printf("+\n");
 }
 
+/**
+ * @brief 执行 step 任务随机命令连续演示。
+ *
+ * 关键约束：
+ * - 每条命令持有若干帧，避免每帧切换造成轨迹过于抖动。
+ */
 static int run_step_draw_mode(WorkflowRuntime* runtime, Pose2D* io_pose, size_t frames) {
     static const char* commands[] = {
         "move left",
@@ -348,6 +393,9 @@ static int run_step_draw_mode(WorkflowRuntime* runtime, Pose2D* io_pose, size_t 
     return 0;
 }
 
+/**
+ * @brief Step 演示主流程：训练 -> 导出 -> 推理 -> 绘制轨迹。
+ */
 int main(void) {
     const char* vocab_path = "demo/step/data/demo_vocab_step.txt";
     const char* weight_bin_path = "demo/step/data/demo_weights_step.bin";

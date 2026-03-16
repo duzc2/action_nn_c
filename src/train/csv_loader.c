@@ -8,6 +8,13 @@
 
 #include "../include/csv_loader.h"
 
+/**
+ * @brief 读取 CSV 文件并构建内存数据集。
+ *
+ * 关键保护点：
+ * - 动态扩容失败时立即释放已分配内存并返回错误，避免泄漏。
+ * - 字段数不足的行会被跳过，保证输出样本结构完整。
+ */
 int csv_load_dataset(const char* file_path, CsvDataset* out_dataset) {
     FILE* fp = NULL;
     CsvSample* samples = NULL;
@@ -27,6 +34,7 @@ int csv_load_dataset(const char* file_path, CsvDataset* out_dataset) {
         CsvSample item;
         int n = 0;
         memset(&item, 0, sizeof(item));
+        /* 解析格式：command + 8 维状态 + 4 维目标，共 13 个字段。 */
         n = sscanf(line,
                    "%127[^,],%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f",
                    item.command,
@@ -55,6 +63,9 @@ int csv_load_dataset(const char* file_path, CsvDataset* out_dataset) {
     return 0;
 }
 
+/**
+ * @brief 释放 csv_load_dataset 分配的数据集资源。
+ */
 void csv_free_dataset(CsvDataset* dataset) {
     if (dataset == NULL) {
         return;

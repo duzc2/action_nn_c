@@ -17,6 +17,12 @@ enum {
     TOTAL_WEIGHT_COUNT = TOKEN_WEIGHT_COUNT + STATE_WEIGHT_COUNT + BIAS_COUNT
 };
 
+/**
+ * @brief 初始化权重为小幅随机样式常量序列。
+ *
+ * 背景：
+ * - 该初始化足够打破全零对称性，同时保持数值稳定，便于示例训练快速收敛。
+ */
 static void init_weights(float* w, size_t n) {
     size_t i = 0U;
     for (i = 0U; i < n; ++i) {
@@ -24,6 +30,9 @@ static void init_weights(float* w, size_t n) {
     }
 }
 
+/**
+ * @brief 应用输出激活函数。
+ */
 static int activate_output(const float* logits, float* out_act) {
     const int activations[OUTPUT_DIM] = IO_MAPPING_ACTIVATIONS;
     Tensor in_t;
@@ -41,6 +50,9 @@ static int activate_output(const float* logits, float* out_act) {
     return (rc == TENSOR_STATUS_OK) ? WORKFLOW_STATUS_OK : WORKFLOW_STATUS_INTERNAL_ERROR;
 }
 
+/**
+ * @brief 按统一线性模型计算 logits。
+ */
 static void predict_logits(const float* w,
                            const int* ids,
                            size_t token_count,
@@ -54,6 +66,7 @@ static void predict_logits(const float* w,
     for (j = 0U; j < OUTPUT_DIM; ++j) {
         logits[j] = w[bias_base + j];
     }
+    /* token 分量按 token 数做均值，保持不同文本长度下梯度尺度可控。 */
     for (i = 0U; i < token_count; ++i) {
         size_t id = (ids[i] >= 0) ? (size_t)ids[i] : 0U;
         if (id >= VOCAB_SIZE) {
@@ -70,6 +83,13 @@ static void predict_logits(const float* w,
     }
 }
 
+/**
+ * @brief 基于内存样本执行训练循环。
+ *
+ * 关键约束：
+ * - 训练误差采用逐维平方误差。
+ * - 参数更新顺序固定为 token 权重、state 权重、偏置，保持可复现行为。
+ */
 static int train_with_samples(const Tokenizer* tokenizer,
                               const WorkflowTrainSample* samples,
                               size_t sample_count,
@@ -112,6 +132,7 @@ static int train_with_samples(const Tokenizer* tokenizer,
                 grad[j] = err;
                 loss_sum += err * err;
             }
+            /* 关键算法：文本权重梯度按 token 数均分，避免长命令放大更新步长。 */
             for (t = 0U; t < count; ++t) {
                 size_t id = (ids[t] >= 0) ? (size_t)ids[t] : 0U;
                 if (id >= VOCAB_SIZE) {
@@ -138,6 +159,9 @@ static int train_with_samples(const Tokenizer* tokenizer,
     return WORKFLOW_STATUS_OK;
 }
 
+/**
+ * @brief 从 CSV 数据训练并导出二进制/C 源权重。
+ */
 int workflow_train_from_csv(const WorkflowTrainOptions* options) {
     CsvDataset ds;
     Vocabulary vocab;
@@ -199,6 +223,9 @@ int workflow_train_from_csv(const WorkflowTrainOptions* options) {
     return WORKFLOW_STATUS_OK;
 }
 
+/**
+ * @brief 从内存样本训练并导出二进制/C 源权重。
+ */
 int workflow_train_from_memory(const WorkflowTrainMemoryOptions* options) {
     Vocabulary vocab;
     Tokenizer tokenizer;

@@ -46,10 +46,16 @@ size_t g_demo_network_sevenseg_output_dim(void);
 size_t g_demo_network_sevenseg_token_slots(void);
 void g_demo_network_sevenseg_forward(const float* token_onehot, size_t token_count, const float* state, float* out);
 
+/**
+ * @brief 拼接目录与文件名，构造数据文件路径。
+ */
 static void build_path(char* out_path, size_t cap, const char* dir, const char* file_name) {
     (void)snprintf(out_path, cap, "%s/%s", dir, file_name);
 }
 
+/**
+ * @brief 从编译期权重数组初始化 runtime。
+ */
 static int runtime_init_from_array(WorkflowRuntime* runtime, const char* vocab_path) {
     size_t count = g_demo_weights_sevenseg_count();
     int rc = 0;
@@ -79,6 +85,9 @@ static int runtime_init_from_array(WorkflowRuntime* runtime, const char* vocab_p
     return 0;
 }
 
+/**
+ * @brief 使用 runtime 路径推理单个数字。
+ */
 static int infer_digit_bin_style(WorkflowRuntime* runtime, int digit, int out_seg[7]) {
     char command[32];
     float state[STATE_DIM];
@@ -99,6 +108,9 @@ static int infer_digit_bin_style(WorkflowRuntime* runtime, int digit, int out_se
     return 0;
 }
 
+/**
+ * @brief 使用导出 C 函数路径推理单个数字。
+ */
 static int infer_digit_cfunc_style(Tokenizer* tokenizer, int digit, int out_seg[7]) {
     char command[32];
     int ids[MAX_SEQ_LEN];
@@ -130,10 +142,16 @@ static int infer_digit_cfunc_style(Tokenizer* tokenizer, int digit, int out_seg[
     return 0;
 }
 
+/**
+ * @brief 计算时钟差值（毫秒）。
+ */
 static double clock_diff_ms(clock_t start_tick, clock_t end_tick) {
     return ((double)(end_tick - start_tick) * 1000.0) / (double)CLOCKS_PER_SEC;
 }
 
+/**
+ * @brief 基准测试：runtime 推理模式。
+ */
 static BenchStat bench_runtime_mode(const char* name,
                                     WorkflowRuntime* runtime,
                                     int warmup_iters,
@@ -172,6 +190,9 @@ static BenchStat bench_runtime_mode(const char* name,
     return st;
 }
 
+/**
+ * @brief 基准测试：C 函数前向模式。
+ */
 static BenchStat bench_cfunc_mode(const char* name,
                                   Tokenizer* tokenizer,
                                   int warmup_iters,
@@ -210,6 +231,9 @@ static BenchStat bench_cfunc_mode(const char* name,
     return st;
 }
 
+/**
+ * @brief 输出 Markdown 基准报告。
+ */
 static int write_markdown_report(const char* path, const BenchStat* stats, size_t n, int warmup_iters, int bench_iters) {
     FILE* fp = NULL;
     size_t i = 0U;
@@ -238,6 +262,9 @@ static int write_markdown_report(const char* path, const BenchStat* stats, size_
     return 0;
 }
 
+/**
+ * @brief benchmark 主入口：比较 bin、c-array、c-function 三种路径。
+ */
 int main(int argc, char** argv) {
     const char* data_dir = "demo/sevenseg/data";
     char vocab_path[260];
