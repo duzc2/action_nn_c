@@ -16,10 +16,19 @@ size_t g_demo_network_sevenseg_output_dim(void);
 size_t g_demo_network_sevenseg_token_slots(void);
 void g_demo_network_sevenseg_forward(const float* token_onehot, size_t token_count, const float* state, float* out);
 
+/**
+ * @brief 拼接目录与文件名，构造数据文件路径。
+ */
 static void build_path(char* out_path, size_t cap, const char* dir, const char* file_name) {
     (void)snprintf(out_path, cap, "%s/%s", dir, file_name);
 }
 
+/**
+ * @brief 使用导出的 C 前向函数执行单数字推理。
+ *
+ * 关键算法：
+ * - 先将 token id 展开为 one-hot，再调用导出的网络函数完成前向计算。
+ */
 static int infer_digit_with_cfunc(Tokenizer* tokenizer, int digit, int out_seg[7]) {
     char command[32];
     int ids[MAX_SEQ_LEN];
@@ -54,6 +63,9 @@ static int infer_digit_with_cfunc(Tokenizer* tokenizer, int digit, int out_seg[7
     return 0;
 }
 
+/**
+ * @brief 基于 C 函数前向网络的交互式推理入口。
+ */
 int main(int argc, char** argv) {
     const char* data_dir = "demo/sevenseg/data";
     char vocab_path[260];

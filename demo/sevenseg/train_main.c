@@ -11,10 +11,21 @@
 #include "../../src/train/include/workflow_train.h"
 #include "sevenseg_shared.h"
 
+/**
+ * @brief 拼接目录与文件名，生成输出路径。
+ */
 static void build_path(char* out_path, size_t cap, const char* dir, const char* file_name) {
     (void)snprintf(out_path, cap, "%s/%s", dir, file_name);
 }
 
+/**
+ * @brief SevenSeg 训练与导出主流程。
+ *
+ * 流程目标：
+ * - 生成词表与样本；
+ * - 训练权重并导出 bin/c；
+ * - 从 bin 再导出函数网络，供 c 函数推理演示复用。
+ */
 int main(int argc, char** argv) {
     const char* out_dir = "./data";
     char vocab_path[260];

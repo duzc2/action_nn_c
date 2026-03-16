@@ -12,6 +12,12 @@
 size_t g_demo_weights_sevenseg_count(void);
 int g_demo_weights_sevenseg_copy(float* out, size_t out_capacity);
 
+/**
+ * @brief 从编译期数组初始化运行时权重与分词器。
+ *
+ * 关键保护点：
+ * - 任一步失败都释放已申请内存，避免泄漏。
+ */
 static int runtime_init_from_array(WorkflowRuntime* runtime, const char* vocab_path) {
     size_t count = g_demo_weights_sevenseg_count();
     int rc = 0;
@@ -41,10 +47,16 @@ static int runtime_init_from_array(WorkflowRuntime* runtime, const char* vocab_p
     return 0;
 }
 
+/**
+ * @brief 拼接目录与文件名，构造数据文件路径。
+ */
 static void build_path(char* out_path, size_t cap, const char* dir, const char* file_name) {
     (void)snprintf(out_path, cap, "%s/%s", dir, file_name);
 }
 
+/**
+ * @brief 单数字推理。
+ */
 static int infer_digit(WorkflowRuntime* runtime, int digit, int out_seg[7]) {
     char command[32];
     float state[STATE_DIM];
@@ -65,6 +77,9 @@ static int infer_digit(WorkflowRuntime* runtime, int digit, int out_seg[7]) {
     return 0;
 }
 
+/**
+ * @brief 基于 C 数组权重的交互式推理入口。
+ */
 int main(int argc, char** argv) {
     const char* data_dir = "demo/sevenseg/data";
     char vocab_path[260];

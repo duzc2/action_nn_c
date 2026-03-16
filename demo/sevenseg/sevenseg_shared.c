@@ -28,6 +28,9 @@ const int g_sevenseg_truth[10][7] = {
     { 1,1,1,1,0,1,1 }
 };
 
+/**
+ * @brief 创建目录（已存在视为成功）。
+ */
 int sevenseg_ensure_dir(const char* path) {
     int rc = 0;
     if (path == NULL) {
@@ -44,6 +47,9 @@ int sevenseg_ensure_dir(const char* path) {
     return -1;
 }
 
+/**
+ * @brief 将多行文本写入文件，每行追加换行符。
+ */
 static int write_rows_to_text(const char* file_path, const char* const* rows, size_t row_count) {
     FILE* fp = NULL;
     size_t i = 0U;
@@ -64,6 +70,9 @@ static int write_rows_to_text(const char* file_path, const char* const* rows, si
     return 0;
 }
 
+/**
+ * @brief 输出 SevenSeg 词表文件。
+ */
 int sevenseg_write_vocab(const char* file_path) {
     static const char* tokens[] = {
         "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"
@@ -71,14 +80,27 @@ int sevenseg_write_vocab(const char* file_path) {
     return write_rows_to_text(file_path, tokens, sizeof(tokens) / sizeof(tokens[0]));
 }
 
+/**
+ * @brief 查询某数字在指定段位是否点亮。
+ */
 static int segbit(int digit, int idx) {
     return (g_sevenseg_truth[digit][idx] != 0) ? 1 : 0;
 }
 
+/**
+ * @brief 将段位开关映射为训练目标值。
+ */
 static float map_target(int pin_on) {
     return pin_on ? 1.0f : 0.0f;
 }
 
+/**
+ * @brief 构造 SevenSeg 训练样本。
+ *
+ * 关键约束：
+ * - 每个数字重复多次，增强小数据训练稳定性。
+ * - state[0] 归一化为 [0,1]，与推理流程保持一致。
+ */
 int sevenseg_build_samples(WorkflowTrainSample* out_samples,
                            char commands[][32],
                            float states[][STATE_DIM],
@@ -114,6 +136,9 @@ int sevenseg_build_samples(WorkflowTrainSample* out_samples,
     return 0;
 }
 
+/**
+ * @brief 样本一致性校验。
+ */
 int sevenseg_verify_samples(const WorkflowTrainSample* samples, size_t sample_count) {
     size_t i = 0U;
     if (samples == NULL || sample_count == 0U) {
@@ -138,6 +163,9 @@ int sevenseg_verify_samples(const WorkflowTrainSample* samples, size_t sample_co
     return 0;
 }
 
+/**
+ * @brief 终端渲染七段数码管字符图。
+ */
 void sevenseg_render_cli(int digit, const int seg[7]) {
     char a = seg[0] ? '-' : ' ';
     char b = seg[1] ? '|' : ' ';
