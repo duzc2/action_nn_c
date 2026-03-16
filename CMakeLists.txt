@@ -61,6 +61,7 @@ target_link_libraries(min_train_loop PRIVATE dnn_train)
 
 add_subdirectory(demo/goal)
 add_subdirectory(demo/step)
+add_subdirectory(demo/sevenseg)
 
 if (UNIX OR MINGW)
     target_link_libraries(dnn_infer PUBLIC m)
