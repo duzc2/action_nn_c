@@ -24,6 +24,14 @@ typedef struct Pose2D {
     float y;
 } Pose2D;
 
+typedef struct StepCommandSpec {
+    const char* command;
+    float target_dx;
+    float target_dy;
+} StepCommandSpec;
+
+enum { MAX_STEP_SAMPLES = 2048 };
+
 static int create_dir_if_missing(const char* path) {
 #if defined(_WIN32)
     int rc = _mkdir(path);
@@ -71,43 +79,131 @@ static int write_rows_to_text(const char* file_path, const char* const* rows, si
 
 static int write_vocab(const char* file_path) {
     static const char* tokens[] = {
-        "<unk>", "move", "left", "right", "stop", "fast", "slow"
+        "<unk>", "move", "left", "right", "up", "down", "stop", "fast", "slow"
     };
     return write_rows_to_text(file_path, tokens, sizeof(tokens) / sizeof(tokens[0]));
 }
 
-static const float kStepStates[][STATE_DIM] = {
-    { 0.5f, 0.5f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },
-    { 0.5f, 0.5f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },
-    { 0.5f, 0.5f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },
-    { 0.5f, 0.5f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },
-    { 0.5f, 0.5f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },
-    { 0.5f, 0.5f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },
-    { 0.5f, 0.5f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },
-    { 0.5f, 0.5f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }
+static const StepCommandSpec kStepCommandSpecs[] = {
+    { "move left", -0.45f, 0.00f },
+    { "move right", 0.45f, 0.00f },
+    { "move left fast", -0.95f, 0.00f },
+    { "move right fast", 0.95f, 0.00f },
+    { "move left slow", -0.20f, 0.00f },
+    { "move right slow", 0.20f, 0.00f },
+    { "move up", 0.00f, 0.45f },
+    { "move down", 0.00f, -0.45f },
+    { "move up fast", 0.00f, 0.95f },
+    { "move down fast", 0.00f, -0.95f },
+    { "move up slow", 0.00f, 0.20f },
+    { "move down slow", 0.00f, -0.20f },
+    { "move up left", -0.45f, 0.45f },
+    { "move up right", 0.45f, 0.45f },
+    { "move down left", -0.45f, -0.45f },
+    { "move down right", 0.45f, -0.45f },
+    { "move up left fast", -0.95f, 0.95f },
+    { "move up right fast", 0.95f, 0.95f },
+    { "move down left fast", -0.95f, -0.95f },
+    { "move down right fast", 0.95f, -0.95f },
+    { "move up left slow", -0.20f, 0.20f },
+    { "move up right slow", 0.20f, 0.20f },
+    { "move down left slow", -0.20f, -0.20f },
+    { "move down right slow", 0.20f, -0.20f },
+    { "stop", 0.00f, 0.00f }
 };
 
-static const float kStepTargets[][OUTPUT_DIM] = {
-    { 1.0f, 0.0f, -0.8f, 0.0f },
-    { 0.0f, 1.0f, 0.8f, 0.0f },
-    { 1.0f, 0.0f, -1.0f, 0.5f },
-    { 0.0f, 1.0f, 1.0f, 0.5f },
-    { 1.0f, 0.0f, -0.4f, 0.0f },
-    { 0.0f, 1.0f, 0.4f, 0.0f },
-    { 0.0f, 0.0f, 0.0f, 0.0f },
-    { 0.0f, 0.0f, 0.0f, -0.1f }
-};
+static int validate_step_target_for_command(const char* command, const float* target) {
+    const float eps = 0.0001f;
+    int has_left = 0;
+    int has_right = 0;
+    int has_up = 0;
+    int has_down = 0;
+    int has_stop = 0;
+    if (command == NULL || target == NULL) {
+        return -1;
+    }
+    has_left = (strstr(command, "left") != NULL) ? 1 : 0;
+    has_right = (strstr(command, "right") != NULL) ? 1 : 0;
+    has_up = (strstr(command, "up") != NULL) ? 1 : 0;
+    has_down = (strstr(command, "down") != NULL) ? 1 : 0;
+    has_stop = (strcmp(command, "stop") == 0) ? 1 : 0;
+    if (has_stop == 1) {
+        if (fabsf(target[2]) > eps || fabsf(target[3]) > eps) {
+            return -2;
+        }
+        return 0;
+    }
+    if (has_left == 1 && target[2] >= -eps) {
+        return -3;
+    }
+    if (has_right == 1 && target[2] <= eps) {
+        return -4;
+    }
+    if (has_up == 1 && target[3] <= eps) {
+        return -5;
+    }
+    if (has_down == 1 && target[3] >= -eps) {
+        return -6;
+    }
+    if (has_left == 1 && has_right == 0 && has_up == 0 && has_down == 0 && fabsf(target[3]) > eps) {
+        return -7;
+    }
+    if (has_right == 1 && has_left == 0 && has_up == 0 && has_down == 0 && fabsf(target[3]) > eps) {
+        return -8;
+    }
+    if (has_up == 1 && has_down == 0 && has_left == 0 && has_right == 0 && fabsf(target[2]) > eps) {
+        return -9;
+    }
+    if (has_down == 1 && has_up == 0 && has_left == 0 && has_right == 0 && fabsf(target[2]) > eps) {
+        return -10;
+    }
+    return 0;
+}
 
-static const WorkflowTrainSample kStepSamples[] = {
-    { "move left", kStepStates[0], kStepTargets[0] },
-    { "move right", kStepStates[1], kStepTargets[1] },
-    { "move left fast", kStepStates[2], kStepTargets[2] },
-    { "move right fast", kStepStates[3], kStepTargets[3] },
-    { "move left slow", kStepStates[4], kStepTargets[4] },
-    { "move right slow", kStepStates[5], kStepTargets[5] },
-    { "move stop", kStepStates[6], kStepTargets[6] },
-    { "stop", kStepStates[7], kStepTargets[7] }
-};
+static int build_step_training_samples(WorkflowTrainSample* out_samples,
+                                       char commands[][32],
+                                       float states[][STATE_DIM],
+                                       float targets[][OUTPUT_DIM],
+                                       size_t capacity,
+                                       size_t* out_count) {
+    size_t cmd_i = 0U;
+    size_t gx = 0U;
+    size_t gy = 0U;
+    size_t idx = 0U;
+    if (out_samples == NULL || commands == NULL || states == NULL || targets == NULL || out_count == NULL) {
+        return -1;
+    }
+    for (cmd_i = 0U; cmd_i < sizeof(kStepCommandSpecs) / sizeof(kStepCommandSpecs[0]); ++cmd_i) {
+        for (gx = 0U; gx < 6U; ++gx) {
+            for (gy = 0U; gy < 6U; ++gy) {
+                const StepCommandSpec* spec = &kStepCommandSpecs[cmd_i];
+                float px = ((float)gx + 0.5f) * (15.0f / 6.0f);
+                float py = ((float)gy + 0.5f) * (15.0f / 6.0f);
+                if (idx >= capacity) {
+                    return -2;
+                }
+                (void)snprintf(commands[idx], 32U, "%s", spec->command);
+                memset(states[idx], 0, sizeof(float) * STATE_DIM);
+                memset(targets[idx], 0, sizeof(float) * OUTPUT_DIM);
+                states[idx][0] = px / 15.0f;
+                states[idx][1] = py / 15.0f;
+                targets[idx][0] = (spec->target_dx < 0.0f) ? 1.0f : 0.0f;
+                targets[idx][1] = (spec->target_dx > 0.0f) ? 1.0f : 0.0f;
+                targets[idx][2] = spec->target_dx;
+                targets[idx][3] = spec->target_dy;
+                if (validate_step_target_for_command(commands[idx], targets[idx]) != 0) {
+                    return -3;
+                }
+                out_samples[idx].command = commands[idx];
+                out_samples[idx].state = states[idx];
+                out_samples[idx].target = targets[idx];
+                idx++;
+            }
+        }
+    }
+    *out_count = idx;
+    return 0;
+}
 
 static float clamp_float(float v, float lo, float hi) {
     if (v < lo) {
@@ -169,7 +265,7 @@ static void render_cli_step_frame(const Pose2D* pose,
     pose_row = clamp_int((int)lroundf((pose->y / 15.0f) * (float)(height - 1)), 0, height - 1);
     canvas[height - 1 - pose_row][pose_col] = '@';
     printf("\x1b[H");
-    printf("CLI Step Mode | frame=%03zu | cmd=\"%s\"\n", frame + 1U, command);
+    printf("CLI Step Mode | frame=%03zu | cmd=\"%s\"              \n", frame + 1U, command);
     printf("pose=(%.2f, %.2f) act=(%.3f, %.3f, %.3f, %.3f)\n",
            (double)pose->x, (double)pose->y,
            (double)act[0], (double)act[1], (double)act[2], (double)act[3]);
@@ -196,32 +292,57 @@ static int run_step_draw_mode(WorkflowRuntime* runtime, Pose2D* io_pose, size_t 
         "move right fast",
         "move left slow",
         "move right slow",
-        "move stop",
-        "stop",
-        "move left fast now",
-        "move right slow now"
+        "move up",
+        "move down",
+        "move up fast",
+        "move down fast",
+        "move up slow",
+        "move down slow",
+        "move up left",
+        "move up right",
+        "move down left",
+        "move down right",
+        "move up left fast",
+        "move up right fast",
+        "move down left fast",
+        "move down right fast",
+        "move up left slow",
+        "move up right slow",
+        "move down left slow",
+        "move down right slow",
+        "stop"
     };
     size_t frame = 0U;
+    size_t hold_frames = 0U;
+    const char* current_command = commands[0];
     if (runtime == NULL || io_pose == NULL || frames == 0U) {
         return -1;
     }
     srand((unsigned int)time(NULL));
     clear_screen_draw_mode();
     for (frame = 0U; frame < frames; ++frame) {
-        const char* command = commands[rand() % (sizeof(commands) / sizeof(commands[0]))];
         float state[STATE_DIM];
         float act[OUTPUT_DIM];
+        float dx = 0.0f;
+        float dy = 0.0f;
         int rc = 0;
+        if (hold_frames == 0U) {
+            current_command = commands[rand() % (sizeof(commands) / sizeof(commands[0]))];
+            hold_frames = 6U + (size_t)(rand() % 7);
+        }
         build_state_step_only(io_pose, state);
         memset(act, 0, sizeof(act));
-        rc = workflow_run_step(runtime, command, state, act);
+        rc = workflow_run_step(runtime, current_command, state, act);
         if (rc != WORKFLOW_STATUS_OK) {
             return -2;
         }
-        io_pose->x = clamp_float(io_pose->x + clamp_float(act[2] * 0.70f, -0.60f, 0.60f), 0.0f, 15.0f);
-        io_pose->y = clamp_float(io_pose->y + clamp_float(act[3] * 0.40f, -0.40f, 0.40f), 0.0f, 15.0f);
-        render_cli_step_frame(io_pose, frame, command, act);
+        dx = clamp_float(act[2] * 0.70f, -0.60f, 0.60f);
+        dy = clamp_float(act[3] * 0.40f, -0.40f, 0.40f);
+        io_pose->x = clamp_float(io_pose->x + dx, 0.0f, 15.0f);
+        io_pose->y = clamp_float(io_pose->y + dy, 0.0f, 15.0f);
+        render_cli_step_frame(io_pose, frame, current_command, act);
         wait_enter_for_next_frame();
+        hold_frames--;
     }
     printf("step draw done: final pose=(%.3f, %.3f)\n", (double)io_pose->x, (double)io_pose->y);
     return 0;
@@ -240,6 +361,11 @@ int main(void) {
     size_t loaded_count = 0U;
     WorkflowRuntime runtime;
     WorkflowTrainMemoryOptions train_options;
+    WorkflowTrainSample train_samples[MAX_STEP_SAMPLES];
+    char train_commands[MAX_STEP_SAMPLES][32];
+    float train_states[MAX_STEP_SAMPLES][STATE_DIM];
+    float train_targets[MAX_STEP_SAMPLES][OUTPUT_DIM];
+    size_t train_count = 0U;
     Pose2D draw_pose = { 7.5f, 7.5f };
     int rc = 0;
     memset(&runtime, 0, sizeof(runtime));
@@ -258,8 +384,18 @@ int main(void) {
         return 2;
     }
 
-    train_options.samples = kStepSamples;
-    train_options.sample_count = sizeof(kStepSamples) / sizeof(kStepSamples[0]);
+    rc = build_step_training_samples(train_samples,
+                                     train_commands,
+                                     train_states,
+                                     train_targets,
+                                     MAX_STEP_SAMPLES,
+                                     &train_count);
+    if (rc != 0 || train_count == 0U) {
+        fprintf(stderr, "build_step_training_samples failed: %d\n", rc);
+        return 3;
+    }
+    train_options.samples = train_samples;
+    train_options.sample_count = train_count;
     train_options.vocab_path = vocab_path;
     train_options.out_weights_bin = weight_bin_path;
     train_options.out_weights_c = weight_c_path;
@@ -269,14 +405,14 @@ int main(void) {
     rc = workflow_train_from_memory(&train_options);
     if (rc != WORKFLOW_STATUS_OK) {
         fprintf(stderr, "workflow_train_from_memory failed: %d\n", rc);
-        return 3;
+        return 4;
     }
 
     rc = weights_load_binary(weight_bin_path, &loaded_weights, &loaded_count);
     if (rc != WEIGHTS_IO_STATUS_OK || loaded_weights == NULL || loaded_count != workflow_weights_count()) {
         fprintf(stderr, "weights_load_binary failed: rc=%d count=%zu\n", rc, loaded_count);
         free(loaded_weights);
-        return 4;
+        return 5;
     }
 
     rc = weights_export_c_function_network(weight_fn_c_path,
@@ -290,14 +426,14 @@ int main(void) {
     if (rc != WEIGHTS_IO_STATUS_OK) {
         fprintf(stderr, "weights_export_c_function_network failed: %d\n", rc);
         free(loaded_weights);
-        return 5;
+        return 6;
     }
 
     rc = workflow_runtime_init(&runtime, vocab_path, weight_bin_path);
     if (rc != WORKFLOW_STATUS_OK) {
         fprintf(stderr, "workflow_runtime_init failed: %d\n", rc);
         free(loaded_weights);
-        return 6;
+        return 7;
     }
 
     rc = workflow_run_step(&runtime, "move left fast", infer_state, infer_act);
@@ -305,7 +441,7 @@ int main(void) {
         fprintf(stderr, "workflow_run_step failed: %d\n", rc);
         workflow_runtime_shutdown(&runtime);
         free(loaded_weights);
-        return 7;
+        return 8;
     }
 
     rc = run_step_draw_mode(&runtime, &draw_pose, 120U);
@@ -313,7 +449,7 @@ int main(void) {
         fprintf(stderr, "run_step_draw_mode failed: %d\n", rc);
         workflow_runtime_shutdown(&runtime);
         free(loaded_weights);
-        return 8;
+        return 9;
     }
 
     workflow_runtime_shutdown(&runtime);
