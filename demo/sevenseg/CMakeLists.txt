@@ -31,22 +31,94 @@ target_compile_definitions(dnn_train_sevenseg PUBLIC
     OUTPUT_DIM=7
 )
 
-add_executable(sevenseg_demo
-    main.c
+add_executable(sevenseg_train
+    train_main.c
+    sevenseg_shared.c
 )
-target_include_directories(sevenseg_demo PRIVATE
+target_include_directories(sevenseg_train PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/infer/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/train/include
 )
-target_link_libraries(sevenseg_demo PRIVATE dnn_train_sevenseg)
-target_compile_definitions(sevenseg_demo PRIVATE
+target_link_libraries(sevenseg_train PRIVATE dnn_train_sevenseg)
+target_compile_definitions(sevenseg_train PRIVATE
     STATE_DIM=1
     OUTPUT_DIM=7
 )
 
+set(SEVENSEG_DATA_DIR ${CMAKE_CURRENT_SOURCE_DIR}/data)
+set(SEVENSEG_VOCAB ${SEVENSEG_DATA_DIR}/demo_vocab_sevenseg.txt)
+set(SEVENSEG_BIN ${SEVENSEG_DATA_DIR}/demo_weights_sevenseg.bin)
+set(SEVENSEG_C_ARRAY ${SEVENSEG_DATA_DIR}/demo_weights_sevenseg_export.c)
+set(SEVENSEG_C_FUNC ${SEVENSEG_DATA_DIR}/demo_network_sevenseg_functions.c)
+
+add_custom_command(
+    OUTPUT ${SEVENSEG_VOCAB} ${SEVENSEG_BIN} ${SEVENSEG_C_ARRAY} ${SEVENSEG_C_FUNC}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${SEVENSEG_DATA_DIR}
+    COMMAND $<TARGET_FILE:sevenseg_train> --export-only ${SEVENSEG_DATA_DIR}
+    DEPENDS sevenseg_train
+    VERBATIM
+)
+
+add_custom_target(sevenseg_generated_assets
+    DEPENDS ${SEVENSEG_VOCAB} ${SEVENSEG_BIN} ${SEVENSEG_C_ARRAY} ${SEVENSEG_C_FUNC}
+)
+
+add_executable(sevenseg_infer_bin
+    infer_bin_main.c
+    sevenseg_shared.c
+)
+target_include_directories(sevenseg_infer_bin PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/infer/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/train/include
+)
+target_link_libraries(sevenseg_infer_bin PRIVATE dnn_train_sevenseg)
+target_compile_definitions(sevenseg_infer_bin PRIVATE
+    STATE_DIM=1
+    OUTPUT_DIM=7
+)
+add_dependencies(sevenseg_infer_bin sevenseg_generated_assets)
+
+add_executable(sevenseg_infer_c_array
+    infer_c_array_main.c
+    sevenseg_shared.c
+    ${SEVENSEG_C_ARRAY}
+)
+target_include_directories(sevenseg_infer_c_array PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/infer/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/train/include
+)
+target_link_libraries(sevenseg_infer_c_array PRIVATE dnn_train_sevenseg)
+target_compile_definitions(sevenseg_infer_c_array PRIVATE
+    STATE_DIM=1
+    OUTPUT_DIM=7
+)
+add_dependencies(sevenseg_infer_c_array sevenseg_generated_assets)
+
+add_executable(sevenseg_infer_c_func
+    infer_c_func_main.c
+    sevenseg_shared.c
+    ${SEVENSEG_C_FUNC}
+)
+target_include_directories(sevenseg_infer_c_func PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/infer/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/train/include
+)
+target_link_libraries(sevenseg_infer_c_func PRIVATE dnn_train_sevenseg)
+target_compile_definitions(sevenseg_infer_c_func PRIVATE
+    STATE_DIM=1
+    OUTPUT_DIM=7
+)
+add_dependencies(sevenseg_infer_c_func sevenseg_generated_assets)
+
 if (UNIX OR MINGW)
     target_link_libraries(dnn_infer_sevenseg PUBLIC m)
     target_link_libraries(dnn_train_sevenseg PUBLIC m)
-    target_link_libraries(sevenseg_demo PRIVATE m)
+    target_link_libraries(sevenseg_train PRIVATE m)
+    target_link_libraries(sevenseg_infer_bin PRIVATE m)
+    target_link_libraries(sevenseg_infer_c_array PRIVATE m)
+    target_link_libraries(sevenseg_infer_c_func PRIVATE m)
 endif()
