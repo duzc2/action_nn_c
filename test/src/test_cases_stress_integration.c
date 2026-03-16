@@ -37,17 +37,43 @@ typedef struct TinySample {
     float target[OUTPUT_DIM];
 } TinySample;
 
+/**
+ * @brief 线性同余随机数生成器，提供可复现伪随机序列。
+ *
+ * 关键约束：
+ * - 使用固定常数，保证不同平台在相同 seed 下生成相同序列。
+ * - 仅用于测试数据构造，不用于安全场景。
+ *
+ * @param seed 随机种子（输入输出）
+ * @return unsigned int 下一随机值
+ */
 static unsigned int tiny_lcg_next(unsigned int* seed) {
     *seed = (*seed * 1664525U) + 1013904223U;
     return *seed;
 }
 
+/**
+ * @brief 生成 [lo, hi) 区间内浮点随机值。
+ *
+ * @param seed 随机种子（输入输出）
+ * @param lo   区间下界
+ * @param hi   区间上界
+ * @return float 区间随机值
+ */
 static float tiny_rand_range(unsigned int* seed, float lo, float hi) {
     unsigned int v = tiny_lcg_next(seed);
     float t = (float)(v & 0x00FFFFFFU) / (float)0x01000000U;
     return lo + (hi - lo) * t;
 }
 
+/**
+ * @brief 将浮点值限制在给定区间内。
+ *
+ * @param v  输入值
+ * @param lo 区间下界
+ * @param hi 区间上界
+ * @return float 裁剪后的值
+ */
 static float tiny_clamp(float v, float lo, float hi) {
     if (v < lo) {
         return lo;
@@ -58,6 +84,17 @@ static float tiny_clamp(float v, float lo, float hi) {
     return v;
 }
 
+/**
+ * @brief 初始化最小词表与 tokenizer，供压力/集成测试复用。
+ *
+ * 关键保护点：
+ * - 任一步骤失败都释放已分配词表，避免测试过程内存泄漏。
+ * - 词表内容固定，保证测试结果可复现。
+ *
+ * @param vocab     输出词表对象
+ * @param tokenizer 输出分词器对象
+ * @return int TokenizerStatus 错误码
+ */
 static int tiny_init_vocab_tokenizer(Vocabulary* vocab, Tokenizer* tokenizer) {
     static const char* tokens[] = {"<unk>", "move", "left", "right", "stop", "fast", "slow"};
     size_t i = 0U;
@@ -84,6 +121,15 @@ static int tiny_init_vocab_tokenizer(Vocabulary* vocab, Tokenizer* tokenizer) {
     return TOKENIZER_STATUS_OK;
 }
 
+/**
+ * @brief 初始化可复现的微小权重。
+ *
+ * 设计目的：
+ * - 通过小幅度确定性初值，避免初始输出饱和并提升测试稳定性。
+ *
+ * @param weights 权重数组
+ * @param count   权重数量
+ */
 static void tiny_init_weights(float* weights, size_t count) {
     size_t i = 0U;
     for (i = 0U; i < count; ++i) {
@@ -91,6 +137,20 @@ static void tiny_init_weights(float* weights, size_t count) {
     }
 }
 
+/**
+ * @brief 计算简化模型的 logits 前向结果。
+ *
+ * 核心逻辑：
+ * - token 分支：对 token 对应权重按 token_count 做平均聚合。
+ * - state 分支：状态向量线性映射并累加到输出。
+ * - bias 分支：最后叠加偏置项。
+ *
+ * @param weights     参数数组
+ * @param token_ids   token 序列
+ * @param token_count token 数量
+ * @param state       状态向量
+ * @param out_logits  输出 logits
+ */
 static void tiny_predict_logits(const float* weights,
                                 const int* token_ids,
                                 size_t token_count,
@@ -120,6 +180,13 @@ static void tiny_predict_logits(const float* weights,
     }
 }
 
+/**
+ * @brief 调用统一 actuator 完成输出激活映射。
+ *
+ * @param logits 输入 logits
+ * @param out_act 输出激活结果
+ * @return int 0=成功，非0=失败
+ */
 static int tiny_activate(const float* logits, float* out_act) {
     const int activations[OUTPUT_DIM] = IO_MAPPING_ACTIVATIONS;
     Tensor in;
@@ -137,6 +204,19 @@ static int tiny_activate(const float* logits, float* out_act) {
     return 0;
 }
 
+/**
+ * @brief 对单样本执行一次简化梯度更新。
+ *
+ * 关键约束：
+ * - 该实现用于测试验证，不追求完整训练框架特性。
+ * - token 权重更新按 token_count 均分，避免 token 数不同带来梯度尺度失衡。
+ *
+ * @param weights  参数数组（输入输出）
+ * @param sample   训练样本
+ * @param lr       学习率
+ * @param out_loss 输出损失
+ * @return int 0=成功，非0=失败
+ */
 static int tiny_train_one(float* weights, const TinySample* sample, float lr, float* out_loss) {
     const size_t token_base = 0U;
     const size_t state_base = TINY_TOKEN_WEIGHT_COUNT;
@@ -180,6 +260,22 @@ static int tiny_train_one(float* weights, const TinySample* sample, float lr, fl
     return 0;
 }
 
+/**
+ * @brief 随机生成一条“命令+状态+目标”样本。
+ *
+ * 设计目的：
+ * - 构建可控的弱监督映射关系，便于在测试中验证收敛与泛化趋势。
+ * - 指令文本由 dx/dy 规则派生，保证标签与输入一致。
+ *
+ * @param tokenizer tokenizer
+ * @param seed      随机种子（输入输出）
+ * @param out_sample 输出样本
+ * @param x_min     x 下界
+ * @param x_max     x 上界
+ * @param y_min     y 下界
+ * @param y_max     y 上界
+ * @return int 0=成功，非0=失败
+ */
 static int tiny_make_sample(Tokenizer* tokenizer,
                             unsigned int* seed,
                             TinySample* out_sample,
@@ -222,6 +318,11 @@ static int tiny_make_sample(Tokenizer* tokenizer,
     return 0;
 }
 
+/**
+ * @brief 集成测试：训练后在未见取值区间评估泛化能力。
+ *
+ * @return int 0=通过，非0=失败
+ */
 static int test_integration_generalization_unseen_values(void) {
     Vocabulary vocab;
     Tokenizer tokenizer;
@@ -297,6 +398,11 @@ static int test_integration_generalization_unseen_values(void) {
     return 0;
 }
 
+/**
+ * @brief 压力测试：状态微扰网格下输出应保持有界与连续。
+ *
+ * @return int 0=通过，非0=失败
+ */
 static int test_stress_noise_robustness_grid(void) {
     Vocabulary vocab;
     Tokenizer tokenizer;
@@ -342,11 +448,10 @@ static int test_stress_noise_robustness_grid(void) {
 }
 
 /**
- * @brief 创建可重复使用的临时文件路径。
+ * @brief 若目录不存在则创建，已存在视为成功。
  *
- * @param name 文件名
- * @param out  输出路径缓冲区
- * @param cap  输出路径容量
+ * @param path 目录路径
+ * @return int 0=成功，-1=失败
  */
 static int create_dir_if_missing(const char* path) {
 #if defined(_WIN32)
@@ -360,6 +465,13 @@ static int create_dir_if_missing(const char* path) {
     return -1;
 }
 
+/**
+ * @brief 生成测试临时文件路径并确保目录存在。
+ *
+ * @param name 文件名
+ * @param out  输出路径缓冲区
+ * @param cap  输出路径容量
+ */
 static void make_test_file_path(const char* name, char* out, size_t cap) {
     (void)create_dir_if_missing("test");
     (void)create_dir_if_missing("test/data");
