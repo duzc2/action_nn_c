@@ -114,6 +114,23 @@ target_compile_definitions(sevenseg_infer_c_func PRIVATE
 )
 add_dependencies(sevenseg_infer_c_func sevenseg_generated_assets)
 
+add_executable(sevenseg_benchmark
+    benchmark_main.c
+    ${SEVENSEG_C_ARRAY}
+    ${SEVENSEG_C_FUNC}
+)
+target_include_directories(sevenseg_benchmark PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/infer/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/train/include
+)
+target_link_libraries(sevenseg_benchmark PRIVATE dnn_train_sevenseg)
+target_compile_definitions(sevenseg_benchmark PRIVATE
+    STATE_DIM=1
+    OUTPUT_DIM=7
+)
+add_dependencies(sevenseg_benchmark sevenseg_generated_assets)
+
 if (UNIX OR MINGW)
     target_link_libraries(dnn_infer_sevenseg PUBLIC m)
     target_link_libraries(dnn_train_sevenseg PUBLIC m)
@@ -121,4 +138,5 @@ if (UNIX OR MINGW)
     target_link_libraries(sevenseg_infer_bin PRIVATE m)
     target_link_libraries(sevenseg_infer_c_array PRIVATE m)
     target_link_libraries(sevenseg_infer_c_func PRIVATE m)
+    target_link_libraries(sevenseg_benchmark PRIVATE m)
 endif()

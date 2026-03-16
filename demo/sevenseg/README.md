@@ -1,15 +1,17 @@
 # SevenSeg Demo
 
-这是“数字到七段数码管引脚”的拆分演示（同一个 CMakeLists 产出 4 个可执行文件）：
+这是“数字到七段数码管引脚”的拆分演示（同一个 CMakeLists 产出多个可执行文件）：
 - 1 个独立训练程序
 - 3 个独立推理程序（bin / C数组 / C函数）
+- 1 个独立性能测试程序
 
-## 四个可执行文件
+## 可执行文件
 
 - `sevenseg_train`：独立训练并导出 `bin`、导出 C 数组、导出 C 函数网络
 - `sevenseg_infer_bin`：从 `bin` 加载网络后推理
 - `sevenseg_infer_c_array`：从导出的 C 数组符号加载权重后推理
 - `sevenseg_infer_c_func`：直接调用导出的 C 语言前向函数推理
+- `sevenseg_benchmark`：自动压测三种推理方式并输出 Markdown 报表
 
 ## 怎么实现的
 
@@ -44,7 +46,7 @@
 
 ```bash
 cmake -S . -B build
-cmake --build build --target sevenseg_train sevenseg_infer_bin sevenseg_infer_c_array sevenseg_infer_c_func
+cmake --build build --target sevenseg_train sevenseg_infer_bin sevenseg_infer_c_array sevenseg_infer_c_func sevenseg_benchmark
 ```
 
 ## 运行
@@ -56,11 +58,17 @@ Windows:
 .\build\demo\sevenseg\Debug\sevenseg_infer_bin.exe
 .\build\demo\sevenseg\Debug\sevenseg_infer_c_array.exe
 .\build\demo\sevenseg\Debug\sevenseg_infer_c_func.exe
+.\build\demo\sevenseg\Debug\sevenseg_benchmark.exe
 ```
 
 交互（3个推理程序一致）：
 - 输入 `0-9` 进行推理并渲染
 - 输入 `q` 退出
+
+性能测试：
+- `sevenseg_benchmark` 自动进行大量循环推理测试
+- 终端打印 Markdown 表格摘要
+- 同时输出 `demo/sevenseg/data/benchmark_report.md`
 
 ## 运行产物
 
