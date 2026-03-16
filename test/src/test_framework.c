@@ -416,6 +416,17 @@ int testfw_run_all(const TestCase* cases, size_t case_count) {
     return (summary.failed == 0U) ? 0 : 1;
 }
 
+/**
+ * @brief 输出用例元数据日志，统一记录“预期信息”。
+ *
+ * 关键约束：
+ * - 仅做日志输出，不改变用例状态，避免影响测试行为。
+ * - 对可空字段提供兜底文案，防止日志打印时出现空指针访问。
+ *
+ * @param tc    测试用例元信息
+ * @param index 当前序号（从 1 开始）
+ * @param total 总用例数
+ */
 void testfw_log_case_meta(const TestCase* tc, size_t index, size_t total) {
     if (tc == NULL) {
         return;
@@ -430,6 +441,15 @@ void testfw_log_case_meta(const TestCase* tc, size_t index, size_t total) {
     testfw_log_info("expected=%s", (tc->expected != NULL) ? tc->expected : "0(PASS)");
 }
 
+/**
+ * @brief 输出用例实际结果日志（ACTUAL 级别）。
+ *
+ * 设计目的：
+ * - 与 testfw_log_case_meta 形成“期望/实际”双日志，便于问题定位。
+ *
+ * @param fmt printf 风格格式串
+ * @param ... 可变参数
+ */
 void testfw_log_case_actual(const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);

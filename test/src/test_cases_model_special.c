@@ -391,6 +391,17 @@ static void ms_reverse_tokens(ModelSpecialSample* sample) {
     }
 }
 
+/**
+ * @brief 按当前位置与目标差值选择控制命令模板。
+ *
+ * 设计目的：
+ * - 让闭环测试中的离散命令与连续状态保持一致语义。
+ * - 对小误差区间直接下发 stop，降低目标附近抖动。
+ *
+ * @param dx x 方向剩余位移
+ * @param dy y 方向剩余位移
+ * @return const char* 命令字符串
+ */
 static const char* ms_select_control_command(float dx, float dy) {
     if (fabsf(dx) < 0.30f && fabsf(dy) < 0.30f) {
         return "move stop";
@@ -401,6 +412,15 @@ static const char* ms_select_control_command(float dx, float dy) {
     return (fabsf(dx) > 2.0f) ? "move left fast" : "move left slow";
 }
 
+/**
+ * @brief 构造控制状态向量。
+ *
+ * @param x         当前 x
+ * @param y         当前 y
+ * @param gx        目标 x
+ * @param gy        目标 y
+ * @param out_state 输出状态数组（长度 STATE_DIM）
+ */
 static void ms_build_control_state(float x, float y, float gx, float gy, float* out_state) {
     float dx = gx - x;
     float dy = gy - y;
@@ -414,6 +434,19 @@ static void ms_build_control_state(float x, float y, float gx, float gy, float* 
     out_state[7] = 1.0f;
 }
 
+/**
+ * @brief 执行“命令编码 + 前向预测 + 激活映射”的单次推理。
+ *
+ * 关键保护点：
+ * - 命令编码失败或 token 为空时立即返回，避免后续非法前向计算。
+ *
+ * @param weights   参数数组
+ * @param tokenizer tokenizer
+ * @param command   控制命令文本
+ * @param state     状态向量
+ * @param out_act   输出动作
+ * @return int 0=成功，非0=失败
+ */
 static int ms_infer_action(const float* weights,
                            const Tokenizer* tokenizer,
                            const char* command,
@@ -432,6 +465,13 @@ static int ms_infer_action(const float* weights,
     return 0;
 }
 
+/**
+ * @brief 将单步位移限制为不超过剩余距离，避免越过目标点。
+ *
+ * @param step   计划步长
+ * @param remain 剩余距离
+ * @return float 裁剪后的步长
+ */
 static float ms_clamp_step(float step, float remain) {
     if (fabsf(step) > fabsf(remain)) {
         return remain;
@@ -439,6 +479,20 @@ static float ms_clamp_step(float step, float remain) {
     return step;
 }
 
+/**
+ * @brief 根据动作输出推进一帧位置更新。
+ *
+ * 算法说明：
+ * - x 方向直接采用 act[2] 映射步长，并在小幅输出时注入最小推进量。
+ * - y 方向用 act[3] 映射上行速度，下降方向采用保守固定步长。
+ * - 两方向均通过 ms_clamp_step 约束，避免过冲。
+ *
+ * @param x   当前 x（输入输出）
+ * @param y   当前 y（输入输出）
+ * @param gx  目标 x
+ * @param gy  目标 y
+ * @param act 动作输出
+ */
 static void ms_apply_control_step(float* x, float* y, float gx, float gy, const float* act) {
     float dx = gx - *x;
     float dy = gy - *y;

@@ -21,11 +21,14 @@
 #include "../../src/include/weights_io.h"
 
 /**
- * @brief 生成测试临时文件路径。
+ * @brief 若目录不存在则创建，已存在视为成功。
  *
- * @param name 文件名
- * @param out 输出缓冲区
- * @param cap 输出缓冲区容量
+ * 关键保护点：
+ * - 显式兼容 Windows 与 POSIX 的目录创建接口。
+ * - 仅在“确实失败且非已存在”时返回错误，避免并发/重复创建导致误判。
+ *
+ * @param path 目录路径
+ * @return int 0=成功，-1=失败
  */
 static int create_dir_if_missing(const char* path) {
 #if defined(_WIN32)
@@ -39,6 +42,17 @@ static int create_dir_if_missing(const char* path) {
     return -1;
 }
 
+/**
+ * @brief 生成测试临时文件路径并确保父目录存在。
+ *
+ * 设计目的：
+ * - 将测试数据统一落在 test/data/tmp 下，避免污染源码目录。
+ * - 路径拼接使用 snprintf，防止缓冲区越界写入。
+ *
+ * @param name 文件名
+ * @param out  输出缓冲区
+ * @param cap  输出缓冲区容量
+ */
 static void make_test_file_path(const char* name, char* out, size_t cap) {
     (void)create_dir_if_missing("test");
     (void)create_dir_if_missing("test/data");
