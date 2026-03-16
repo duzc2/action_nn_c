@@ -1,7 +1,7 @@
 add_library(dnn_infer_sevenseg STATIC
     ../../src/core/tensor.c
     ../../src/core/ops.c
-    ../../src/core/tokenizer.c
+    ../../src/tokenizer/tokenizer.c
     ../../src/core/weights_io.c
     ../../src/core/protocol.c
     ../../src/infer/workflow_runtime.c

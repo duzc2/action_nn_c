@@ -2,6 +2,7 @@
 #define CSV_LOADER_H
 
 #include <stddef.h>
+#include "config_user.h"
 
 /**
  * @brief 单条 CSV 样本结构。
@@ -14,8 +15,8 @@
  */
 typedef struct CsvSample {
     char command[128];
-    float state[8];
-    float target[4];
+    float state[STATE_DIM];
+    float target[OUTPUT_DIM];
 } CsvSample;
 
 /**

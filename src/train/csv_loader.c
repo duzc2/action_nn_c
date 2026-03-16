@@ -8,6 +8,55 @@
 
 #include "../include/csv_loader.h"
 
+static int parse_float_token(const char* token, float* out_value) {
+    char* end = NULL;
+    double value = 0.0;
+    if (token == NULL || out_value == NULL) {
+        return -1;
+    }
+    value = strtod(token, &end);
+    if (end == token) {
+        return -1;
+    }
+    while (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n') {
+        ++end;
+    }
+    if (*end != '\0') {
+        return -1;
+    }
+    *out_value = (float)value;
+    return 0;
+}
+
+static int parse_csv_line(const char* line, CsvSample* out_item) {
+    char buffer[512];
+    char* token = NULL;
+    int i = 0;
+    if (line == NULL || out_item == NULL) {
+        return -1;
+    }
+    memset(out_item, 0, sizeof(*out_item));
+    (void)snprintf(buffer, sizeof(buffer), "%s", line);
+    token = strtok(buffer, ",");
+    if (token == NULL) {
+        return -1;
+    }
+    (void)snprintf(out_item->command, sizeof(out_item->command), "%s", token);
+    for (i = 0; i < STATE_DIM; ++i) {
+        token = strtok(NULL, ",");
+        if (token == NULL || parse_float_token(token, &out_item->state[i]) != 0) {
+            return -1;
+        }
+    }
+    for (i = 0; i < OUTPUT_DIM; ++i) {
+        token = strtok(NULL, ",");
+        if (token == NULL || parse_float_token(token, &out_item->target[i]) != 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
 /**
  * @brief 读取 CSV 文件并构建内存数据集。
  *
@@ -32,16 +81,7 @@ int csv_load_dataset(const char* file_path, CsvDataset* out_dataset) {
     }
     while (fgets(line, sizeof(line), fp) != NULL) {
         CsvSample item;
-        int n = 0;
-        memset(&item, 0, sizeof(item));
-        /* 解析格式：command + 8 维状态 + 4 维目标，共 13 个字段。 */
-        n = sscanf(line,
-                   "%127[^,],%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f",
-                   item.command,
-                   &item.state[0], &item.state[1], &item.state[2], &item.state[3],
-                   &item.state[4], &item.state[5], &item.state[6], &item.state[7],
-                   &item.target[0], &item.target[1], &item.target[2], &item.target[3]);
-        if (n < 13) {
+        if (parse_csv_line(line, &item) != 0) {
             continue;
         }
         if (count == cap) {
