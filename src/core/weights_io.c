@@ -249,14 +249,14 @@ int weights_export_c_function_network(const char* file_path,
     }
 
     for (j = 0U; j < output_dim; ++j) {
-        fprintf(fp, "static float %s_neuron_%zu(const float* x, const float* s) {\n", symbol, j);
+        fprintf(fp, "static float %s_neuron_%zu(const float* x, const float* s, float inv_token_count) {\n", symbol, j);
         fprintf(fp, "    float z = %.9ef;\n",
                 (double)weights[token_weight_count + state_weight_count + j]);
         for (t = 0U; t < max_token_count; ++t) {
             for (i = 0U; i < vocab_size; ++i) {
                 const size_t widx = i * output_dim + j;
-                fprintf(fp, "    z += %s_in_token_%zu_%zu(x) * %.9ef;\n",
-                        symbol, t, i, (double)(weights[widx] / (float)max_token_count));
+                fprintf(fp, "    z += %s_in_token_%zu_%zu(x) * %.9ef * inv_token_count;\n",
+                        symbol, t, i, (double)weights[widx]);
             }
         }
         for (i = 0U; i < state_dim; ++i) {
@@ -267,10 +267,11 @@ int weights_export_c_function_network(const char* file_path,
         fprintf(fp, "}\n\n");
     }
 
-    fprintf(fp, "void %s_forward(const float* token_onehot, const float* state, float* out) {\n", symbol);
+    fprintf(fp, "void %s_forward(const float* token_onehot, size_t token_count, const float* state, float* out) {\n", symbol);
+    fprintf(fp, "    float inv_token_count = (token_count > 0U) ? (1.0f / (float)token_count) : 0.0f;\n");
     for (j = 0U; j < output_dim; ++j) {
         fprintf(fp, "    {\n");
-        fprintf(fp, "        float z = %s_neuron_%zu(token_onehot, state);\n", symbol, j);
+        fprintf(fp, "        float z = %s_neuron_%zu(token_onehot, state, inv_token_count);\n", symbol, j);
         if (activations[j] == 0) {
             fprintf(fp, "        out[%zuU] = %s_sigmoid(z);\n", j, symbol);
         } else {

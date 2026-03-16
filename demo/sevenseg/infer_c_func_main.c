@@ -14,7 +14,7 @@ size_t g_demo_network_sevenseg_vocab_size(void);
 size_t g_demo_network_sevenseg_state_dim(void);
 size_t g_demo_network_sevenseg_output_dim(void);
 size_t g_demo_network_sevenseg_token_slots(void);
-void g_demo_network_sevenseg_forward(const float* token_onehot, const float* state, float* out);
+void g_demo_network_sevenseg_forward(const float* token_onehot, size_t token_count, const float* state, float* out);
 
 static void build_path(char* out_path, size_t cap, const char* dir, const char* file_name) {
     (void)snprintf(out_path, cap, "%s/%s", dir, file_name);
@@ -47,7 +47,7 @@ static int infer_digit_with_cfunc(Tokenizer* tokenizer, int digit, int out_seg[7
         token_onehot[t * VOCAB_SIZE + id] = 1.0f;
     }
     state[0] = (float)digit / 9.0f;
-    g_demo_network_sevenseg_forward(token_onehot, state, act);
+    g_demo_network_sevenseg_forward(token_onehot, count, state, act);
     for (i = 0; i < 7; ++i) {
         out_seg[i] = (act[i] >= 0.5f) ? 1 : 0;
     }
