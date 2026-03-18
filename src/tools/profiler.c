@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "../include/config_user.h"
+#include "../include/network_spec.h"
 
 /**
  * @brief 记录单层资源估算结果，便于打印与汇总。
@@ -140,6 +141,7 @@ static int generate_network_def(const char* output_path,
     fprintf(f, "#ifndef NETWORK_DEF_H\n");
     fprintf(f, "#define NETWORK_DEF_H\n\n");
     fprintf(f, "#include \"config_user.h\"\n\n");
+    fprintf(f, "#include \"network_spec.h\"\n\n");
 
     fprintf(f, "/* 资源估算结果：单位为 float 元素数 */\n");
     fprintf(f, "#define NETWORK_TOTAL_PARAMS      %zuU\n", ctx->total_params);
@@ -164,6 +166,24 @@ static int generate_network_def(const char* output_path,
         fprintf(f, "%s\"%s\"", (i == 0U) ? "" : ", ", io->names[i]);
     }
     fprintf(f, "};\n\n");
+    fprintf(f, "static const NetworkGraphNode NETWORK_GRAPH_NODE_VALUES[] = NETWORK_GRAPH_NODES;\n");
+    fprintf(f, "static const NetworkGraphEdge NETWORK_GRAPH_EDGE_VALUES[] = NETWORK_GRAPH_EDGES;\n\n");
+    fprintf(f, "static int network_def_build_spec(NetworkSpec* spec) {\n");
+    fprintf(f, "    NetworkGraph graph;\n");
+    fprintf(f, "    if (spec == NULL) {\n");
+    fprintf(f, "        return -1;\n");
+    fprintf(f, "    }\n");
+    fprintf(f, "    if (network_graph_build(&graph,\n");
+    fprintf(f, "                           NETWORK_GRAPH_NODE_VALUES,\n");
+    fprintf(f, "                           (size_t)(sizeof(NETWORK_GRAPH_NODE_VALUES) / sizeof(NETWORK_GRAPH_NODE_VALUES[0])),\n");
+    fprintf(f, "                           NETWORK_GRAPH_EDGE_VALUES,\n");
+    fprintf(f, "                           (size_t)(sizeof(NETWORK_GRAPH_EDGE_VALUES) / sizeof(NETWORK_GRAPH_EDGE_VALUES[0])),\n");
+    fprintf(f, "                           NETWORK_GRAPH_INPUT_NODE_ID,\n");
+    fprintf(f, "                           NETWORK_GRAPH_OUTPUT_NODE_ID) != 0) {\n");
+    fprintf(f, "        return -1;\n");
+    fprintf(f, "    }\n");
+    fprintf(f, "    return network_spec_build_from_graph(spec, &graph);\n");
+    fprintf(f, "}\n\n");
 
     fprintf(f, "#endif /* NETWORK_DEF_H */\n");
     fclose(f);
@@ -180,54 +200,55 @@ static void profiler_run(ProfilerContext* ctx) {
     size_t embed_dim = (size_t)EMBED_DIM;
     size_t ffn_dim = (size_t)FFN_DIM;
     size_t layer_index = 0U;
-    size_t embed_out_size = seq_len * embed_dim;
-
-    ctx->current_io_size = seq_len;
-
-    profiler_add_layer(ctx,
-                       "Embedding",
-                       seq_len,
-                       embed_out_size,
-                       (size_t)VOCAB_SIZE * embed_dim,
-                       0U);
-
-    profiler_add_layer(ctx,
-                       "StateProjection",
-                       (size_t)STATE_DIM,
-                       embed_dim,
-                       ((size_t)STATE_DIM * embed_dim) + embed_dim,
-                       2U * (size_t)STATE_DIM * embed_dim);
-
-    ctx->current_io_size = embed_out_size;
-    for (layer_index = 0U; layer_index < (size_t)NUM_LAYERS; ++layer_index) {
-        static const char* names[] = {
-            "Encoder_0", "Encoder_1", "Encoder_2", "Encoder_3",
-            "Encoder_4", "Encoder_5", "Encoder_6", "Encoder_7"
-        };
-        const char* layer_name = (layer_index < (sizeof(names) / sizeof(names[0])))
-            ? names[layer_index]
-            : "Encoder_N";
-        size_t d = embed_dim;
-        size_t l = seq_len;
-        size_t attn_params = 4U * ((d * d) + d);
-        size_t attn_flops = (3U * 2U * l * d * d) + (2U * l * l * d) + (2U * l * d * d);
-        size_t ffn_params = ((d * ffn_dim) + ffn_dim) + ((ffn_dim * d) + d);
-        size_t ffn_flops = (2U * l * d * ffn_dim) + (2U * l * ffn_dim * d);
-
-        profiler_add_layer(ctx,
-                           layer_name,
-                           embed_out_size,
-                           embed_out_size,
-                           attn_params + ffn_params,
-                           attn_flops + ffn_flops);
+    const NetworkGraphNode nodes[] = NETWORK_GRAPH_NODES;
+    const size_t node_count = sizeof(nodes) / sizeof(nodes[0]);
+    for (layer_index = 0U; layer_index < node_count; ++layer_index) {
+        if (nodes[layer_index].type == NETWORK_NODE_LINEAR) {
+            profiler_add_layer(ctx,
+                               "LinearTokenStateHead",
+                               seq_len + (size_t)STATE_DIM,
+                               (size_t)OUTPUT_DIM,
+                               ((size_t)VOCAB_SIZE * (size_t)OUTPUT_DIM) +
+                                   ((size_t)STATE_DIM * (size_t)OUTPUT_DIM) +
+                                   (size_t)OUTPUT_DIM,
+                               (2U * seq_len * (size_t)OUTPUT_DIM) +
+                                   (2U * (size_t)STATE_DIM * (size_t)OUTPUT_DIM));
+            continue;
+        }
+        if (nodes[layer_index].type == NETWORK_NODE_TRANSFORMER_BLOCK ||
+            nodes[layer_index].type == NETWORK_NODE_ATTENTION_HEAD) {
+            size_t d = embed_dim;
+            size_t l = seq_len;
+            size_t attn_params = 4U * ((d * d) + d);
+            size_t attn_flops = (3U * 2U * l * d * d) + (2U * l * l * d) + (2U * l * d * d);
+            size_t ffn_params = ((d * ffn_dim) + ffn_dim) + ((ffn_dim * d) + d);
+            size_t ffn_flops = (2U * l * d * ffn_dim) + (2U * l * ffn_dim * d);
+            profiler_add_layer(ctx,
+                               "TransformerBlock",
+                               (size_t)OUTPUT_DIM,
+                               (size_t)OUTPUT_DIM,
+                               attn_params + ffn_params,
+                               attn_flops + ffn_flops);
+            continue;
+        }
+        if (nodes[layer_index].type == NETWORK_NODE_CNN) {
+            size_t params = (embed_dim * 3U) + embed_dim;
+            size_t flops = 2U * seq_len * embed_dim * 3U;
+            profiler_add_layer(ctx, "CNNBlock", seq_len, seq_len, params, flops);
+            continue;
+        }
+        if (nodes[layer_index].type == NETWORK_NODE_RNN) {
+            size_t params = (embed_dim * embed_dim) + (embed_dim * embed_dim) + embed_dim;
+            size_t flops = 2U * seq_len * embed_dim * embed_dim;
+            profiler_add_layer(ctx, "RNNBlock", seq_len, seq_len, params, flops);
+            continue;
+        }
+        if (nodes[layer_index].type == NETWORK_NODE_KNN) {
+            size_t params = 0U;
+            size_t flops = seq_len * embed_dim;
+            profiler_add_layer(ctx, "KNNBlock", seq_len, seq_len, params, flops);
+        }
     }
-
-    profiler_add_layer(ctx,
-                       "ActionHead",
-                       embed_out_size,
-                       (size_t)OUTPUT_DIM,
-                       (embed_dim * (size_t)OUTPUT_DIM) + (size_t)OUTPUT_DIM,
-                       2U * embed_dim * (size_t)OUTPUT_DIM);
 }
 
 /**

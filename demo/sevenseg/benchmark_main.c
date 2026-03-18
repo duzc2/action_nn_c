@@ -8,8 +8,10 @@
 #include <time.h>
 
 #include "../../src/include/config_user.h"
+#include "../../src/include/network_def.h"
 #include "../../src/infer/include/workflow_infer.h"
 #include "../../src/include/tokenizer.h"
+#include "sevenseg_shared.h"
 
 enum {
     BENCH_WARMUP_ITERS = 2000,
@@ -56,10 +58,10 @@ static void build_path(char* out_path, size_t cap, const char* dir, const char* 
 /**
  * @brief 从编译期权重数组初始化 runtime。
  */
-static int runtime_init_from_array(WorkflowRuntime* runtime, const char* vocab_path) {
+static int runtime_init_from_array(WorkflowRuntime* runtime, const char* vocab_path, const NetworkSpec* spec) {
     size_t count = g_demo_weights_sevenseg_count();
     int rc = 0;
-    if (runtime == NULL || vocab_path == NULL) {
+    if (runtime == NULL || vocab_path == NULL || spec == NULL) {
         return -1;
     }
     memset(runtime, 0, sizeof(*runtime));
@@ -81,6 +83,7 @@ static int runtime_init_from_array(WorkflowRuntime* runtime, const char* vocab_p
         runtime->weight_count = 0U;
         return -4;
     }
+    memcpy(&runtime->network_spec, spec, sizeof(runtime->network_spec));
     runtime->ready = 1;
     return 0;
 }
@@ -266,12 +269,14 @@ static int write_markdown_report(const char* path, const BenchStat* stats, size_
  * @brief benchmark 主入口：比较 bin、c-array、c-function 三种路径。
  */
 int main(int argc, char** argv) {
-    const char* data_dir = "demo/sevenseg/data";
+    const char* preferred_dir = NULL;
+    char data_dir[260];
     char vocab_path[260];
     char bin_path[260];
     char report_path[260];
     WorkflowRuntime runtime_bin;
     WorkflowRuntime runtime_c_array;
+    NetworkSpec network_spec;
     Vocabulary vocab;
     Tokenizer tokenizer;
     BenchStat stats[3];
@@ -281,25 +286,33 @@ int main(int argc, char** argv) {
     memset(&vocab, 0, sizeof(vocab));
     memset(&tokenizer, 0, sizeof(tokenizer));
     if (argc >= 2) {
-        data_dir = argv[1];
+        preferred_dir = argv[1];
+    }
+    if (sevenseg_resolve_data_dir(preferred_dir, data_dir, sizeof(data_dir)) != 0) {
+        fprintf(stderr, "resolve sevenseg data dir failed\n");
+        return 1;
+    }
+    rc = network_def_build_spec(&network_spec);
+    if (rc != 0) {
+        return 1;
     }
     build_path(vocab_path, sizeof(vocab_path), data_dir, "demo_vocab_sevenseg.txt");
     build_path(bin_path, sizeof(bin_path), data_dir, "demo_weights_sevenseg.bin");
     build_path(report_path, sizeof(report_path), data_dir, "benchmark_report.md");
-    rc = workflow_runtime_init(&runtime_bin, vocab_path, bin_path);
+    rc = workflow_runtime_init(&runtime_bin, vocab_path, bin_path, &network_spec);
     if (rc != WORKFLOW_STATUS_OK) {
-        return 1;
+        return 2;
     }
-    rc = runtime_init_from_array(&runtime_c_array, vocab_path);
+    rc = runtime_init_from_array(&runtime_c_array, vocab_path, &network_spec);
     if (rc != 0) {
         workflow_runtime_shutdown(&runtime_bin);
-        return 2;
+        return 3;
     }
     rc = workflow_prepare_tokenizer(vocab_path, &vocab, &tokenizer);
     if (rc != WORKFLOW_STATUS_OK) {
         workflow_runtime_shutdown(&runtime_bin);
         workflow_runtime_shutdown(&runtime_c_array);
-        return 3;
+        return 4;
     }
     if (g_demo_network_sevenseg_vocab_size() != VOCAB_SIZE ||
         g_demo_network_sevenseg_state_dim() != STATE_DIM ||
@@ -308,7 +321,7 @@ int main(int argc, char** argv) {
         vocab_free(&vocab);
         workflow_runtime_shutdown(&runtime_bin);
         workflow_runtime_shutdown(&runtime_c_array);
-        return 4;
+        return 5;
     }
     stats[0] = bench_runtime_mode("bin_runtime", &runtime_bin, BENCH_WARMUP_ITERS, BENCH_ITERS);
     stats[1] = bench_runtime_mode("c_array_runtime", &runtime_c_array, BENCH_WARMUP_ITERS, BENCH_ITERS);
@@ -318,7 +331,7 @@ int main(int argc, char** argv) {
         vocab_free(&vocab);
         workflow_runtime_shutdown(&runtime_bin);
         workflow_runtime_shutdown(&runtime_c_array);
-        return 5;
+        return 6;
     }
     printf("benchmark done, report: %s\n", report_path);
     printf("| Mode | Calls | Total ms | us/call | calls/sec | Mismatches |\n");

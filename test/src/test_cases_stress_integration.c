@@ -17,6 +17,7 @@
 
 #include "../../src/include/csv_loader.h"
 #include "../../src/include/model.h"
+#include "../../src/include/network_spec.h"
 #include "../../src/include/ops.h"
 #include "../../src/include/protocol.h"
 #include "../../src/include/tensor.h"
@@ -636,7 +637,7 @@ static int test_integration_weights_io_roundtrip(void) {
     text_buf[read_n] = '\0';
     fclose(fp);
     TFW_ASSERT_TRUE(strstr(text_buf, "demo_weights_count") != NULL);
-    TFW_ASSERT_TRUE(strstr(text_buf, "demo_weights[4]") != NULL);
+    TFW_ASSERT_TRUE(strstr(text_buf, "data[4]") != NULL || strstr(text_buf, "demo_weights[4]") != NULL);
     free(loaded);
     (void)remove(bin_path);
     (void)remove(c_path);
@@ -654,6 +655,10 @@ static int test_integration_csv_and_model_flow(void) {
     CsvDataset dataset;
     float embed_table[EMBED_DIM * 2];
     EmbeddingLayer embedding;
+    NetworkGraphNode nodes[] = NETWORK_GRAPH_NODES;
+    NetworkGraphEdge edges[] = NETWORK_GRAPH_EDGES;
+    NetworkGraph graph;
+    NetworkSpec spec;
     TransformerBlock block;
     int token_ids[2] = {0, 1};
     float vectors_in[EMBED_DIM * 2];
@@ -674,12 +679,30 @@ static int test_integration_csv_and_model_flow(void) {
     embedding.table = embed_table;
     embedding.vocab_size = 2U;
     embedding.embed_dim = EMBED_DIM;
+    TFW_ASSERT_INT_EQ(0,
+                      network_graph_build(&graph,
+                                          nodes,
+                                          sizeof(nodes) / sizeof(nodes[0]),
+                                          edges,
+                                          sizeof(edges) / sizeof(edges[0]),
+                                          NETWORK_GRAPH_INPUT_NODE_ID,
+                                          NETWORK_GRAPH_OUTPUT_NODE_ID));
+    TFW_ASSERT_INT_EQ(0, network_spec_build_from_graph(&spec, &graph));
+    model_embedding_forward(&embedding, token_ids, 2U, vectors_in);
+    memcpy(vectors_out, vectors_in, sizeof(vectors_out));
     block.attention.embed_dim = EMBED_DIM;
     block.attention.num_heads = 4U;
     block.moe.num_experts = 2U;
     block.moe.k_top = 1U;
-    model_embedding_forward(&embedding, token_ids, 2U, vectors_in);
-    model_transformer_block_forward(&block, vectors_in, 2U, vectors_out);
+    for (i = 1U; i < spec.layer_count; ++i) {
+        if (spec.layers[i].kind == NETWORK_LAYER_TRANSFORMER_BLOCK ||
+            spec.layers[i].kind == NETWORK_LAYER_ATTENTION_HEAD ||
+            spec.layers[i].kind == NETWORK_LAYER_CNN ||
+            spec.layers[i].kind == NETWORK_LAYER_RNN ||
+            spec.layers[i].kind == NETWORK_LAYER_KNN) {
+            model_transformer_block_forward(&block, vectors_out, 2U, vectors_out);
+        }
+    }
     TFW_ASSERT_FLOAT_NEAR(vectors_in[0], vectors_out[0], 1e-6f);
     TFW_ASSERT_FLOAT_NEAR(vectors_in[EMBED_DIM], vectors_out[EMBED_DIM], 1e-6f);
     csv_free_dataset(&dataset);

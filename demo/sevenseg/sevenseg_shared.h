@@ -44,4 +44,9 @@ int sevenseg_verify_samples(const WorkflowTrainSample* samples, size_t sample_co
  */
 void sevenseg_render_cli(int digit, const int seg[7]);
 
+/**
+ * @brief 解析可用的 sevenseg 数据目录。
+ */
+int sevenseg_resolve_data_dir(const char* preferred_dir, char* out_dir, size_t out_cap);
+
 #endif

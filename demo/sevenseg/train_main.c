@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "../../src/include/config_user.h"
+#include "../../src/include/network_def.h"
 #include "../../src/include/weights_io.h"
 #include "../../src/train/include/workflow_train.h"
 #include "sevenseg_shared.h"
@@ -34,6 +35,7 @@ int main(int argc, char** argv) {
     char network_fn_path[260];
     const int activations[OUTPUT_DIM] = IO_MAPPING_ACTIVATIONS;
     WorkflowTrainMemoryOptions train_options;
+    NetworkSpec network_spec;
     WorkflowTrainSample train_samples[MAX_SEVENSEG_SAMPLES];
     char train_commands[MAX_SEVENSEG_SAMPLES][32];
     float train_states[MAX_SEVENSEG_SAMPLES][STATE_DIM];
@@ -46,6 +48,10 @@ int main(int argc, char** argv) {
         out_dir = argv[2];
     }
     memset(&train_options, 0, sizeof(train_options));
+    rc = network_def_build_spec(&network_spec);
+    if (rc != 0) {
+        return 2;
+    }
     build_path(vocab_path, sizeof(vocab_path), out_dir, "demo_vocab_sevenseg.txt");
     build_path(bin_path, sizeof(bin_path), out_dir, "demo_weights_sevenseg.bin");
     build_path(weights_c_path, sizeof(weights_c_path), out_dir, "demo_weights_sevenseg_export.c");
@@ -81,6 +87,7 @@ int main(int argc, char** argv) {
     train_options.out_weights_bin = bin_path;
     train_options.out_weights_c = weights_c_path;
     train_options.out_symbol = "g_demo_weights_sevenseg";
+    train_options.network_spec = &network_spec;
     train_options.epochs = 140U;
     train_options.learning_rate = 0.06f;
     rc = workflow_train_from_memory(&train_options);
@@ -89,7 +96,7 @@ int main(int argc, char** argv) {
         return 7;
     }
     rc = weights_load_binary(bin_path, &loaded, &loaded_count);
-    if (rc != WEIGHTS_IO_STATUS_OK || loaded == NULL || loaded_count != workflow_weights_count()) {
+    if (rc != WEIGHTS_IO_STATUS_OK || loaded == NULL || loaded_count != workflow_weights_count(&network_spec)) {
         free(loaded);
         return 8;
     }

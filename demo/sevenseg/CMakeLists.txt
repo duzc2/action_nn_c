@@ -1,4 +1,5 @@
 add_library(dnn_infer_sevenseg STATIC
+    ../../src/core/network_spec.c
     ../../src/core/tensor.c
     ../../src/core/ops.c
     ../../src/tokenizer/tokenizer.c
@@ -116,6 +117,7 @@ add_dependencies(sevenseg_infer_c_func sevenseg_generated_assets)
 
 add_executable(sevenseg_benchmark
     benchmark_main.c
+    sevenseg_shared.c
     ${SEVENSEG_C_ARRAY}
     ${SEVENSEG_C_FUNC}
 )

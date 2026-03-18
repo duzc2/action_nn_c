@@ -67,7 +67,8 @@ static int infer_digit_with_cfunc(Tokenizer* tokenizer, int digit, int out_seg[7
  * @brief 基于 C 函数前向网络的交互式推理入口。
  */
 int main(int argc, char** argv) {
-    const char* data_dir = "demo/sevenseg/data";
+    const char* preferred_dir = NULL;
+    char data_dir[260];
     char vocab_path[260];
     Vocabulary vocab;
     Tokenizer tokenizer;
@@ -76,7 +77,11 @@ int main(int argc, char** argv) {
     memset(&vocab, 0, sizeof(vocab));
     memset(&tokenizer, 0, sizeof(tokenizer));
     if (argc >= 2) {
-        data_dir = argv[1];
+        preferred_dir = argv[1];
+    }
+    if (sevenseg_resolve_data_dir(preferred_dir, data_dir, sizeof(data_dir)) != 0) {
+        fprintf(stderr, "resolve sevenseg data dir failed\n");
+        return 1;
     }
     build_path(vocab_path, sizeof(vocab_path), data_dir, "demo_vocab_sevenseg.txt");
     rc = workflow_prepare_tokenizer(vocab_path, &vocab, &tokenizer);

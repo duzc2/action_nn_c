@@ -1,54 +1,67 @@
 # action_c
 
-## 项目做什么
+纯 C99 的训练/推理工程，核心是**图拓扑驱动的网络配置**。  
+项目不再区分“线性模型接口 / transformer 模型接口”，统一由 `NetworkGraph -> NetworkSpec` 流程决定执行路径。
 
-`action_c` 是一个 C99 控制决策样例工程。  
-它把“命令文本 + 当前状态”转换成“当前帧动作”。
+## 核心设计
 
-它适合以下问题：
-- 文本指令驱动控制（例如 move left / move right fast）
-- 小型实时控制决策（每帧调用一次模型）
-- 需要 C99 落地和可移植代码的项目
+- 网络配置来源：`src/include/config_user.h` 中 `NETWORK_GRAPH_NODES` 与 `NETWORK_GRAPH_EDGES`
+- 结构构建入口：`network_graph_build` + `network_spec_build_from_graph`
+- 推理统一入口：`workflow_runtime_init(..., const NetworkSpec* spec)`
+- 训练统一入口：`workflow_train_from_csv` / `workflow_train_from_memory`（均要求 `network_spec`）
+- profiler 负责生成 `src/include/network_def.h`，其中包含 `network_def_build_spec`
 
-它不适合以下问题：
-- 大规模深度学习训练平台
-- GPU/分布式训练
-- 复杂强化学习训练系统
+## 快速开始
 
-## 应用示例
-
-- 机器人导航原型：命令 + 位姿误差 -> 本帧移动动作
-- 游戏控制原型：命令 + 环境状态 -> 键鼠动作向量
-- 工业控制原型：操作指令 + 传感器摘要 -> 执行器输出
-
-## 系统如何运行
-
-每一帧固定流程：
-1. `tokenizer_encode`：文本命令转 token ids
-2. 前向计算：token ids + state -> logits
-3. `op_actuator`：logits 按通道激活映射为动作
-4. `action_callback`：动作发送到执行层
-5. 外部循环决定下一帧是否继续
-
-说明：
-- 模型只负责“单帧决策”
-- 外部系统负责“任务生命周期”
-
-## 快速运行
-
-```powershell
-cmake -S . -B build -G Ninja -DCMAKE_C_COMPILER=clang
-cmake --build build --target c99_full_demo
-.\build\c99_full_demo.exe
+```bash
+cmake -S . -B build
+cmake --build build --config Debug
+ctest --test-dir build -C Debug --output-on-failure
 ```
 
-## 文档
+## 常用可执行目标
 
-本项目只保留三份主文档：
-- 项目总览：README（本文件）
-- 完整用户手册：[user_manual.md](./docs/user_manual.md)
-- 开发维护手册：[developer_manual.md](./docs/developer_manual.md)
+- `profiler`
+- `min_train_loop`
+- `goal_demo`
+- `step_demo`
+- `transformer_simple_demo`
+- `sevenseg_train`
+- `sevenseg_infer_bin`
+- `sevenseg_infer_c_array`
+- `sevenseg_infer_c_func`
+- `sevenseg_benchmark`
+- `full_test_suite`
 
-新增专题文档：
-- 网络结构设计手册：[network_design_manual.md](./docs/network_design_manual.md)
-- 从 0 开始用户故事：[user_story_from_zero.md](./docs/user_story_from_zero.md)
+## sevenseg 示例
+
+```bash
+cmake --build build --config Debug --target sevenseg_train
+cmake --build build --config Debug --target sevenseg_infer_bin
+```
+
+运行：
+
+```bash
+build/demo/sevenseg/Debug/sevenseg_infer_bin.exe
+```
+
+程序支持自动解析数据目录；也可显式传入：
+
+```bash
+build/demo/sevenseg/Debug/sevenseg_infer_bin.exe demo/sevenseg/data
+```
+
+## transformer 简易示例
+
+```bash
+cmake --build build --config Debug --target transformer_simple_demo
+build/demo/transformer_simple/Debug/transformer_simple_demo.exe
+```
+
+## 文档索引
+
+- `docs/user_manual.md`：使用手册
+- `docs/developer_manual.md`：开发手册
+- `docs/network_design_manual.md`：图拓扑网络设计手册
+- `demo_full_flow.md`：端到端流程演示

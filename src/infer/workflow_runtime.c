@@ -3,6 +3,8 @@
 #include <string.h>
 
 #include "../include/config_user.h"
+#include "../include/model.h"
+#include "../include/network_spec.h"
 #include "../include/ops.h"
 #include "../include/tensor.h"
 #include "../include/tokenizer.h"
@@ -47,11 +49,11 @@ static int activate_output(const float* logits, float* out_act) {
  * - 模型由 token 权重、状态权重、偏置三段组成。
  * - token 贡献按 token_count 做平均，防止输入长度变化引入比例漂移。
  */
-static void predict_logits(const float* w,
-                           const int* ids,
-                           size_t token_count,
-                           const float* state,
-                           float* logits) {
+static void predict_logits_linear(const float* w,
+                                  const int* ids,
+                                  size_t token_count,
+                                  const float* state,
+                                  float* logits) {
     size_t i = 0U;
     size_t j = 0U;
     size_t token_base = 0U;
@@ -75,6 +77,42 @@ static void predict_logits(const float* w,
             logits[j] += state[i] * w[state_base + i * OUTPUT_DIM + j];
         }
     }
+}
+
+static void apply_transformer_blocks(const NetworkSpec* spec, float* logits) {
+    size_t i = 0U;
+    TransformerBlock block;
+    if (spec == NULL || spec->layer_count <= 1U) {
+        return;
+    }
+    memset(&block, 0, sizeof(block));
+    block.attention.embed_dim = OUTPUT_DIM;
+    block.attention.num_heads = 1U;
+    block.moe.num_experts = NUM_EXPERTS;
+    block.moe.k_top = K_TOP_EXPERTS;
+    for (i = 1U; i < spec->layer_count; ++i) {
+        if (spec->layers[i].kind == NETWORK_LAYER_TRANSFORMER_BLOCK ||
+            spec->layers[i].kind == NETWORK_LAYER_ATTENTION_HEAD ||
+            spec->layers[i].kind == NETWORK_LAYER_CNN ||
+            spec->layers[i].kind == NETWORK_LAYER_RNN ||
+            spec->layers[i].kind == NETWORK_LAYER_KNN) {
+            model_transformer_block_forward(&block, logits, 1U, logits);
+        }
+    }
+}
+
+static int predict_logits_by_spec(const NetworkSpec* spec,
+                                  const float* w,
+                                  const int* ids,
+                                  size_t token_count,
+                                  const float* state,
+                                  float* logits) {
+    if (network_spec_validate(spec) != 0) {
+        return WORKFLOW_STATUS_INVALID_ARGUMENT;
+    }
+    predict_logits_linear(w, ids, token_count, state, logits);
+    apply_transformer_blocks(spec, logits);
+    return WORKFLOW_STATUS_OK;
 }
 
 /**
@@ -102,8 +140,11 @@ int workflow_prepare_tokenizer(const char* vocab_path, Vocabulary* vocab, Tokeni
 /**
  * @brief 返回推理模型总权重数。
  */
-size_t workflow_weights_count(void) {
-    return TOTAL_WEIGHT_COUNT;
+size_t workflow_weights_count(const NetworkSpec* spec) {
+    if (spec == NULL || network_spec_validate(spec) != 0) {
+        return 0U;
+    }
+    return network_spec_weight_count(spec);
 }
 
 /**
@@ -113,14 +154,25 @@ size_t workflow_weights_count(void) {
  * - 权重长度必须严格等于 TOTAL_WEIGHT_COUNT，防止错版本权重被误用。
  * - 任一步失败都回收已分配资源，避免半初始化状态泄漏。
  */
-int workflow_runtime_init(WorkflowRuntime* runtime, const char* vocab_path, const char* weights_bin_path) {
+int workflow_runtime_init(WorkflowRuntime* runtime,
+                          const char* vocab_path,
+                          const char* weights_bin_path,
+                          const NetworkSpec* spec) {
     int rc = 0;
-    if (runtime == NULL || vocab_path == NULL || weights_bin_path == NULL) {
+    size_t expected_weight_count = 0U;
+    if (runtime == NULL || vocab_path == NULL || weights_bin_path == NULL || spec == NULL) {
+        return WORKFLOW_STATUS_INVALID_ARGUMENT;
+    }
+    if (network_spec_validate(spec) != 0) {
+        return WORKFLOW_STATUS_INVALID_ARGUMENT;
+    }
+    expected_weight_count = network_spec_weight_count(spec);
+    if (expected_weight_count == 0U) {
         return WORKFLOW_STATUS_INVALID_ARGUMENT;
     }
     memset(runtime, 0, sizeof(*runtime));
     rc = weights_load_binary(weights_bin_path, &runtime->weights, &runtime->weight_count);
-    if (rc != WEIGHTS_IO_STATUS_OK || runtime->weights == NULL || runtime->weight_count != TOTAL_WEIGHT_COUNT) {
+    if (rc != WEIGHTS_IO_STATUS_OK || runtime->weights == NULL || runtime->weight_count != expected_weight_count) {
         free(runtime->weights);
         runtime->weights = NULL;
         runtime->weight_count = 0U;
@@ -133,6 +185,7 @@ int workflow_runtime_init(WorkflowRuntime* runtime, const char* vocab_path, cons
         runtime->weight_count = 0U;
         return rc;
     }
+    memcpy(&runtime->network_spec, spec, sizeof(runtime->network_spec));
     runtime->ready = 1;
     return WORKFLOW_STATUS_OK;
 }
@@ -170,7 +223,10 @@ int workflow_run_step(WorkflowRuntime* runtime, const char* command, const float
     if (rc != TOKENIZER_STATUS_OK || count == 0U) {
         return WORKFLOW_STATUS_DATA_ERROR;
     }
-    predict_logits(runtime->weights, ids, count, state, logits);
+    rc = predict_logits_by_spec(&runtime->network_spec, runtime->weights, ids, count, state, logits);
+    if (rc != WORKFLOW_STATUS_OK) {
+        return rc;
+    }
     rc = activate_output(logits, out_action);
     return (rc == WORKFLOW_STATUS_OK) ? WORKFLOW_STATUS_OK : WORKFLOW_STATUS_INTERNAL_ERROR;
 }
@@ -185,7 +241,10 @@ int workflow_run_step_goal(WorkflowRuntime* runtime, const float* state, float* 
         return WORKFLOW_STATUS_INVALID_ARGUMENT;
     }
     memset(logits, 0, sizeof(logits));
-    predict_logits(runtime->weights, NULL, 0U, state, logits);
+    rc = predict_logits_by_spec(&runtime->network_spec, runtime->weights, NULL, 0U, state, logits);
+    if (rc != WORKFLOW_STATUS_OK) {
+        return rc;
+    }
     rc = activate_output(logits, out_action);
     return (rc == WORKFLOW_STATUS_OK) ? WORKFLOW_STATUS_OK : WORKFLOW_STATUS_INTERNAL_ERROR;
 }

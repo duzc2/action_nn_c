@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 
+#include "../../include/network_spec.h"
 #include "../../include/workflow_status.h"
 
 /**
@@ -14,6 +15,7 @@ typedef struct WorkflowTrainOptions {
     const char* out_weights_bin;
     const char* out_weights_c;
     const char* out_symbol;
+    const NetworkSpec* network_spec;
     size_t epochs;
     float learning_rate;
 } WorkflowTrainOptions;
@@ -42,6 +44,7 @@ typedef struct WorkflowTrainMemoryOptions {
     const char* out_weights_bin;
     const char* out_weights_c;
     const char* out_symbol;
+    const NetworkSpec* network_spec;
     size_t epochs;
     float learning_rate;
 } WorkflowTrainMemoryOptions;

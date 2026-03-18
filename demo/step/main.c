@@ -15,6 +15,7 @@
 #endif
 
 #include "../../src/include/config_user.h"
+#include "../../src/include/network_def.h"
 #include "../../src/include/weights_io.h"
 #include "../../src/infer/include/workflow_infer.h"
 #include "../../src/train/include/workflow_train.h"
@@ -409,6 +410,7 @@ int main(void) {
     size_t loaded_count = 0U;
     WorkflowRuntime runtime;
     WorkflowTrainMemoryOptions train_options;
+    NetworkSpec network_spec;
     WorkflowTrainSample train_samples[MAX_STEP_SAMPLES];
     char train_commands[MAX_STEP_SAMPLES][32];
     float train_states[MAX_STEP_SAMPLES][STATE_DIM];
@@ -419,6 +421,11 @@ int main(void) {
     memset(&runtime, 0, sizeof(runtime));
     memset(&train_options, 0, sizeof(train_options));
     memset(infer_act, 0, sizeof(infer_act));
+    rc = network_def_build_spec(&network_spec);
+    if (rc != 0) {
+        fprintf(stderr, "network_def_build_spec failed: %d\n", rc);
+        return 1;
+    }
 
     rc = ensure_step_data_dir();
     if (rc != 0) {
@@ -448,6 +455,7 @@ int main(void) {
     train_options.out_weights_bin = weight_bin_path;
     train_options.out_weights_c = weight_c_path;
     train_options.out_symbol = symbol;
+    train_options.network_spec = &network_spec;
     train_options.epochs = 20U;
     train_options.learning_rate = 0.08f;
     rc = workflow_train_from_memory(&train_options);
@@ -457,7 +465,7 @@ int main(void) {
     }
 
     rc = weights_load_binary(weight_bin_path, &loaded_weights, &loaded_count);
-    if (rc != WEIGHTS_IO_STATUS_OK || loaded_weights == NULL || loaded_count != workflow_weights_count()) {
+    if (rc != WEIGHTS_IO_STATUS_OK || loaded_weights == NULL || loaded_count != workflow_weights_count(&network_spec)) {
         fprintf(stderr, "weights_load_binary failed: rc=%d count=%zu\n", rc, loaded_count);
         free(loaded_weights);
         return 5;
@@ -477,7 +485,7 @@ int main(void) {
         return 6;
     }
 
-    rc = workflow_runtime_init(&runtime, vocab_path, weight_bin_path);
+    rc = workflow_runtime_init(&runtime, vocab_path, weight_bin_path, &network_spec);
     if (rc != WORKFLOW_STATUS_OK) {
         fprintf(stderr, "workflow_runtime_init failed: %d\n", rc);
         free(loaded_weights);

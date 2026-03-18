@@ -81,13 +81,18 @@ static int infer_digit(WorkflowRuntime* runtime, int digit, int out_seg[7]) {
  * @brief 基于 C 数组权重的交互式推理入口。
  */
 int main(int argc, char** argv) {
-    const char* data_dir = "demo/sevenseg/data";
+    const char* preferred_dir = NULL;
+    char data_dir[260];
     char vocab_path[260];
     WorkflowRuntime runtime;
     char line[64];
     memset(&runtime, 0, sizeof(runtime));
     if (argc >= 2) {
-        data_dir = argv[1];
+        preferred_dir = argv[1];
+    }
+    if (sevenseg_resolve_data_dir(preferred_dir, data_dir, sizeof(data_dir)) != 0) {
+        fprintf(stderr, "resolve sevenseg data dir failed\n");
+        return 1;
     }
     build_path(vocab_path, sizeof(vocab_path), data_dir, "demo_vocab_sevenseg.txt");
     if (runtime_init_from_array(&runtime, vocab_path) != 0) {
