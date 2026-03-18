@@ -185,3 +185,33 @@ void sevenseg_render_cli(int digit, const int seg[7]) {
     printf("%c   %c\n", e, c);
     printf(" %c%c%c \n", d, d, d);
 }
+
+int sevenseg_resolve_data_dir(const char* preferred_dir, char* out_dir, size_t out_cap) {
+    const char* candidates[] = {
+        preferred_dir,
+        "demo/sevenseg/data",
+        "../../../../demo/sevenseg/data",
+        "../../../demo/sevenseg/data",
+        "../../demo/sevenseg/data",
+        "./data"
+    };
+    size_t i = 0U;
+    char probe[320];
+    FILE* fp = NULL;
+    if (out_dir == NULL || out_cap == 0U) {
+        return -1;
+    }
+    for (i = 0U; i < sizeof(candidates) / sizeof(candidates[0]); ++i) {
+        if (candidates[i] == NULL) {
+            continue;
+        }
+        (void)snprintf(probe, sizeof(probe), "%s/%s", candidates[i], "demo_vocab_sevenseg.txt");
+        fp = fopen(probe, "r");
+        if (fp != NULL) {
+            fclose(fp);
+            (void)snprintf(out_dir, out_cap, "%s", candidates[i]);
+            return 0;
+        }
+    }
+    return -1;
+}

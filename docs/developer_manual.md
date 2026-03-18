@@ -1,185 +1,55 @@
 # 开发手册
 
-## 1. 目标
+## 1. 架构总览
 
-本文档说明代码结构、扩展方式、测试策略和交付标准。  
-目标读者是维护者和二次开发者。
+项目分为三层：
 
-## 2. 系统边界
+- 配置层：`config_user.h` 提供图拓扑配置与 IO 定义
+- 规格层：`network_spec.*` 完成图校验、拓扑排序、规格构建
+- 执行层：`workflow_train.*` 与 `workflow_runtime.*` 消费 `NetworkSpec`
 
-本仓库提供：
-- C99 推理链路
-- 最小训练闭环
-- 权重导出与回加载
-- 测试框架和模型专项测试
+## 2. 关键模块
 
-本仓库不提供：
-- 通用训练框架
-- 自动微分
-- GPU 运行时
+- `src/core/network_spec.c`  
+  提供 `network_graph_build`、`network_graph_validate`、`network_spec_build_from_graph`
+- `src/tools/profiler.c`  
+  读取配置，生成 `network_def.h`，并输出参数/激活/FLOPs 估算
+- `src/train/workflow_train.c`  
+  训练与权重导出
+- `src/infer/workflow_runtime.c`  
+  二进制权重加载与在线推理
 
-## 3. 架构与职责
+## 3. 统一调用规范
 
-### 3.1 模块目录
+- 训练：`WorkflowTrainOptions.network_spec` / `WorkflowTrainMemoryOptions.network_spec` 必填
+- 推理：`workflow_runtime_init(..., spec)` 必填
+- 权重校验：`workflow_weights_count(spec)`
 
-- `src/include/`：稳定接口和配置
-- `src/core/`：核心算子与兼容入口
-- `src/tokenizer/`：词表与文本编码实现
-- `src/model/`：模型层实现
-- `src/train/`：CSV 数据加载
-- `src/tools/`：工具程序与端到端示例
-- `test/`：测试框架和测试用例
+## 4. 构建与测试
 
-### 3.2 核心数据对象
-
-- `Tensor`：只保存视图，不持有生命周期  
-  [tensor.h](../src/include/tensor.h#L21-L34)
-- `Vocabulary` / `Tokenizer`：文本到 token id 映射  
-  [tokenizer.h](../src/include/tokenizer.h#L26-L43)
-- `ProtocolFrame`：RAW/TOK 统一帧  
-  [protocol.h](../src/include/protocol.h#L31-L36)
-- `WorkflowRuntime`：推理运行时上下文（词表/权重/状态）  
-  [workflow_infer.h](../src/infer/include/workflow_infer.h)
-
-### 3.3 执行链路
-
-固定链路：
-1. `tokenizer_encode`
-2. 模型前向
-3. `op_actuator`
-4. `action_callback`
-
-链路约束：
-- 控制循环由外部维护
-- 模型只做单帧决策
-
-## 4. 配置管理
-
-配置入口：  
-[config_user.h](../src/include/config_user.h)
-
-配置分三类：
-- 结构参数：`EMBED_DIM / NUM_LAYERS / NUM_HEADS / FFN_DIM`
-- I/O 参数：`VOCAB_SIZE / STATE_DIM / OUTPUT_DIM / MAX_SEQ_LEN`
-- 输出映射：`IO_MAPPING_ACTIVATIONS / IO_MAPPING_NAMES`
-
-变更规则：
-- 先改配置，再跑 profiler，再跑全量测试
-- 训练后不要变更输出通道语义
-
-## 5. 工具链
-
-库拆分：
-- `dnn_infer`：仅推理链路（tokenizer/weights_io/workflow runtime）
-- `dnn_train`：训练链路（workflow_train/csv_loader），并依赖 `dnn_infer`
-
-### 5.1 profiler
-
-用途：
-- 估算参数量、激活内存、FLOPs
-- 输出 `network_def.h`
-
-实现：  
-[profiler.c](../src/tools/profiler.c)
-
-### 5.2 min_train_loop
-
-用途：
-- 验证最小训练闭环
-- 验证协议 RAW/TOK 两种输入
-
-实现：  
-[min_train_loop.c](../src/tools/min_train_loop.c)
-
-### 5.3 c99_full_demo
-
-用途：
-- 端到端链路验证
-- 外部循环多步推理示例
-
-实现：  
-[c99_full_demo.c](../src/tools/c99_full_demo.c)
-
-## 6. 开发流程
-
-标准顺序：
-1. 定义需求和 I/O
-2. 修改配置
-3. 跑 profiler
-4. 开发实现
-5. 增加测试
-6. 跑全量测试
-7. 更新文档
-
-构建命令：
-
-```powershell
-cmake -S . -B build -G Ninja -DCMAKE_C_COMPILER=clang
-cmake --build build
+```bash
+cmake -S . -B build
+cmake --build build --config Debug
+ctest --test-dir build -C Debug --output-on-failure
 ```
 
-## 7. 扩展指南
+## 5. sevenseg 子工程
 
-### 7.1 新增模型算子
+- 数据生成：`sevenseg_train --export-only <dir>`
+- 推理入口：`sevenseg_infer_bin / sevenseg_infer_c_array / sevenseg_infer_c_func`
+- 基准入口：`sevenseg_benchmark`
+- 所有入口都支持自动解析数据目录
 
-步骤：
-1. 在 `src/include` 增加接口
-2. 在 `src/core` 或 `src/model` 实现
-3. 在 `CMakeLists.txt` 接入源码
-4. 增加单元测试和负向测试
+## 6. 新增节点类型的开发流程
 
-### 7.2 新增协议字段
+1. 在 `NetworkNodeType` / `NetworkLayerKind` 增加枚举
+2. 在 `network_spec_build_from_graph` 增加映射规则
+3. 在 `profiler_run` 增加估算模型
+4. 在训练与推理执行路径增加算子分发
+5. 补充 demo 与测试
 
-步骤：
-1. 修改 `protocol_encode_*`
-2. 修改 `protocol_decode_packet`
-3. 增加格式错误测试
-4. 校验旧格式兼容性
+## 7. 禁止事项
 
-### 7.3 新增执行层回调
-
-步骤：
-1. 在业务入口实现 `on_action` 回调
-2. 对接目标设备 SDK
-3. 在外部循环中调用 `workflow_run_step`
-4. 增加执行层回归测试
-
-## 8. 测试体系
-
-测试入口：  
-[test_suite.c](../test/src/test_suite.c)
-
-当前分组：
-- 单元
-- 正确性
-- 错误
-- 边界
-- 压力
-- 集成
-- 模型专项
-
-模型专项覆盖：
-- 泛化
-- OOD
-- 对抗扰动
-- 长时序极限
-- 预期错误路径
-
-模型专项文件：  
-[test_cases_model_special.c](../test/src/test_cases_model_special.c)
-
-## 9. 代码质量要求
-
-- 保持 C99
-- 返回码必须可判定
-- 内存释放路径完整
-- 新增能力必须有测试
-- 禁止提交运行产物
-
-## 10. 交付清单
-
-合并前必须完成：
-- clang 构建通过
-- `full_test_suite` 全绿
-- 日志可追踪关键指标
-- 文档同步更新
+- 不新增旧兼容接口
+- 不引入模型类型二选一开关
+- 不在文档和代码中保留过时构建入口说明

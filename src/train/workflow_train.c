@@ -3,6 +3,8 @@
 
 #include "../include/config_user.h"
 #include "../include/csv_loader.h"
+#include "../include/model.h"
+#include "../include/network_spec.h"
 #include "../include/ops.h"
 #include "../include/tensor.h"
 #include "../include/tokenizer.h"
@@ -53,11 +55,11 @@ static int activate_output(const float* logits, float* out_act) {
 /**
  * @brief 按统一线性模型计算 logits。
  */
-static void predict_logits(const float* w,
-                           const int* ids,
-                           size_t token_count,
-                           const float* state,
-                           float* logits) {
+static void predict_logits_linear(const float* w,
+                                  const int* ids,
+                                  size_t token_count,
+                                  const float* state,
+                                  float* logits) {
     size_t i = 0U;
     size_t j = 0U;
     size_t token_base = 0U;
@@ -83,6 +85,42 @@ static void predict_logits(const float* w,
     }
 }
 
+static void apply_transformer_blocks(const NetworkSpec* spec, float* logits) {
+    size_t i = 0U;
+    TransformerBlock block;
+    if (spec == NULL || spec->layer_count <= 1U) {
+        return;
+    }
+    memset(&block, 0, sizeof(block));
+    block.attention.embed_dim = OUTPUT_DIM;
+    block.attention.num_heads = 1U;
+    block.moe.num_experts = NUM_EXPERTS;
+    block.moe.k_top = K_TOP_EXPERTS;
+    for (i = 1U; i < spec->layer_count; ++i) {
+        if (spec->layers[i].kind == NETWORK_LAYER_TRANSFORMER_BLOCK ||
+            spec->layers[i].kind == NETWORK_LAYER_ATTENTION_HEAD ||
+            spec->layers[i].kind == NETWORK_LAYER_CNN ||
+            spec->layers[i].kind == NETWORK_LAYER_RNN ||
+            spec->layers[i].kind == NETWORK_LAYER_KNN) {
+            model_transformer_block_forward(&block, logits, 1U, logits);
+        }
+    }
+}
+
+static int predict_logits_by_spec(const NetworkSpec* spec,
+                                  const float* w,
+                                  const int* ids,
+                                  size_t token_count,
+                                  const float* state,
+                                  float* logits) {
+    if (network_spec_validate(spec) != 0) {
+        return WORKFLOW_STATUS_INVALID_ARGUMENT;
+    }
+    predict_logits_linear(w, ids, token_count, state, logits);
+    apply_transformer_blocks(spec, logits);
+    return WORKFLOW_STATUS_OK;
+}
+
 /**
  * @brief 基于内存样本执行训练循环。
  *
@@ -95,6 +133,7 @@ static int train_with_samples(const Tokenizer* tokenizer,
                               size_t sample_count,
                               size_t epochs,
                               float learning_rate,
+                              const NetworkSpec* network_spec,
                               float* weights) {
     size_t epoch = 0U;
     int rc = 0;
@@ -123,7 +162,10 @@ static int train_with_samples(const Tokenizer* tokenizer,
                     return WORKFLOW_STATUS_DATA_ERROR;
                 }
             }
-            predict_logits(weights, ids, count, s->state, logits);
+            rc = predict_logits_by_spec(network_spec, weights, ids, count, s->state, logits);
+            if (rc != WORKFLOW_STATUS_OK) {
+                return rc;
+            }
             if (activate_output(logits, pred) != WORKFLOW_STATUS_OK) {
                 return WORKFLOW_STATUS_INTERNAL_ERROR;
             }
@@ -168,6 +210,8 @@ int workflow_train_from_csv(const WorkflowTrainOptions* options) {
     Tokenizer tokenizer;
     WorkflowTrainSample samples[512];
     float weights[TOTAL_WEIGHT_COUNT];
+    const NetworkSpec* spec = NULL;
+    size_t expected_weight_count = 0U;
     size_t i = 0U;
     int rc = 0;
     if (options == NULL || options->csv_path == NULL || options->vocab_path == NULL ||
@@ -175,6 +219,17 @@ int workflow_train_from_csv(const WorkflowTrainOptions* options) {
         return WORKFLOW_STATUS_INVALID_ARGUMENT;
     }
     if (options->epochs == 0U || options->learning_rate <= 0.0f) {
+        return WORKFLOW_STATUS_INVALID_ARGUMENT;
+    }
+    spec = options->network_spec;
+    if (spec == NULL) {
+        return WORKFLOW_STATUS_INVALID_ARGUMENT;
+    }
+    if (network_spec_validate(spec) != 0) {
+        return WORKFLOW_STATUS_INVALID_ARGUMENT;
+    }
+    expected_weight_count = network_spec_weight_count(spec);
+    if (expected_weight_count != TOTAL_WEIGHT_COUNT) {
         return WORKFLOW_STATUS_INVALID_ARGUMENT;
     }
     memset(&ds, 0, sizeof(ds));
@@ -200,7 +255,7 @@ int workflow_train_from_csv(const WorkflowTrainOptions* options) {
         samples[i].state = ds.samples[i].state;
         samples[i].target = ds.samples[i].target;
     }
-    rc = train_with_samples(&tokenizer, samples, ds.count, options->epochs, options->learning_rate, weights);
+    rc = train_with_samples(&tokenizer, samples, ds.count, options->epochs, options->learning_rate, spec, weights);
     if (rc != WORKFLOW_STATUS_OK) {
         vocab_free(&vocab);
         csv_free_dataset(&ds);
@@ -230,12 +285,25 @@ int workflow_train_from_memory(const WorkflowTrainMemoryOptions* options) {
     Vocabulary vocab;
     Tokenizer tokenizer;
     float weights[TOTAL_WEIGHT_COUNT];
+    const NetworkSpec* spec = NULL;
+    size_t expected_weight_count = 0U;
     int rc = 0;
     if (options == NULL || options->samples == NULL || options->sample_count == 0U || options->vocab_path == NULL ||
         options->out_weights_bin == NULL || options->out_weights_c == NULL || options->out_symbol == NULL) {
         return WORKFLOW_STATUS_INVALID_ARGUMENT;
     }
     if (options->epochs == 0U || options->learning_rate <= 0.0f) {
+        return WORKFLOW_STATUS_INVALID_ARGUMENT;
+    }
+    spec = options->network_spec;
+    if (spec == NULL) {
+        return WORKFLOW_STATUS_INVALID_ARGUMENT;
+    }
+    if (network_spec_validate(spec) != 0) {
+        return WORKFLOW_STATUS_INVALID_ARGUMENT;
+    }
+    expected_weight_count = network_spec_weight_count(spec);
+    if (expected_weight_count != TOTAL_WEIGHT_COUNT) {
         return WORKFLOW_STATUS_INVALID_ARGUMENT;
     }
     memset(&vocab, 0, sizeof(vocab));
@@ -251,6 +319,7 @@ int workflow_train_from_memory(const WorkflowTrainMemoryOptions* options) {
                             options->sample_count,
                             options->epochs,
                             options->learning_rate,
+                            spec,
                             weights);
     if (rc != WORKFLOW_STATUS_OK) {
         vocab_free(&vocab);

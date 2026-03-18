@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "../../src/include/network_def.h"
 #include "../../src/infer/include/workflow_infer.h"
 #include "sevenseg_shared.h"
 
@@ -67,19 +68,29 @@ static int self_check(WorkflowRuntime* runtime) {
  * @brief 基于二进制权重的交互式推理示例入口。
  */
 int main(int argc, char** argv) {
-    const char* data_dir = "demo/sevenseg/data";
+    const char* preferred_dir = NULL;
+    char data_dir[260];
     char vocab_path[260];
     char bin_path[260];
     WorkflowRuntime runtime;
+    NetworkSpec network_spec;
     char line[64];
     int rc = 0;
     memset(&runtime, 0, sizeof(runtime));
+    rc = network_def_build_spec(&network_spec);
+    if (rc != 0) {
+        return 1;
+    }
     if (argc >= 2) {
-        data_dir = argv[1];
+        preferred_dir = argv[1];
+    }
+    if (sevenseg_resolve_data_dir(preferred_dir, data_dir, sizeof(data_dir)) != 0) {
+        fprintf(stderr, "resolve sevenseg data dir failed\n");
+        return 1;
     }
     build_path(vocab_path, sizeof(vocab_path), data_dir, "demo_vocab_sevenseg.txt");
     build_path(bin_path, sizeof(bin_path), data_dir, "demo_weights_sevenseg.bin");
-    rc = workflow_runtime_init(&runtime, vocab_path, bin_path);
+    rc = workflow_runtime_init(&runtime, vocab_path, bin_path, &network_spec);
     if (rc != WORKFLOW_STATUS_OK) {
         fprintf(stderr, "workflow_runtime_init failed: %d\n", rc);
         return 1;

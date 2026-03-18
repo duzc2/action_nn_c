@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 
+#include "../../include/network_spec.h"
 #include "../../include/tokenizer.h"
 #include "../../include/workflow_status.h"
 
@@ -17,6 +18,7 @@ typedef struct WorkflowRuntime {
     Tokenizer tokenizer;
     float* weights;
     size_t weight_count;
+    NetworkSpec network_spec;
     int ready;
 } WorkflowRuntime;
 
@@ -28,12 +30,15 @@ int workflow_prepare_tokenizer(const char* vocab_path, Vocabulary* vocab, Tokeni
 /**
  * @brief 返回当前推理模型期望的总权重数量。
  */
-size_t workflow_weights_count(void);
+size_t workflow_weights_count(const NetworkSpec* spec);
 
 /**
  * @brief 初始化推理运行时（词表 + 二进制权重）。
  */
-int workflow_runtime_init(WorkflowRuntime* runtime, const char* vocab_path, const char* weights_bin_path);
+int workflow_runtime_init(WorkflowRuntime* runtime,
+                          const char* vocab_path,
+                          const char* weights_bin_path,
+                          const NetworkSpec* spec);
 
 /**
  * @brief 释放推理运行时资源。

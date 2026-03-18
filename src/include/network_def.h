@@ -4,10 +4,12 @@
 
 #include "config_user.h"
 
+#include "network_spec.h"
+
 /* 资源估算结果：单位为 float 元素数 */
-#define NETWORK_TOTAL_PARAMS      207940U
-#define NETWORK_PEAK_ACTIVATION   4096U
-#define NETWORK_EST_FLOPS         13108736U
+#define NETWORK_TOTAL_PARAMS      199460U
+#define NETWORK_PEAK_ACTIVATION   8U
+#define NETWORK_EST_FLOPS         13107520U
 #define NETWORK_PARAM_BYTES       (NETWORK_TOTAL_PARAMS * sizeof(float))
 #define NETWORK_ACT_BYTES         (NETWORK_PEAK_ACTIVATION * sizeof(float))
 #define STATIC_POOL_SIZE          NETWORK_TOTAL_PARAMS
@@ -18,5 +20,25 @@
 #define NETWORK_IO_COUNT          4
 static const int NETWORK_IO_ACTIVATIONS[OUTPUT_DIM] = {0, 0, 1, 1};
 static const char* const NETWORK_IO_NAMES[OUTPUT_DIM] = {"Key_W", "Key_A", "Mouse_X", "Mouse_Y"};
+
+static const NetworkGraphNode NETWORK_GRAPH_NODE_VALUES[] = NETWORK_GRAPH_NODES;
+static const NetworkGraphEdge NETWORK_GRAPH_EDGE_VALUES[] = NETWORK_GRAPH_EDGES;
+
+static int network_def_build_spec(NetworkSpec* spec) {
+    NetworkGraph graph;
+    if (spec == NULL) {
+        return -1;
+    }
+    if (network_graph_build(&graph,
+                           NETWORK_GRAPH_NODE_VALUES,
+                           (size_t)(sizeof(NETWORK_GRAPH_NODE_VALUES) / sizeof(NETWORK_GRAPH_NODE_VALUES[0])),
+                           NETWORK_GRAPH_EDGE_VALUES,
+                           (size_t)(sizeof(NETWORK_GRAPH_EDGE_VALUES) / sizeof(NETWORK_GRAPH_EDGE_VALUES[0])),
+                           NETWORK_GRAPH_INPUT_NODE_ID,
+                           NETWORK_GRAPH_OUTPUT_NODE_ID) != 0) {
+        return -1;
+    }
+    return network_spec_build_from_graph(spec, &graph);
+}
 
 #endif /* NETWORK_DEF_H */
