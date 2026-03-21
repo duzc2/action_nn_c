@@ -12,7 +12,7 @@
 ## 2. 第一次编译：启用网络类型
 
 ```bash
-cmake -S . -B build -DENABLE_NN_TRANSFORMER=ON -DENABLE_NN_SEVENSEG=ON
+cmake -S . -B build -DENABLE_NN_TRANSFORMER=ON
 cmake --build build --config Debug --target profiler
 ```
 
@@ -20,6 +20,8 @@ cmake --build build --config Debug --target profiler
 
 - 只编译开关启用的网络类型
 - 未启用类型不进入注册表，不参与后续流程
+- `src/nn/` 必须实现并维护常见网络类型：`rnn`、`cnn`、`knn`、`transformer`
+- `sevenseg` 位于 `demo/sevenseg`，属于 demo 示例，不是 `src` 下的 `nn` 网络类型
 
 ## 3. 第一次运行：调用 profiler 生成代码
 

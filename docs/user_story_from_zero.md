@@ -16,7 +16,7 @@
 ## 最小闭环命令
 
 ```bash
-cmake -S . -B build -DENABLE_NN_TRANSFORMER=ON -DENABLE_NN_SEVENSEG=ON
+cmake -S . -B build -DENABLE_NN_TRANSFORMER=ON
 cmake --build build --config Debug --target profiler
 build/Debug/profiler.exe
 cmake --build build --config Debug --target sevenseg_train
@@ -24,8 +24,11 @@ cmake --build build --config Debug --target sevenseg_infer_bin
 ctest --test-dir build -C Debug --output-on-failure
 ```
 
+说明：`sevenseg` 是 `demo/sevenseg` 下的示例工程，不属于 `src` 下的 `nn` 网络类型。
+
 ## 成果
 
 - 网络类型启用由 CMake 开关控制，未启用类型不会进入编译
+- `src/nn/` 必须实现常见网络结构：`rnn`、`cnn`、`knn`、`transformer`
 - 新增网络类型只需新增实现并更新注册配置/宏与开关
 - 训练与推理分工程构建，依赖边界清晰且可独立部署
