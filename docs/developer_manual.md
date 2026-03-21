@@ -30,9 +30,14 @@
 ### 4.1 第一次编译（启用类型并构建生成阶段组件）
 
 ```powershell
-cmake -S . -B build -DENABLE_NN_TRANSFORMER=ON -DENABLE_NN_SEVENSEG=ON
+cmake -S . -B build -DENABLE_NN_TRANSFORMER=ON
 cmake --build build --config Debug --target profiler
 ```
+
+说明：
+
+- `sevenseg` 是 `demo/sevenseg` 下的示例工程，不在 `src/` 中
+- `sevenseg` 不是新的 `nn` 网络类型，只是用于演示训练/推理流程的 demo 目标
 
 ### 4.2 第一次运行（用户程序调用 profiler 生成代码）
 
@@ -68,13 +73,18 @@ ctest --test-dir build -C Debug --output-on-failure
 ```
 
 
-## 6. 新增节点类型的开发流程
+## 6. 新增网络类型的开发流程
 
 1. 新增 `src/nn/[网络类型]/` 并提供训练/推理实现
-2. 更新注册配置文件或注册宏清单
-3. 在 CMakeLists 增加该类型开关
-4. 开启开关后执行三次编译流程验证
-5. 补充 demo 与测试
+2. 保证 `src/nn/` 至少包含 `rnn`、`cnn`、`knn`、`transformer` 四类常见网络实现
+3. 更新注册配置文件或注册宏清单
+4. 在 CMakeLists 增加该类型开关
+5. 开启开关后执行三次编译流程验证
+6. 补充 demo 与测试（如 `demo/sevenseg`）
+
+补充说明：
+
+- `sevenseg` 属于 demo 示例，不属于本节“新增节点类型（nn 类型）”范畴
 
 ## 7. 禁止事项
 
