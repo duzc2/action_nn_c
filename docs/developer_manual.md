@@ -38,6 +38,7 @@ cmake --build build --config Debug --target profiler
 
 - `sevenseg` 是 `demo/sevenseg` 下的示例工程，不在 `src/` 中
 - `sevenseg` 不是新的 `nn` 网络类型，只是用于演示训练/推理流程的 demo 目标
+- 本机环境可直接使用 `clang` 编译
 
 ### 4.2 第一次运行（用户程序调用 profiler 生成代码）
 
