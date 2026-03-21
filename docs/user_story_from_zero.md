@@ -29,6 +29,6 @@ ctest --test-dir build -C Debug --output-on-failure
 ## 成果
 
 - 网络类型启用由 CMake 开关控制，未启用类型不会进入编译
-- `src/nn/` 必须实现常见网络结构：`rnn`、`cnn`、`knn`、`transformer`
+- `src/nn/` 必须实现常见网络结构：`rnn`、`cnn`、`knn`、`transformer`、`mlp`、`rbfn`、`autoencoder`、`variational_autoencoder`、`tcn`、`gnn`、`ssm`、`mamba_s4`、`esn`、`siamese_triplet`、`unet_encoder_decoder_skip`、`capsule`、`kan`、`som`、`tree_random_forest_xgboost`、`svm`、`tiny_tcn`
 - 新增网络类型只需新增实现并更新注册配置/宏与开关
 - 训练与推理分工程构建，依赖边界清晰且可独立部署

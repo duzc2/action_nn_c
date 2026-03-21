@@ -76,7 +76,7 @@ ctest --test-dir build -C Debug --output-on-failure
 ## 6. 新增网络类型的开发流程
 
 1. 新增 `src/nn/[网络类型]/` 并提供训练/推理实现
-2. 保证 `src/nn/` 至少包含 `rnn`、`cnn`、`knn`、`transformer` 四类常见网络实现
+2. 保证 `src/nn/` 至少包含 `rnn`、`cnn`、`knn`、`transformer`、`mlp`、`rbfn`、`autoencoder`、`variational_autoencoder`、`tcn`、`gnn`、`ssm`、`mamba_s4`、`esn`、`siamese_triplet`、`unet_encoder_decoder_skip`、`capsule`、`kan`、`som`、`tree_random_forest_xgboost`、`svm`、`tiny_tcn` 等常见网络实现
 3. 更新注册配置文件或注册宏清单
 4. 在 CMakeLists 增加该类型开关
 5. 开启开关后执行三次编译流程验证

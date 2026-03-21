@@ -12,7 +12,7 @@
 - 用户程序：构建网络结构体并调用 profiler。
 - profiler：校验结构体、生成训练/推理 `.c`、复制固定 `.h`、产出元数据。
 - 网络类型实现：在 `src/nn/[网络类型]/` 提供训练/推理两套 `.c/.h` 与 `README.md`。
-- 常见网络基线：`src/nn/` 必须实现 `rnn`、`cnn`、`knn`、`transformer` 四类网络。
+- 常见网络基线：`src/nn/` 必须实现 `rnn`、`cnn`、`knn`、`transformer`、`mlp`、`rbfn`、`autoencoder`、`variational_autoencoder`、`tcn`、`gnn`、`ssm`、`mamba_s4`、`esn`、`siamese_triplet`、`unet_encoder_decoder_skip`、`capsule`、`kan`、`som`、`tree_random_forest_xgboost`、`svm`、`tiny_tcn`。
 
 ## 3. 三次编译流程
 
