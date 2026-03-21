@@ -20,7 +20,7 @@ cmake --build build --config Debug --target profiler
 
 - 只编译开关启用的网络类型
 - 未启用类型不进入注册表，不参与后续流程
-- `src/nn/` 必须实现并维护常见网络类型：`rnn`、`cnn`、`knn`、`transformer`
+- `src/nn/` 必须实现并维护常见网络类型：`rnn`、`cnn`、`knn`、`transformer`、`mlp`、`rbfn`、`autoencoder`、`variational_autoencoder`、`tcn`、`gnn`、`ssm`、`mamba_s4`、`esn`、`siamese_triplet`、`unet_encoder_decoder_skip`、`capsule`、`kan`、`som`、`tree_random_forest_xgboost`、`svm`、`tiny_tcn`
 - `sevenseg` 位于 `demo/sevenseg`，属于 demo 示例，不是 `src` 下的 `nn` 网络类型
 
 ## 3. 第一次运行：调用 profiler 生成代码
