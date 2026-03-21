@@ -67,12 +67,6 @@ cmake --build build --config Debug --target sevenseg_infer_bin
 ctest --test-dir build -C Debug --output-on-failure
 ```
 
-## 5. sevenseg 子工程
-
-- 数据生成：`sevenseg_train --export-only <dir>`
-- 推理入口：`sevenseg_infer_bin / sevenseg_infer_c_array / sevenseg_infer_c_func`
-- 基准入口：`sevenseg_benchmark`
-- 所有入口都支持自动解析数据目录
 
 ## 6. 新增节点类型的开发流程
 
