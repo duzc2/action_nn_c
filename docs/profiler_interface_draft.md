@@ -145,6 +145,29 @@ ProfStatus nn_weights_load(
 - Hash 不一致返回 `PROF_STATUS_HASH_MISMATCH`
 - 不允许继续装载不同网络权重
 
+### 5.3.1 子网保存/加载注册接口（编译期）
+
+```c
+typedef struct {
+    const char* network_type;
+    ProfStatus (*save_serialize)(const void* train_ctx, NNSerializer* writer, ProfErrorBuffer* error);
+    ProfStatus (*load_deserialize)(void* infer_ctx, NNDeserializer* reader, ProfErrorBuffer* error);
+} NNSubnetSerdeVTable;
+
+ProfStatus nn_register_subnet_serde(const NNSubnetSerdeVTable* vtable);
+```
+
+约束：
+
+- 注册用于编译期装配不同网络类型能力。
+- 网络类型启用状态由 CMakeLists 开关控制。
+- `save_serialize` 由训练实现提供。
+- `load_deserialize` 由推理实现提供。
+- profiler 通过注册表生成调用，不直接依赖具体子网实现细节。
+- 新增网络类型仅通过注册接入，不改变现有对外接口签名。
+- 新增网络类型时仅更新注册配置文件或注册宏清单，不修改 profiler 主流程代码。
+- 未启用的网络类型不参与编译与注册。
+
 ## 5.4 训练接口（双模式）
 
 ```c
@@ -229,4 +252,6 @@ ProfStatus nn_metadata_load(
 ## 9. 设计决策原则
 
 - 问题处理优先从流程、过程、结构层面解决，不以数据补丁作为主方案。
+- 流程正确性由机制保证，数据验证仅用于校验数据是否符合流程，不用于验证流程本身。
 - 存在设计取舍或不合理方案风险时，先请示用户再执行。
+- 扩展新网络类型优先通过统一配置和注册流程，不通过改动旧代码路径实现兼容。
