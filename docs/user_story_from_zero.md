@@ -6,18 +6,19 @@
 
 ## 路径
 
-1. 在 `config_user.h` 定义图节点与边  
-2. 运行 profiler 生成 `network_def.h`  
-3. 训练导出权重  
-4. 初始化推理运行时并在线推理  
-5. 跑测试确认一致性
+1. 在 CMakeLists 通过开关启用需要的网络类型  
+2. 第一次编译构建 profiler 组件  
+3. 用户程序构建网络结构体并调用 profiler 生成训练/推理代码  
+4. 第二次编译训练工程并运行，导出权重 `.bin` 与权重 `.c`  
+5. 第三次编译推理工程并运行，加载 `.bin` 或使用权重 `.c`  
+6. 跑测试确认一致性
 
 ## 最小闭环命令
 
 ```bash
-cmake -S . -B build
-cmake --build build --config Debug
-build/Debug/profiler.exe -o src/include/network_def.h
+cmake -S . -B build -DENABLE_NN_TRANSFORMER=ON -DENABLE_NN_SEVENSEG=ON
+cmake --build build --config Debug --target profiler
+build/Debug/profiler.exe
 cmake --build build --config Debug --target sevenseg_train
 cmake --build build --config Debug --target sevenseg_infer_bin
 ctest --test-dir build -C Debug --output-on-failure
@@ -25,6 +26,6 @@ ctest --test-dir build -C Debug --output-on-failure
 
 ## 成果
 
-- 网络配置从“模型类型选择”升级为“拓扑图描述”
-- 训练与推理使用同一规格对象
-- demo 与测试走同一配置链路，避免文档与实现分叉
+- 网络类型启用由 CMake 开关控制，未启用类型不会进入编译
+- 新增网络类型只需新增实现并更新注册配置/宏与开关
+- 训练与推理分工程构建，依赖边界清晰且可独立部署

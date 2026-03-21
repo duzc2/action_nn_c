@@ -1,71 +1,81 @@
 # 用户手册
 
-## 1. 你需要知道的三件事
+## 1. 使用总览
 
-- 网络结构由图拓扑配置决定
-- profiler 负责把配置转成可执行规格
-- 训练与推理都只接受 `NetworkSpec`
+本系统在用户侧是固定的“三次编译 + 一次生成运行”流程：
 
-## 2. 环境准备
+- 第一次编译：按 CMakeLists 开关启用网络类型，构建用户程序与 profiler 组件
+- 第一次运行：执行用户程序，用户程序调用 profiler 生成训练/推理两套代码
+- 第二次编译：单独编译训练工程（依赖推理 `.c` + 训练 `.c`）
+- 第三次编译：单独编译推理工程（仅依赖推理 `.c`）
 
-```bash
-cmake -S . -B build
-cmake --build build --config Debug
-```
-
-## 3. 配置网络
-
-编辑 `src/include/config_user.h`：
-
-- `NETWORK_GRAPH_NODES`
-- `NETWORK_GRAPH_EDGES`
-- `NETWORK_GRAPH_INPUT_NODE_ID`
-- `NETWORK_GRAPH_OUTPUT_NODE_ID`
-
-常见节点类型：
-
-- `NETWORK_TOPO_NODE_LINEAR`
-- `NETWORK_TOPO_NODE_TRANSFORMER_BLOCK`
-- `NETWORK_TOPO_NODE_ATTENTION_HEAD`
-- `NETWORK_TOPO_NODE_CNN`
-- `NETWORK_TOPO_NODE_RNN`
-- `NETWORK_TOPO_NODE_KNN`
-- `NETWORK_TOPO_NODE_SELECT`
-- `NETWORK_TOPO_NODE_MERGE`
-
-## 4. 生成规格
+## 2. 第一次编译：启用网络类型
 
 ```bash
+cmake -S . -B build -DENABLE_NN_TRANSFORMER=ON -DENABLE_NN_SEVENSEG=ON
 cmake --build build --config Debug --target profiler
-build/Debug/profiler.exe -o src/include/network_def.h
 ```
 
-## 5. 运行示例
+规则：
 
-### sevenseg
+- 只编译开关启用的网络类型
+- 未启用类型不进入注册表，不参与后续流程
+
+## 3. 第一次运行：调用 profiler 生成代码
+
+用户程序内部步骤：
+
+- 构建网络结构体
+- 以网络结构体作为参数调用 profiler
+- profiler 生成训练 `.c` 与推理 `.c`
+- profiler 复制固定模板 `.h`（不做动态 `.h` 生成）
+
+示例运行：
+
+```bash
+build/Debug/profiler.exe
+```
+
+## 4. 第二次编译：训练工程
+
+训练工程依赖关系：
+
+- 依赖推理 `.c`
+- 依赖训练 `.c`
+
+构建与运行示例：
+
+```bash
+cmake --build build --config Debug --target sevenseg_train
+build/demo/sevenseg/Debug/sevenseg_train.exe
+```
+
+训练输出：
+
+- 网络权重 `.bin`
+- 网络权重 `.c`
+
+## 5. 第三次编译：推理工程
+
+推理工程依赖关系：
+
+- 仅依赖推理 `.c`
+- 不依赖训练 `.c`
+
+构建与运行示例：
 
 ```bash
 cmake --build build --config Debug --target sevenseg_infer_bin
 build/demo/sevenseg/Debug/sevenseg_infer_bin.exe
 ```
 
-### step / goal
+推理可选加载方式：
 
-```bash
-cmake --build build --config Debug --target step_demo
-cmake --build build --config Debug --target goal_demo
-```
+- 加载训练阶段输出的 `.bin`
+- 或直接链接权重 `.c`
 
 ## 6. 测试
 
 ```bash
 ctest --test-dir build -C Debug --output-on-failure
 ```
-
-## 7. 常见问题
-
-- **Q: 程序提示找不到 sevenseg 数据文件？**  
-  A: 优先运行 `sevenseg_train` 生成数据，或启动时传入 `demo/sevenseg/data`。
-
-- **Q: 训练失败显示 spec 非法？**  
-  A: 检查图节点是否有重复 id、边是否引用不存在节点、图是否有环、输入输出节点是否存在。
