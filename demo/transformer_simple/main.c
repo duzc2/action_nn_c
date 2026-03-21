@@ -141,18 +141,18 @@ static void fill_target(float* target, float a, float b, float c, float d) {
         target[i] = 0.0f;
     }
     /* 按通道顺序写入。 */
-    if (OUTPUT_DIM > 0U) {
-        target[0] = a;
-    }
-    if (OUTPUT_DIM > 1U) {
-        target[1] = b;
-    }
-    if (OUTPUT_DIM > 2U) {
-        target[2] = c;
-    }
-    if (OUTPUT_DIM > 3U) {
-        target[3] = d;
-    }
+#if OUTPUT_DIM > 0
+    target[0] = a;
+#endif
+#if OUTPUT_DIM > 1
+    target[1] = b;
+#endif
+#if OUTPUT_DIM > 2
+    target[2] = c;
+#endif
+#if OUTPUT_DIM > 3
+    target[3] = d;
+#endif
 }
 
 /* 输出通道的人类可读名称。 */

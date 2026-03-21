@@ -1,28 +1,25 @@
 # Demo Full Flow
 
-本文档描述当前仓库的完整流程：**配置图拓扑 -> 生成 spec -> 训练 -> 推理 -> 测试**。
+本文档描述当前仓库的完整流程：**三次编译 -> 一次生成运行 -> 训练 -> 推理 -> 测试**。
 
-## 1. 配置图拓扑
+## 1. 启用网络类型（第一次编译前）
 
-在 `src/include/config_user.h` 中配置：
-
-- `NETWORK_GRAPH_NODES`
-- `NETWORK_GRAPH_EDGES`
-- `NETWORK_GRAPH_INPUT_NODE_ID`
-- `NETWORK_GRAPH_OUTPUT_NODE_ID`
-
-节点类型使用语义化枚举值（如 `NETWORK_TOPO_NODE_LINEAR`、`NETWORK_TOPO_NODE_RNN`、`NETWORK_TOPO_NODE_CNN`）。
-
-## 2. 生成 network_def
+在 CMakeLists 开关启用网络类型：
 
 ```bash
+cmake -S . -B build -DENABLE_NN_TRANSFORMER=ON -DENABLE_NN_SEVENSEG=ON
 cmake --build build --config Debug --target profiler
-build/Debug/profiler.exe -o src/include/network_def.h
 ```
 
-生成文件包含 `network_def_build_spec(NetworkSpec*)`，供训练和推理复用。
+## 2. 生成阶段（第一次运行）
 
-## 3. 训练
+```bash
+build/Debug/profiler.exe
+```
+
+运行时由用户程序传入网络结构体，profiler 生成训练 `.c` 与推理 `.c`，并复制固定模板 `.h`。
+
+## 3. 训练（第二次编译）
 
 常用：
 
@@ -37,7 +34,7 @@ cmake --build build --config Debug --target sevenseg_train
 - `demo_weights_sevenseg_export.c`
 - `demo_network_sevenseg_functions.c`
 
-## 4. 推理
+## 4. 推理（第三次编译）
 
 ```bash
 cmake --build build --config Debug --target sevenseg_infer_bin
@@ -62,6 +59,6 @@ ctest --test-dir build -C Debug --output-on-failure
 
 ## 6. 约束
 
-- 不再保留旧模型分类接口；所有流程必须显式使用 `NetworkSpec`
-- 不再使用“线性/transformer 二选一开关”作为配置入口
-- 网络结构以图拓扑为单一事实来源
+- 新增网络类型只允许通过注册配置/注册宏与 CMake 开关接入
+- 不允许修改 profiler 主流程与旧网络实现来适配新类型
+- 未启用网络类型不参与编译、注册、生成、训练与推理

@@ -1,21 +1,24 @@
 # action_c
 
-纯 C99 的训练/推理工程，核心是**图拓扑驱动的网络配置**。  
-项目不再区分“线性模型接口 / transformer 模型接口”，统一由 `NetworkGraph -> NetworkSpec` 流程决定执行路径。
+纯 C99 的训练/推理工程，核心是**编译期开关 + 注册机制 + 用户结构体驱动生成**。  
+系统面向可持续扩展：新增网络类型不改对外接口，不改 profiler 主流程，不改旧实现代码。
 
 ## 核心设计
 
-- 网络配置来源：`src/include/config_user.h` 中 `NETWORK_GRAPH_NODES` 与 `NETWORK_GRAPH_EDGES`
-- 结构构建入口：`network_graph_build` + `network_spec_build_from_graph`
-- 推理统一入口：`workflow_runtime_init(..., const NetworkSpec* spec)`
-- 训练统一入口：`workflow_train_from_csv` / `workflow_train_from_memory`（均要求 `network_spec`）
-- profiler 负责生成 `src/include/network_def.h`，其中包含 `network_def_build_spec`
+- 网络类型启用：CMakeLists 开关（仅启用类型参与编译与注册）
+- 用户输入：用户程序构建网络结构体并调用 profiler
+- 生成阶段：profiler 生成训练/推理 `.c`，复制固定模板 `.h`
+- 训练依赖：训练工程依赖推理 `.c` + 训练 `.c`
+- 推理依赖：推理工程仅依赖推理 `.c`，可加载 `.bin` 或使用权重 `.c`
 
 ## 快速开始
 
 ```bash
-cmake -S . -B build
-cmake --build build --config Debug
+cmake -S . -B build -DENABLE_NN_TRANSFORMER=ON -DENABLE_NN_SEVENSEG=ON
+cmake --build build --config Debug --target profiler
+build/Debug/profiler.exe
+cmake --build build --config Debug --target sevenseg_train
+cmake --build build --config Debug --target sevenseg_infer_bin
 ctest --test-dir build -C Debug --output-on-failure
 ```
 

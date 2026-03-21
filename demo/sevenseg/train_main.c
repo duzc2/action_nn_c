@@ -9,6 +9,7 @@
 #include "../../src/include/config_user.h"
 #include "../../src/include/network_def.h"
 #include "../../src/include/weights_io.h"
+#include "../../src/infer/include/workflow_infer.h"
 #include "../../src/train/include/workflow_train.h"
 #include "sevenseg_shared.h"
 
