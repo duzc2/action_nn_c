@@ -1,68 +1,38 @@
-# 网络设计手册（图拓扑版）
+# 网络设计手册（结构体与注册流程版）
 
 ## 1. 设计原则
 
-- 网络是**有向拓扑图**，不是固定层序模板
-- 图是单一事实来源，spec 由图推导
-- 同一输入可扇出到多个子网络，允许重叠输入选择
-- 训练/推理共享同一 spec，不存在双轨接口
+- 网络由用户程序构建网络结构体，不再依赖统一配置头文件。
+- profiler 只定义框架流程，不依赖具体网络实现细节。
+- 训练实现与推理实现分离，且训练可依赖推理，推理不可依赖训练。
+- 新增网络类型通过 CMake 开关 + 注册配置/注册宏接入，不改 profiler 主流程与旧实现。
 
-## 2. 数据结构
+## 2. 角色分工
 
-核心结构定义于 `src/include/network_spec.h`：
+- 用户程序：构建网络结构体并调用 profiler。
+- profiler：校验结构体、生成训练/推理 `.c`、复制固定 `.h`、产出元数据。
+- 网络类型实现：在 `src/nn/[网络类型]/` 提供训练/推理两套 `.c/.h` 与 `README.md`。
 
-- `NetworkGraphNode`
-- `NetworkGraphEdge`
-- `NetworkGraph`
-- `NetworkSpec`
+## 3. 三次编译流程
 
-图节点包含：
+1. 第一次编译：CMakeLists 开关启用网络类型并编译 profiler 组件。
+2. 第一次运行：用户程序调用 profiler，生成训练/推理代码。
+3. 第二次编译：训练工程依赖“推理 `.c` + 训练 `.c`”，训练后输出 `.bin` 与权重 `.c`。
+4. 第三次编译：推理工程仅依赖推理 `.c`，运行时加载 `.bin` 或直接使用权重 `.c`。
 
-- `id`
-- `type`
-- `selector_offset`
-- `selector_size`
+## 4. 保存加载设计
 
-## 3. 支持的语义节点类型
+- 全网保存按拓扑遍历调用各子网训练实现中的序列化接口。
+- 全网加载按拓扑遍历调用各子网推理实现中的反序列化接口。
+- Hash 与布局校验用于验证流程内数据一致性，不用于替代流程本身。
 
-- 输入与路由：`INPUT`、`SELECT`、`MERGE`
-- 计算：`LINEAR`、`TRANSFORMER_BLOCK`、`ATTENTION_HEAD`、`CNN`、`RNN`、`KNN`
+## 5. 扩展网络类型
 
-## 4. 从图到规格
-
-流程：
-
-1. `network_graph_build`
-2. `network_graph_validate`
-3. 拓扑排序
-4. `network_spec_build_from_graph`
-
-校验项包含：
-
-- 节点 id 唯一
-- 边引用节点存在
-- 输入/输出节点存在
-- 图无环
-- `SELECT` 节点参数合法
-
-## 5. 执行语义
-
-- 训练和推理按 `NetworkSpec.layers` 顺序执行
-- 当前后端对 `ATTENTION_HEAD/CNN/RNN/KNN` 已接入统一分发路径
-- 复杂路由（如重叠 SELECT + MERGE）的维度传播可在执行器继续细化
-
-## 6. profiler 的职责
-
-- 读取 `config_user.h` 图配置
-- 估算参数量、峰值激活、FLOPs
-- 生成 `network_def.h`
-- 输出 `network_def_build_spec`，供运行时直接构建 spec
-
-## 7. 推荐配置模式
-
-- 先做最小可运行图：`INPUT -> LINEAR -> OUTPUT`
-- 再增加语义节点（RNN/CNN/Attention）
-- 每次变更后执行：
-  - 重新生成 `network_def.h`
-  - 重新构建
-  - 运行测试与 demo
+- 仅允许：
+  - 新增 `src/nn/[新类型]/` 训练/推理实现
+  - 更新注册配置文件或注册宏清单
+  - 在 CMakeLists 开关中启用该类型
+- 不允许：
+  - 修改 profiler 主流程
+  - 修改既有网络类型实现
+  - 修改对外接口签名
