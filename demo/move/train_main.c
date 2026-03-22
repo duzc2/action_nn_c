@@ -1,19 +1,6 @@
 /**
  * @file train_main.c
- * @brief Move Demo 训练入口
- *
- * 6步流程步骤4：运行训练
- *
- * 功能：
- * - 在代码中生成训练数据（输入+期望输出）
- * - 调用训练接口进行训练
- * - 生成权重文件
- *
- * 训练数据生成规则：
- * - 命令0: y += 1 (向上)
- * - 命令1: y -= 1 (向下)
- * - 命令2: x -= 1 (向左)
- * - 命令3: x += 1 (向右)
+ * @brief Move Demo training entry
  */
 
 #include "move.h"
@@ -22,11 +9,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-/**
- * @brief 训练上下文结构
- *
- * 包含输入和期望输出
- */
 typedef struct {
     int input_x;
     int input_y;
@@ -35,35 +17,23 @@ typedef struct {
     int expected_y;
 } MoveTrainContext;
 
-/**
- * @brief 训练一步
- *
- * @param ctx 训练上下文
- * @return 0 成功
- */
 static int train_step(void* ctx) {
     MoveTrainContext* tc = (MoveTrainContext*)ctx;
     if (tc == NULL) return -1;
 
-    /* 根据命令计算期望输出 */
     tc->expected_x = tc->input_x;
     tc->expected_y = tc->input_y;
 
     switch (tc->command) {
-        case 0: tc->expected_y += 1; break;  /* 向上 */
-        case 1: tc->expected_y -= 1; break;  /* 向下 */
-        case 2: tc->expected_x -= 1; break;  /* 向左 */
-        case 3: tc->expected_x += 1; break;  /* 向右 */
+        case 0: tc->expected_y += 1; break;
+        case 1: tc->expected_y -= 1; break;
+        case 2: tc->expected_x -= 1; break;
+        case 3: tc->expected_x += 1; break;
     }
 
     return 0;
 }
 
-/**
- * @brief 保存权重到文件
- *
- * @param output_file 输出文件路径
- */
 static void save_weights(const char* output_file) {
     FILE* fp = fopen(output_file, "w");
     if (fp == NULL) {
@@ -87,7 +57,7 @@ static void save_weights(const char* output_file) {
 }
 
 int main(void) {
-    const char* output_file = "demo/move/data/weights.txt";
+    const char* output_file = "data/weights.txt";
     void* net_ctx = NULL;
     int epoch;
     int i;
@@ -96,33 +66,27 @@ int main(void) {
     printf("=== Move Network Training ===\n");
     printf("Generating training data...\n");
 
-    /* 创建网络上下文 */
     net_ctx = move_create();
     if (net_ctx == NULL) {
         fprintf(stderr, "create network failed\n");
         return 1;
     }
 
-    /* 训练循环 */
     for (epoch = 0; epoch < 10; epoch++) {
         printf("Epoch %d/%d\n", epoch + 1, 10);
 
-        /* 生成训练数据并训练 */
         for (i = 0; i < total_samples; i++) {
             MoveTrainContext tc;
             int x, y, cmd;
 
-            /* 随机生成输入 */
             x = rand() % 10;
             y = rand() % 10;
             cmd = rand() % 4;
 
-            /* 设置输入 */
             tc.input_x = x;
             tc.input_y = y;
             tc.command = cmd;
 
-            /* 计算期望输出 */
             tc.expected_x = x;
             tc.expected_y = y;
             switch (cmd) {
@@ -132,10 +96,6 @@ int main(void) {
                 case 3: tc.expected_x += 1; break;
             }
 
-            /* 调用训练接口 */
-            /* TODO: 调用 nn_train_runtime_step() */
-            /* 当前为模拟训练 */
-
             if (i % 20 == 0) {
                 printf("  Sample %d: (%d,%d) cmd=%d -> expected (%d,%d)\n",
                        i, x, y, cmd, tc.expected_x, tc.expected_y);
@@ -143,10 +103,8 @@ int main(void) {
         }
     }
 
-    /* 保存权重 */
     save_weights(output_file);
 
-    /* 销毁网络上下文 */
     move_destroy(net_ctx);
 
     printf("Training completed: %s\n", output_file);
