@@ -12,3 +12,6 @@ demo_*_export.c
 demo_network_*_functions.c
 test_weights_export.c
 demo/sevenseg/data/
+demo/target/data/
+demo/move/data/
+demo/transformer/data/

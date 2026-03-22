@@ -1,100 +1,225 @@
 # 开发手册
 
-## 1. 架构总览
+## 1. 项目定位与目标
 
-项目定位：
+本工程用于把大模型已掌握的技能固化为小型执行网络，并支持快速训练与部署。
 
-- 本工程用于把大模型已掌握的技能固化为小型执行网络，并支持快速训练与部署
-- 大模型负责战略与规划，小网络负责低时延执行；demo 仅用于展示该协同方式
+典型应用场景：
+- 大模型负责战略与规划（如CS游戏中的战术决策）
+- 小网络负责低时延执行（如瞄准、躲避、射击等具体操作）
+- demo 仅用于展示该协同方式
 
 项目分为三层：
-
 - 流程层：CMake 开关 + 编译期注册控制可用网络类型
 - 生成层：用户程序调用 profiler，生成训练/推理 `.c` 并复制固定 `.h`
 - 执行层：训练工程与推理工程按依赖边界分别编译运行
 
-## 2. 关键模块
+## 2. 关键模块说明
 
-- `src/tools/profiler.c`  
-  读取用户传入网络结构体，生成训练/推理 `.c`，复制固定 `.h`
-- `src/core/nn_registry*.c`  
-  编译期注册启用网络类型，不启用类型不参与后续流程
-- `src/train/workflow_train.c`  
-  训练与权重导出
-- `src/infer/workflow_runtime.c`  
-  二进制权重加载与在线推理
+| 模块 | 路径 | 说明 |
+|------|------|------|
+| profiler | `src/profiler/` | 读取网络规格，生成网络结构 .c 文件 |
+| 推理注册 | `src/nn/nn_infer_registry.c` | 编译期注册网络类型，运行时查找并调用 |
+| 推理核心 | `src/infer/` | 独立运行的推理库，不依赖训练 |
+| 训练核心 | `src/train/` | 训练库，依赖推理库 |
+| 网络实现 | `src/nn/types/*/` | 具体网络类型实现（mlp、transformer等） |
 
-## 3. 统一调用规范
+## 3. Demo 开发流程（6步）
 
-- 训练工程依赖“推理 `.c` + 训练 `.c`”
-- 推理工程仅依赖推理 `.c`
-- 权重入口统一支持 `.bin` 加载或权重 `.c` 直接链接
+每个 demo 目录下包含：
+- `generate_main.c` - 调用 profiler 生成网络结构代码
+- `train_main.c` - 训练网络，生成权重文件
+- `infer_main.c` - 加载权重，执行推理
 
-## 4. 构建与测试
-
-### 4.1 第一次编译（启用类型并构建生成阶段组件）
+### 3.1 准备工作：清理旧构建
 
 ```powershell
-cmake -S . -B build -DENABLE_NN_TRANSFORMER=ON
-cmake --build build --config Debug --target profiler
+# 删除旧 build 目录（如果需要全新构建）
+Remove-Item -Recurse -Force build
+mkdir build
+```
+
+### 3.2 步骤1：编译生成器
+
+```powershell
+cd build
+cmake .. -G "MinGW Makefiles"
+cmake --build . --config Debug --target move_generate
 ```
 
 说明：
+- 编译 `move_generate` 可执行文件
+- 该目标依赖 `profiler_core` 库
 
-- `sevenseg` 是 `demo/sevenseg` 下的示例工程，不在 `src/` 中
-- `sevenseg` 不是新的 `nn` 网络类型，只是用于演示训练/推理流程的 demo 目标
-- demo 仅用于演示核心工程使用方式与运行效果；`src/` 不为 demo 提供专用能力
-- 本机环境可直接使用 `clang` 编译
-
-### 4.2 第一次运行（用户程序调用 profiler 生成代码）
+### 3.3 步骤2：运行生成器
 
 ```powershell
-build\Debug\profiler.exe
+./demo/move/Debug/move_generate.exe
 ```
 
-约束：
+输出文件到 `build/demo/move/data/`：
+- `move.c` - 网络结构实现
+- `move.h` - 网络接口头文件
+- `network_spec.txt` - 网络规格说明
 
-- profiler 生成训练 `.c` 与推理 `.c`
-- `.h` 来自固定模板复制，不做动态头文件生成
-
-### 4.3 第二次编译（训练工程）
+### 3.4 步骤3：编译训练
 
 ```powershell
-cmake --build build --config Debug --target sevenseg_train
+cmake --build . --config Debug --target move_train
 ```
 
-训练工程依赖推理 `.c` 与训练 `.c`，训练后生成 `.bin` 与权重 `.c`。
+说明：
+- 链接 `move.c` 和推理库
+- 训练后生成权重文件
 
-### 4.4 第三次编译（推理工程）
+### 3.5 步骤4：运行训练
 
 ```powershell
-cmake --build build --config Debug --target sevenseg_infer_bin
+./demo/move/Debug/move_train.exe
 ```
 
-推理工程仅依赖推理 `.c`，运行时可加载 `.bin` 或使用权重 `.c`。
+输出：
+- `weights.txt` - 文本格式权重
+- `weights.c` - C 代码格式权重
 
-### 4.5 验证
+### 3.6 步骤5：编译推理
 
 ```powershell
-ctest --test-dir build -C Debug --output-on-failure
+cmake --build . --config Debug --target move_infer
 ```
 
+说明：
+- 链接 `move.c` 和 `weights.c`
+- 链接推理库（不是训练库）
 
-## 6. 新增网络类型的开发流程
+### 3.7 步骤6：运行推理
 
-1. 新增 `src/nn/[网络类型]/` 并提供训练/推理实现
-2. 保证 `src/nn/` 至少包含 `rnn`、`cnn`、`knn`、`transformer`、`mlp`、`rbfn`、`autoencoder`、`variational_autoencoder`、`tcn`、`gnn`、`ssm`、`mamba_s4`、`esn`、`siamese_triplet`、`unet_encoder_decoder_skip`、`capsule`、`kan`、`som`、`tree_random_forest_xgboost`、`svm`、`tiny_tcn` 等常见网络实现
-3. 更新注册配置文件或注册宏清单
-4. 在 CMakeLists 增加该类型开关
-5. 开启开关后执行三次编译流程验证
-6. 补充 demo 与测试（如 `demo/sevenseg`）
+```powershell
+./demo/move/Debug/move_infer.exe
+```
 
-补充说明：
+输入示例：
+```
+5 5      # 起始坐标 (x, y)
+0         # 命令0：向上
+0         # 命令0：向上
+0         # 命令0：向上
+4         # 命令4：停止
+```
 
-- `sevenseg` 属于 demo 示例，不属于本节“新增节点类型（nn 类型）”范畴
+输出：
+```
+x=5 y=6
+x=5 y=7
+x=5 y=8
+final_x=5 final_y=8
+```
 
-## 7. 禁止事项
+## 4. CMakeLists.txt 结构说明
 
-- 不新增旧兼容接口
-- 不绕过 CMake 开关直接接入网络类型
-- 不在文档和代码中保留过时构建入口说明
+每个 demo 的 CMakeLists.txt 包含三个目标：
+
+```cmake
+# 目标1：生成器 - 第一次编译
+add_executable(move_generate generate_main.c)
+target_link_libraries(move_generate PRIVATE profiler_core)
+
+# 目标2：训练 - 第二次编译
+add_executable(move_train train_main.c ${MOVE_GENERATED_C})
+target_link_libraries(move_train PRIVATE nn_infer_core)
+add_dependencies(move_train move_generate)  # 确保生成器先运行
+
+# 目标3：推理 - 第三次编译
+add_executable(move_infer infer_main.c ${MOVE_GENERATED_C} ${MOVE_WEIGHTS_C})
+target_link_libraries(move_infer PRIVATE nn_infer_core infer_core)
+add_dependencies(move_infer move_train)
+```
+
+关键点：
+- `${CMAKE_BINARY_DIR}` 指向 build 目录
+- 生成的 .c 文件在 build 目录下，不在源码目录
+- 推理库 `infer_core` 是独立的，不包含训练代码
+
+## 5. 新增网络类型流程
+
+### 5.1 创建网络实现目录
+
+```
+src/nn/types/新类型名/
+├── nn_type_新类型名_infer.c   # 推理实现注册
+├── nn_type_新类型名_train.c   # 训练实现注册
+├── 新类型名_infer_ops.c       # 推理操作实现
+├── 新类型名_infer_ops.h       # 推理操作头文件
+├── 新类型名_train_ops.c       # 训练操作实现（可选）
+└── 新类型名_train_ops.h       # 训练操作头文件（可选）
+```
+
+### 5.2 实现推理函数
+
+在 `*_infer_ops.c` 中实现推理函数：
+
+```c
+#include "新类型名_infer_ops.h"
+
+int nn_新类型名_infer_step(void* context) {
+    // 推理实现
+    return 0;
+}
+```
+
+### 5.3 注册网络类型
+
+在 `nn_type_新类型名_infer.c` 中注册：
+
+```c
+#include "nn_infer_registry.h"
+#include "新类型名_infer_ops.h"
+
+const NNInferRegistryEntry nn_type_新类型名_infer_entry = {
+    "新类型名",
+    nn_新类型名_infer_step
+};
+```
+
+### 5.4 更新 CMakeLists.txt
+
+在 `src/nn/CMakeLists.txt` 中添加源文件。
+
+### 5.5 验证流程
+
+1. 重新编译：`cmake --build . --target move_generate`
+2. 运行生成器：生成网络代码
+3. 编译训练：`cmake --build . --target move_train`
+4. 运行训练：生成权重
+5. 编译推理：`cmake --build . --target move_infer`
+6. 运行推理：验证结果
+
+## 6. 目录结构总览
+
+```
+action_c/
+├── src/
+│   ├── profiler/          # 代码生成器
+│   ├── infer/            # 推理库（独立）
+│   ├── train/            # 训练库（依赖推理）
+│   └── nn/
+│       ├── nn_infer_registry.c  # 网络注册
+│       └── types/
+│           ├── mlp/            # MLP 网络实现
+│           └── transformer/    # Transformer 网络实现
+├── demo/
+│   └── move/
+│       ├── generate_main.c     # 调用 profiler
+│       ├── train_main.c        # 训练网络
+│       ├── infer_main.c        # 推理网络
+│       └── CMakeLists.txt      # 三个编译目标
+└── docs/
+    └── developer_manual.md     # 本文档
+```
+
+## 7. 注意事项
+
+1. **绝对路径禁止**：所有路径使用相对路径，如 `demo/move/data`
+2. **推理独立**：推理库不能包含任何训练代码
+3. **编译时注册**：网络类型在编译时注册，不使用运行时枚举
+4. **生成文件位置**：profiler 生成的 .c 文件在 build 目录下，不修改源码
