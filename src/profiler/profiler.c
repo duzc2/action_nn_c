@@ -4,22 +4,25 @@
  *
  * Features:
  * - Read network specification passed by user
- * - Validate if network type is registered
- * - Generate network structure code and interfaces
- * - Provide unified error handling mechanism
+ * - Validate network definition (DAG, connections, ports)
+ * - Compute network signature hash
+ * - Generate modular network code
  *
- * Generated files:
- * - network.c : Network structure implementation (create/destroy/forward/load/save)
- * - network.h : Network interface declaration
- * - network_spec.txt : Network description
- *
- * Note:
- * - Weight data (weights.txt) exported by save_weights() during training
- * - Weight constants (weights.c) exported by post-training export tool
+ * Generated modules:
+ * - tokenizer: Input/output encoding
+ * - network_init: Network initialization
+ * - weights_load: Weight loading with hash validation
+ * - train: Training loop
+ * - weights_save: Weight saving with hash
+ * - infer: Inference
+ * - metadata: Network metadata header
  */
 
 #include "profiler.h"
 #include "prof_error.h"
+#include "prof_validate.h"
+#include "prof_hash.h"
+#include "prof_codegen.h"
 #include "nn_infer_registry.h"
 #include "nn_train_registry.h"
 #include "infer_runtime.h"
@@ -39,9 +42,6 @@
 
 /**
  * @brief Ensure directory exists, create if not
- *
- * @param path Directory path
- * @return 0 success, -1 failure
  */
 static int ensure_dir(const char* path) {
     int rc = MKDIR(path);
@@ -52,10 +52,6 @@ static int ensure_dir(const char* path) {
 
 /**
  * @brief Capitalize first character of string
- *
- * @param src Source string
- * @param dest Destination buffer
- * @param dest_size Destination buffer size
  */
 static void capitalize_first(const char* src, char* dest, size_t dest_size) {
     size_t i;
@@ -70,10 +66,7 @@ static void capitalize_first(const char* src, char* dest, size_t dest_size) {
 }
 
 /**
- * @brief Simplified generate entry (legacy interface)
- *
- * @param request Generate request
- * @return 0 success, non-zero failure
+ * @brief Legacy generate entry (simplified interface)
  */
 int profiler_generate(const ProfilerGenerateRequest* request) {
     return profiler_generate_with_io(
@@ -85,13 +78,7 @@ int profiler_generate(const ProfilerGenerateRequest* request) {
 }
 
 /**
- * @brief Simplified code generation function (legacy interface)
- *
- * @param network_name Network name
- * @param network_type Network type
- * @param output_dir Output directory
- * @param io_names IO names definition (optional)
- * @return 0 success, non-zero failure
+ * @brief Legacy code generation function
  */
 int profiler_generate_with_io(
     const char* network_name,
@@ -124,7 +111,6 @@ int profiler_generate_with_io(
     rc = ensure_dir(output_dir);
     if (rc != 0) return -2;
 
-    /* Generate network_spec.txt */
     snprintf(file_path, sizeof(file_path), "%s/network_spec.txt", output_dir);
     fp = fopen(file_path, "w");
     if (fp == NULL) return -4;
@@ -134,7 +120,6 @@ int profiler_generate_with_io(
     fprintf(fp, "generated=1\n");
     fclose(fp);
 
-    /* Generate network.c - network structure code (includes load/save functions) */
     snprintf(file_path, sizeof(file_path), "%s/%s.c", output_dir, network_name);
     fp = fopen(file_path, "w");
     if (fp == NULL) return -11;
@@ -147,33 +132,23 @@ int profiler_generate_with_io(
     fprintf(fp, "#include <string.h>\n");
     fprintf(fp, "#include <stdio.h>\n");
     fprintf(fp, "\n");
-
-    /* Context structure */
     fprintf(fp, "typedef struct {\n");
     fprintf(fp, "    %sInferContext ctx;\n", type_cap);
     fprintf(fp, "} %sContext;\n\n", network_name);
-
-    /* Create function */
     fprintf(fp, "void* %s_create(void) {\n", network_name);
     fprintf(fp, "    %sContext* c = (%sContext*)malloc(sizeof(%sContext));\n", network_name, network_name, network_name);
     fprintf(fp, "    if (c == NULL) return NULL;\n");
     fprintf(fp, "    memset(&c->ctx, 0, sizeof(c->ctx));\n");
     fprintf(fp, "    return c;\n");
     fprintf(fp, "}\n\n");
-
-    /* Destroy function */
     fprintf(fp, "void %s_destroy(void* ctx) {\n", network_name);
     fprintf(fp, "    if (ctx != NULL) free(ctx);\n");
     fprintf(fp, "}\n\n");
-
-    /* Forward function */
     fprintf(fp, "int %s_forward(void* ctx) {\n", network_name);
     fprintf(fp, "    if (ctx == NULL) return -1;\n");
     fprintf(fp, "    %sContext* c = (%sContext*)ctx;\n", network_name, network_name);
     fprintf(fp, "    return nn_%s_infer_step(&c->ctx);\n", network_type);
     fprintf(fp, "}\n\n");
-
-    /* Load weights function (from file) */
     fprintf(fp, "int %s_load_weights(void* ctx, const char* path) {\n", network_name);
     fprintf(fp, "    if (ctx == NULL || path == NULL) return -1;\n");
     fprintf(fp, "    %sContext* c = (%sContext*)ctx;\n", network_name, network_name);
@@ -183,8 +158,6 @@ int profiler_generate_with_io(
     fprintf(fp, "    fclose(fp);\n");
     fprintf(fp, "    return loaded ? 0 : -3;\n");
     fprintf(fp, "}\n\n");
-
-    /* Save weights function (to file) */
     fprintf(fp, "int %s_save_weights(void* ctx, const char* path) {\n", network_name);
     fprintf(fp, "    if (ctx == NULL || path == NULL) return -1;\n");
     fprintf(fp, "    %sContext* c = (%sContext*)ctx;\n", network_name, network_name);
@@ -194,10 +167,8 @@ int profiler_generate_with_io(
     fprintf(fp, "    fclose(fp);\n");
     fprintf(fp, "    return saved ? 0 : -3;\n");
     fprintf(fp, "}\n\n");
-
     fclose(fp);
 
-    /* Generate network.h */
     snprintf(file_path, sizeof(file_path), "%s/%s.h", output_dir, network_name);
     fp = fopen(file_path, "w");
     if (fp == NULL) return -13;
@@ -219,30 +190,59 @@ int profiler_generate_with_io(
 /**
  * @brief Full code generation function (new interface)
  *
+ * Performs complete generation pipeline:
+ * 1. Validate request and network definition
+ * 2. Compute network and layout hashes
+ * 3. Generate all modular code files
+ *
  * @param req Generate request
  * @param out_result Output result
- * @return PROF_STATUS_OK on success, other values on failure
+ * @return PROF_STATUS_OK on success, error code on failure
  */
 ProfStatus profiler_generate_v2(
     const ProfGenerateRequest* req,
     ProfGenerateResult* out_result
 ) {
-    char error_buffer[256];
+    char error_buffer[512];
     ProfErrorBuffer error;
+    ProfCodegenContext codegen_ctx;
+    NN_NetworkDef* network;
+    uint64_t network_hash;
+    uint64_t layout_hash;
+    ProfStatus st;
     ProfGenerateResult local_result;
 
     if (req == NULL) {
         return PROF_STATUS_INVALID_ARGUMENT;
     }
 
-    if (out_result == NULL) {
-        out_result = &local_result;
-    }
-
     prof_error_init(&error, error_buffer, sizeof(error_buffer));
 
-    out_result->network_hash = 0;
-    out_result->metadata_written_path = NULL;
+    network = (NN_NetworkDef*)req->network_def;
+
+    st = prof_validate_all(req, &error);
+    if (st != PROF_STATUS_OK) {
+        return st;
+    }
+
+    network_hash = prof_network_hash(network);
+    layout_hash = prof_layout_hash(network);
+
+    prof_codegen_init(&codegen_ctx, network, &req->output_layout,
+        network_hash, layout_hash, &error);
+
+    st = prof_codegen_generate_all(&codegen_ctx);
+    if (st != PROF_STATUS_OK) {
+        return st;
+    }
+
+    if (out_result != NULL) {
+        out_result->network_hash = network_hash;
+        out_result->metadata_written_path = req->output_layout.metadata_path;
+    } else {
+        local_result.network_hash = network_hash;
+        local_result.metadata_written_path = req->output_layout.metadata_path;
+    }
 
     return PROF_STATUS_OK;
 }
