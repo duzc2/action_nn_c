@@ -1,17 +1,32 @@
+# Build output
 build/
-build-clang/
-build-clangcl/
-build-clang-ninja/
+
+# Source files (always track)
+!src/
+!demo/
+!docs/
+
+# Build artifacts in demo (these should be in build/ now)
+# Keeping old paths for compatibility
+demo/move/generate/
+demo/move/train/
+demo/move/infer/
+demo/sevenseg/generate/
+demo/sevenseg/train/
+demo/sevenseg/infer/
+demo/target/generate/
+demo/target/train/
+demo/target/infer/
+demo/transformer/generate/
+demo/transformer/train/
+demo/transformer/infer/
+
+# Test artifacts
 test/logs/
-build-demo/
-demo/goal/data/
-demo/step/data/
 test/data/tmp/
+
+# Generated files
 *.bin
 demo_*_export.c
 demo_network_*_functions.c
 test_weights_export.c
-demo/sevenseg/data/
-demo/target/data/
-demo/move/data/
-demo/transformer/data/

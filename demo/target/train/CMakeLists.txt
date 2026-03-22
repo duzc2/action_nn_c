@@ -4,9 +4,9 @@ project(target_train C)
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
-set(ACTION_C_ROOT "${CMAKE_SOURCE_DIR}/../../..")
+set(ACTION_C_ROOT "${CMAKE_SOURCE_DIR}/../..")
 set(ACTION_C_BUILD "${ACTION_C_ROOT}/build/src")
-set(GENERATED_DIR "${ACTION_C_ROOT}/demo/target/data")
+set(GENERATED_DIR "${ACTION_C_ROOT}/build/demo/target/data")
 
 add_executable(target_train
     ../train_main.c

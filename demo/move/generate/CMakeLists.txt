@@ -4,7 +4,7 @@ project(move_generate C)
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
-set(ACTION_C_ROOT "${CMAKE_SOURCE_DIR}/../../..")
+get_filename_component(ACTION_C_ROOT "${CMAKE_SOURCE_DIR}/../../.." ABSOLUTE)
 set(ACTION_C_BUILD "${ACTION_C_ROOT}/build/src")
 
 add_executable(move_generate ../generate_main.c)
