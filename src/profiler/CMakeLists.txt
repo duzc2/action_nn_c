@@ -1,5 +1,8 @@
 add_library(profiler_core STATIC
     profiler.c
+    profiler_types.c
+    prof_error.c
+    network_def.c
 )
 
 target_include_directories(profiler_core PUBLIC

@@ -1,37 +1,37 @@
 /**
  * @file infer_runtime.h
- * @brief 推理运行时接口
+ * @brief Inference runtime interface
  *
- * 推理库是独立运行的，不包含任何训练代码。
- * 用户代码通过 nn_infer_runtime_step() 执行推理。
+ * The inference library is standalone and does not contain any training code.
+ * User code executes inference via nn_infer_runtime_step().
  */
 
 #ifndef INFER_RUNTIME_H
 #define INFER_RUNTIME_H
 
 /**
- * @brief 推理请求结构体
+ * @brief Inference request structure
  *
- * 包含：
- * - network_type: 网络类型名称（如 "mlp", "transformer"）
- * - context: 网络上下文，由 xxx_create() 创建
+ * Contains:
+ * - network_type: Network type name (e.g., "mlp", "transformer")
+ * - context: Network context, created by xxx_create()
  *
- * 注意：用户不需要关心具体的网络实现，
- * 只需要通过注册表查找对应的推理函数即可。
+ * Note: Users do not need to care about specific network implementation,
+ * only need to look up the corresponding inference function via registry.
  */
 typedef struct {
-    const char* network_type;  /**< 网络类型名称 */
-    void* context;             /**< 网络上下文 */
+    const char* network_type;  /**< Network type name */
+    void* context;             /**< Network context */
 } NNInferRequest;
 
 /**
- * @brief 执行一步推理
+ * @brief Execute one step of inference
  *
- * 通过网络注册表查找对应类型的推理函数，
- * 并调用该函数执行推理。
+ * Looks up the inference function for the corresponding type via network registry,
+ * and calls that function to execute inference.
  *
- * @param request 推理请求
- * @return 0 成功，非0 失败
+ * @param request Inference request
+ * @return 0 success, non-zero failure
  */
 int nn_infer_runtime_step(const NNInferRequest* request);
 
