@@ -3,6 +3,9 @@ add_library(profiler_core STATIC
     profiler_types.c
     prof_error.c
     network_def.c
+    prof_hash.c
+    prof_validate.c
+    prof_codegen.c
 )
 
 target_include_directories(profiler_core PUBLIC
