@@ -18,3 +18,10 @@ target_include_directories(transformer_infer PRIVATE
     ${CMAKE_SOURCE_DIR}/src/infer
     ${CMAKE_SOURCE_DIR}/src/nn/types/transformer
 )
+
+# 清理目标
+add_custom_target(transformer_clean
+    COMMAND ${CMAKE_COMMAND} -E remove_directory
+        ${CMAKE_BINARY_DIR}/demo/transformer
+    COMMENT "Cleaning transformer demo build artifacts"
+)

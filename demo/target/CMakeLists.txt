@@ -13,3 +13,10 @@ add_executable(target_train
 add_executable(target_infer
     infer_main.c
 )
+
+# 清理目标
+add_custom_target(target_clean
+    COMMAND ${CMAKE_COMMAND} -E remove_directory
+        ${CMAKE_BINARY_DIR}/demo/target
+    COMMENT "Cleaning target demo build artifacts"
+)

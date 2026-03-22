@@ -8,6 +8,12 @@
 
 ## 6步使用流程
 
+### 步骤0：清理（如需要）
+
+```powershell
+cmake --build . --target move_clean
+```
+
 ### 步骤1：编译生成器
 
 ```powershell
