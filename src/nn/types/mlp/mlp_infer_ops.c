@@ -13,7 +13,7 @@ static void apply_cmd(int cmd, int* x, int* y) {
 }
 
 int nn_mlp_infer_step(void* context) {
-    MLPInferContext* ctx = (MLPInferContext*)context;
+    MlpInferContext* ctx = (MlpInferContext*)context;
     if (ctx == 0) {
         return -1;
     }
@@ -23,4 +23,16 @@ int nn_mlp_infer_step(void* context) {
         apply_cmd(ctx->command, &ctx->output_x, &ctx->output_y);
     }
     return 0;
+}
+
+int nn_mlp_load_weights(void* context, FILE* fp) {
+    (void)context;
+    (void)fp;
+    return 1;
+}
+
+int nn_mlp_save_weights(void* context, FILE* fp) {
+    (void)context;
+    (void)fp;
+    return 1;
 }

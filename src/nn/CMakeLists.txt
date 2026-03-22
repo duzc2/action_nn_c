@@ -7,9 +7,6 @@ file(GLOB_RECURSE NN_TRAIN_ENTRY_SOURCES
 file(GLOB_RECURSE NN_INFER_OP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/types/*/*_infer_ops.c"
 )
-file(GLOB_RECURSE NN_CODE_GEN_SOURCES
-    "${CMAKE_CURRENT_SOURCE_DIR}/types/*/*_code_gen.c"
-)
 file(GLOB_RECURSE NN_TRAIN_OP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/types/*/*_train_ops.c"
 )
@@ -54,29 +51,10 @@ string(APPEND NN_TRAIN_AUTOGEN_CONTENT "    return entries;\n")
 string(APPEND NN_TRAIN_AUTOGEN_CONTENT "}\n")
 file(WRITE "${NN_TRAIN_AUTOGEN_C}" "${NN_TRAIN_AUTOGEN_CONTENT}")
 
-set(NN_CODE_GEN_AUTOGEN_C "${CMAKE_CURRENT_BINARY_DIR}/profiler_code_gen_autogen.c")
-set(NN_CODE_GEN_AUTOGEN_CONTENT "#include \"profiler_code_gen.h\"\n\n")
-foreach(NN_TYPE_SOURCE ${NN_CODE_GEN_SOURCES})
-    get_filename_component(NN_TYPE_SYMBOL_BASENAME "${NN_TYPE_SOURCE}" NAME_WE)
-    string(REPLACE "_code_gen" "" NN_TYPE_NAME "${NN_TYPE_SYMBOL_BASENAME}")
-    string(APPEND NN_CODE_GEN_AUTOGEN_CONTENT "extern void profiler_code_gen_init_${NN_TYPE_NAME}(void);\n")
-endforeach()
-string(APPEND NN_CODE_GEN_AUTOGEN_CONTENT "\nint profiler_code_gen_bootstrap(void) {\n")
-foreach(NN_TYPE_SOURCE ${NN_CODE_GEN_SOURCES})
-    get_filename_component(NN_TYPE_SYMBOL_BASENAME "${NN_TYPE_SOURCE}" NAME_WE)
-    string(REPLACE "_code_gen" "" NN_TYPE_NAME "${NN_TYPE_SYMBOL_BASENAME}")
-    string(APPEND NN_CODE_GEN_AUTOGEN_CONTENT "    profiler_code_gen_init_${NN_TYPE_NAME}();\n")
-endforeach()
-string(APPEND NN_CODE_GEN_AUTOGEN_CONTENT "    return 0;\n")
-string(APPEND NN_CODE_GEN_AUTOGEN_CONTENT "}\n")
-file(WRITE "${NN_CODE_GEN_AUTOGEN_C}" "${NN_CODE_GEN_AUTOGEN_CONTENT}")
-
 add_library(nn_infer_core STATIC
     nn_infer_registry.c
     ${NN_INFER_AUTOGEN_C}
     ${NN_INFER_OP_SOURCES}
-    ${NN_CODE_GEN_SOURCES}
-    ${NN_CODE_GEN_AUTOGEN_C}
     ${NN_INFER_ENTRY_SOURCES}
 )
 target_include_directories(nn_infer_core PUBLIC

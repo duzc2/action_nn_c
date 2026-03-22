@@ -1,6 +1,5 @@
 add_library(profiler_core STATIC
     profiler.c
-    profiler_code_gen.c
 )
 
 target_include_directories(profiler_core PUBLIC
@@ -11,4 +10,5 @@ target_include_directories(profiler_core PUBLIC
 
 target_link_libraries(profiler_core PUBLIC
     nn_infer_core
+    nn_train_core
 )
