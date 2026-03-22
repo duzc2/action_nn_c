@@ -31,12 +31,14 @@
 - `train_main.c` - 训练网络，生成权重文件
 - `infer_main.c` - 加载权重，执行推理
 
-### 3.1 准备工作：清理旧构建
+### 3.1 准备工作：清理旧构建（如需要）
 
 ```powershell
-# 删除旧 build 目录（如果需要全新构建）
-Remove-Item -Recurse -Force build
-mkdir build
+# 清理单个 demo 的生成文件
+cmake --build . --target move_clean
+
+# 或者清理所有 demo 的生成文件
+cmake --build . --target clean_all
 ```
 
 ### 3.2 步骤1：编译生成器
@@ -61,6 +63,8 @@ cmake --build . --config Debug --target move_generate
 - `move.c` - 网络结构实现
 - `move.h` - 网络接口头文件
 - `network_spec.txt` - 网络规格说明
+
+注意：profiler 只生成网络结构代码，不生成训练数据。
 
 ### 3.4 步骤3：编译训练
 

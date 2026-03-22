@@ -13,3 +13,10 @@ add_executable(sevenseg_train
 add_executable(sevenseg_infer
     infer_main.c
 )
+
+# 清理目标
+add_custom_target(sevenseg_clean
+    COMMAND ${CMAKE_COMMAND} -E remove_directory
+        ${CMAKE_BINARY_DIR}/demo/sevenseg
+    COMMENT "Cleaning sevenseg demo build artifacts"
+)
