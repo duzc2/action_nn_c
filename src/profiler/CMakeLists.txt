@@ -1,5 +1,6 @@
 add_library(profiler_core STATIC
     profiler.c
+    profiler_code_gen.c
 )
 
 target_include_directories(profiler_core PUBLIC

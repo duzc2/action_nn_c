@@ -15,6 +15,7 @@
 
 #include "profiler.h"
 #include "nn_infer_registry.h"
+#include "profiler_code_gen.h"
 #include "infer_runtime.h"
 
 #include <errno.h>
@@ -98,81 +99,43 @@ int profiler_generate(const ProfilerGenerateRequest* request) {
 }
 
 /**
- * @brief 写入网络接口头文件
- *
- * 生成的头文件包含三个标准函数：
- * - xxx_create()   : 创建网络上下文
- * - xxx_destroy()  : 销毁网络上下文
- * - xxx_forward()  : 执行前向推理
- *
- * @param name 网络名称（用于生成函数名）
- * @param fp 文件指针
- * @return 0 成功
- */
-static int write_header(const char* name, FILE* fp) {
-    fprintf(fp, "#ifndef %s_H\n", name);
-    fprintf(fp, "#define %s_H\n\n", name);
-    fprintf(fp, "void* %s_create(void);\n", name);
-    fprintf(fp, "void %s_destroy(void* ctx);\n", name);
-    fprintf(fp, "int %s_forward(void* ctx);\n\n", name);
-    fprintf(fp, "#endif\n");
-    return 0;
-}
-
-/**
  * @brief 写入网络实现 C 文件
  *
- * 生成的 C 文件包含：
- * 1. 头文件引用（network.h, infer_runtime.h, mlp_infer_ops.h）
- * 2. 上下文结构体定义（包含 MLPInferContext）
- * 3. create() 函数：分配并初始化上下文
- * 4. destroy() 函数：释放上下文内存
- * 5. forward() 函数：调用 mlp 推理函数
- *
- * 注意：这里硬编码使用 mlp 类型，因为当前只支持 mlp。
- * 后续应根据 network_type 参数选择不同的 ops。
+ * 通过注册机制调用网络类型的代码生成器。
  *
  * @param name 网络名称
- * @param type 网络类型（如 "mlp", "transformer"）
+ * @param type 网络类型
  * @param fp 文件指针
  * @return 0 成功
  */
 static int write_infer_c(const char* name, const char* type, FILE* fp) {
-    fprintf(fp, "#include \"%s.h\"\n", name);
-    fprintf(fp, "#include \"infer_runtime.h\"\n");
-    fprintf(fp, "#include \"mlp_infer_ops.h\"\n");
-    fprintf(fp, "#include <stdlib.h>\n");
-    fprintf(fp, "\n");
+    ProfilerCodeGenEntry entry;
+    int rc = profiler_code_gen_get(type, &entry);
+    if (rc != 0 || entry.generate_c == NULL) {
+        return -10;
+    }
+    return entry.generate_c(name, fp);
+}
 
-    /* 上下文结构体：包含网络类型的上下文 */
-    fprintf(fp, "typedef struct {\n");
-    fprintf(fp, "    MLPInferContext mlp_ctx;\n");
-    fprintf(fp, "} %sContext;\n\n", name);
-
-    /* 创建函数：分配内存并初始化 */
-    fprintf(fp, "void* %s_create(void) {\n", name);
-    fprintf(fp, "    %sContext* ctx = (%sContext*)malloc(sizeof(%sContext));\n", name, name, name);
-    fprintf(fp, "    if (ctx == NULL) return NULL;\n");
-    fprintf(fp, "    ctx->mlp_ctx.input_x = 0;\n");
-    fprintf(fp, "    ctx->mlp_ctx.input_y = 0;\n");
-    fprintf(fp, "    ctx->mlp_ctx.command = 0;\n");
-    fprintf(fp, "    ctx->mlp_ctx.output_x = 0;\n");
-    fprintf(fp, "    ctx->mlp_ctx.output_y = 0;\n");
-    fprintf(fp, "    return ctx;\n");
-    fprintf(fp, "}\n\n");
-
-    /* 销毁函数：释放内存 */
-    fprintf(fp, "void %s_destroy(void* c) {\n", name);
-    fprintf(fp, "    if (c != NULL) free(c);\n");
-    fprintf(fp, "}\n\n");
-
-    /* 前向函数：执行推理 */
-    fprintf(fp, "int %s_forward(void* c) {\n", name);
-    fprintf(fp, "    %sContext* ctx = (%sContext*)c;\n", name, name, name);
-    fprintf(fp, "    if (ctx == NULL) return -1;\n");
-    fprintf(fp, "    return nn_mlp_infer_step(&ctx->mlp_ctx);\n");
-    fprintf(fp, "}\n\n");
-
+/**
+ * @brief 写入网络接口头文件
+ *
+ * 通过注册机制获取网络类型的代码生成器。
+ *
+ * @param name 网络名称
+ * @param type 网络类型
+ * @param fp 文件指针
+ * @return 0 成功
+ */
+static int write_header(const char* name, const char* type, FILE* fp) {
+    ProfilerCodeGenEntry entry;
+    int rc = profiler_code_gen_get(type, &entry);
+    if (rc != 0) {
+        return -10;
+    }
+    if (entry.generate_h != NULL) {
+        return entry.generate_h(name, fp);
+    }
     return 0;
 }
 
@@ -215,6 +178,12 @@ int profiler_generate_with_io(
         return -6;
     }
 
+    /* 初始化代码生成器注册表 */
+    rc = profiler_code_gen_bootstrap();
+    if (rc != 0) {
+        return -7;
+    }
+
     /* 验证网络类型是否已注册 */
     rc = nn_infer_registry_is_registered(network_type);
     if (!rc) {
@@ -245,7 +214,7 @@ int profiler_generate_with_io(
     if (fp == NULL) {
         return -11;
     }
-    write_header(network_name, fp);
+    write_header(network_name, network_type, fp);
     fclose(fp);
 
     /* 生成 xxx.c */
