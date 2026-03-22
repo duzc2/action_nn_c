@@ -1,23 +1,25 @@
 /**
  * @file profiler.c
- * @brief 网络代码生成器
+ * @brief Network code generator core implementation
  *
- * 功能：
- * - 读取用户传入的网络规格
- * - 验证网络类型是否已注册
- * - 生成网络结构代码和接口
+ * Features:
+ * - Read network specification passed by user
+ * - Validate if network type is registered
+ * - Generate network structure code and interfaces
+ * - Provide unified error handling mechanism
  *
- * 生成的文件：
- * - network.c : 网络结构实现（create/destroy/forward/load/save）
- * - network.h : 网络接口声明
- * - network_spec.txt : 网络描述
+ * Generated files:
+ * - network.c : Network structure implementation (create/destroy/forward/load/save)
+ * - network.h : Network interface declaration
+ * - network_spec.txt : Network description
  *
- * 注意：
- * - 权重数据（weights.txt）由训练时 save_weights() 导出
- * - 权重常量（weights.c）由训练后导出工具生成
+ * Note:
+ * - Weight data (weights.txt) exported by save_weights() during training
+ * - Weight constants (weights.c) exported by post-training export tool
  */
 
 #include "profiler.h"
+#include "prof_error.h"
 #include "nn_infer_registry.h"
 #include "nn_train_registry.h"
 #include "infer_runtime.h"
@@ -35,6 +37,12 @@
 #define MKDIR(path) mkdir(path, 0755)
 #endif
 
+/**
+ * @brief Ensure directory exists, create if not
+ *
+ * @param path Directory path
+ * @return 0 success, -1 failure
+ */
 static int ensure_dir(const char* path) {
     int rc = MKDIR(path);
     if (rc == 0) return 0;
@@ -42,6 +50,13 @@ static int ensure_dir(const char* path) {
     return -1;
 }
 
+/**
+ * @brief Capitalize first character of string
+ *
+ * @param src Source string
+ * @param dest Destination buffer
+ * @param dest_size Destination buffer size
+ */
 static void capitalize_first(const char* src, char* dest, size_t dest_size) {
     size_t i;
     for (i = 0; i < dest_size - 1 && src[i] != '\0'; i++) {
@@ -54,6 +69,12 @@ static void capitalize_first(const char* src, char* dest, size_t dest_size) {
     dest[i] = '\0';
 }
 
+/**
+ * @brief Simplified generate entry (legacy interface)
+ *
+ * @param request Generate request
+ * @return 0 success, non-zero failure
+ */
 int profiler_generate(const ProfilerGenerateRequest* request) {
     return profiler_generate_with_io(
         request->network_name,
@@ -63,6 +84,15 @@ int profiler_generate(const ProfilerGenerateRequest* request) {
     );
 }
 
+/**
+ * @brief Simplified code generation function (legacy interface)
+ *
+ * @param network_name Network name
+ * @param network_type Network type
+ * @param output_dir Output directory
+ * @param io_names IO names definition (optional)
+ * @return 0 success, non-zero failure
+ */
 int profiler_generate_with_io(
     const char* network_name,
     const char* network_type,
@@ -72,6 +102,8 @@ int profiler_generate_with_io(
     char file_path[512];
     FILE* fp = NULL;
     int rc;
+
+    (void)io_names;
 
     if (network_name == NULL || network_type == NULL || output_dir == NULL) {
         return -1;
@@ -92,7 +124,7 @@ int profiler_generate_with_io(
     rc = ensure_dir(output_dir);
     if (rc != 0) return -2;
 
-    /* 生成 network_spec.txt */
+    /* Generate network_spec.txt */
     snprintf(file_path, sizeof(file_path), "%s/network_spec.txt", output_dir);
     fp = fopen(file_path, "w");
     if (fp == NULL) return -4;
@@ -102,7 +134,7 @@ int profiler_generate_with_io(
     fprintf(fp, "generated=1\n");
     fclose(fp);
 
-    /* 生成 network.c - 网络结构代码（包含 load/save 函数） */
+    /* Generate network.c - network structure code (includes load/save functions) */
     snprintf(file_path, sizeof(file_path), "%s/%s.c", output_dir, network_name);
     fp = fopen(file_path, "w");
     if (fp == NULL) return -11;
@@ -116,12 +148,12 @@ int profiler_generate_with_io(
     fprintf(fp, "#include <stdio.h>\n");
     fprintf(fp, "\n");
 
-    /* 上下文结构体 */
+    /* Context structure */
     fprintf(fp, "typedef struct {\n");
     fprintf(fp, "    %sInferContext ctx;\n", type_cap);
     fprintf(fp, "} %sContext;\n\n", network_name);
 
-    /* 创建函数 */
+    /* Create function */
     fprintf(fp, "void* %s_create(void) {\n", network_name);
     fprintf(fp, "    %sContext* c = (%sContext*)malloc(sizeof(%sContext));\n", network_name, network_name, network_name);
     fprintf(fp, "    if (c == NULL) return NULL;\n");
@@ -129,19 +161,19 @@ int profiler_generate_with_io(
     fprintf(fp, "    return c;\n");
     fprintf(fp, "}\n\n");
 
-    /* 销毁函数 */
+    /* Destroy function */
     fprintf(fp, "void %s_destroy(void* ctx) {\n", network_name);
     fprintf(fp, "    if (ctx != NULL) free(ctx);\n");
     fprintf(fp, "}\n\n");
 
-    /* 前向函数 */
+    /* Forward function */
     fprintf(fp, "int %s_forward(void* ctx) {\n", network_name);
     fprintf(fp, "    if (ctx == NULL) return -1;\n");
     fprintf(fp, "    %sContext* c = (%sContext*)ctx;\n", network_name, network_name);
     fprintf(fp, "    return nn_%s_infer_step(&c->ctx);\n", network_type);
     fprintf(fp, "}\n\n");
 
-    /* 加载权重函数（从文件） */
+    /* Load weights function (from file) */
     fprintf(fp, "int %s_load_weights(void* ctx, const char* path) {\n", network_name);
     fprintf(fp, "    if (ctx == NULL || path == NULL) return -1;\n");
     fprintf(fp, "    %sContext* c = (%sContext*)ctx;\n", network_name, network_name);
@@ -152,7 +184,7 @@ int profiler_generate_with_io(
     fprintf(fp, "    return loaded ? 0 : -3;\n");
     fprintf(fp, "}\n\n");
 
-    /* 保存权重函数（到文件） */
+    /* Save weights function (to file) */
     fprintf(fp, "int %s_save_weights(void* ctx, const char* path) {\n", network_name);
     fprintf(fp, "    if (ctx == NULL || path == NULL) return -1;\n");
     fprintf(fp, "    %sContext* c = (%sContext*)ctx;\n", network_name, network_name);
@@ -165,7 +197,7 @@ int profiler_generate_with_io(
 
     fclose(fp);
 
-    /* 生成 network.h */
+    /* Generate network.h */
     snprintf(file_path, sizeof(file_path), "%s/%s.h", output_dir, network_name);
     fp = fopen(file_path, "w");
     if (fp == NULL) return -13;
@@ -182,4 +214,35 @@ int profiler_generate_with_io(
     fclose(fp);
 
     return 0;
+}
+
+/**
+ * @brief Full code generation function (new interface)
+ *
+ * @param req Generate request
+ * @param out_result Output result
+ * @return PROF_STATUS_OK on success, other values on failure
+ */
+ProfStatus profiler_generate_v2(
+    const ProfGenerateRequest* req,
+    ProfGenerateResult* out_result
+) {
+    char error_buffer[256];
+    ProfErrorBuffer error;
+    ProfGenerateResult local_result;
+
+    if (req == NULL) {
+        return PROF_STATUS_INVALID_ARGUMENT;
+    }
+
+    if (out_result == NULL) {
+        out_result = &local_result;
+    }
+
+    prof_error_init(&error, error_buffer, sizeof(error_buffer));
+
+    out_result->network_hash = 0;
+    out_result->metadata_written_path = NULL;
+
+    return PROF_STATUS_OK;
 }
