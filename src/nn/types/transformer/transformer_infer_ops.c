@@ -27,3 +27,15 @@ int nn_transformer_infer_step(void* context) {
     (void)snprintf(infer_ctx->answer, infer_ctx->answer_capacity, "I can talk with simple English.");
     return 0;
 }
+
+int nn_transformer_load_weights(void* context, FILE* fp) {
+    (void)context;
+    (void)fp;
+    return 1;
+}
+
+int nn_transformer_save_weights(void* context, FILE* fp) {
+    (void)context;
+    (void)fp;
+    return 1;
+}
