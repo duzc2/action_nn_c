@@ -4,23 +4,23 @@ project(move_infer C)
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
-set(ACTION_C_ROOT "${CMAKE_SOURCE_DIR}/../..")
-set(ACTION_C_BUILD "${ACTION_C_ROOT}/build/src")
-set(GENERATED_DIR "${ACTION_C_ROOT}/build/demo/move/data")
+include(${CMAKE_CURRENT_LIST_DIR}/../../demo_common.cmake)
+action_c_add_core_subdirectory()
+
+action_c_get_demo_generated_dir(GENERATED_DIR)
+set(GENERATED_INFER_C "${GENERATED_DIR}/infer.c")
+set_source_files_properties("${GENERATED_INFER_C}" PROPERTIES GENERATED TRUE)
 
 add_executable(move_infer
     ../infer_main.c
-    "${GENERATED_DIR}/move.c"
+    "${GENERATED_INFER_C}"
 )
 
 target_include_directories(move_infer PRIVATE
-    "${ACTION_C_ROOT}/src/nn"
-    "${ACTION_C_ROOT}/src/nn/types/mlp"
-    "${ACTION_C_ROOT}/src/infer"
+    "${ACTION_C_ROOT}/src"
     "${GENERATED_DIR}"
 )
 
 target_link_libraries(move_infer PRIVATE
-    "${ACTION_C_BUILD}/nn/Debug/nn_infer_core.lib"
-    "${ACTION_C_BUILD}/infer/Debug/infer_core.lib"
+    infer_core
 )

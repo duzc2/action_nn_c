@@ -5,17 +5,11 @@
 
 #include "prof_codegen.h"
 #include "prof_error.h"
+#include "prof_path.h"
 
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-
-#ifdef _WIN32
-#include <direct.h>
-#define MKDIR(path) _mkdir(path)
-#else
-#define MKDIR(path) mkdir(path, 0755)
-#endif
 
 #define ABI_VERSION 1
 
@@ -40,64 +34,6 @@ static ProfStatus write_file(const char* path, const char* content) {
     return PROF_STATUS_OK;
 }
 
-/**
- * @brief Ensure parent directories exist for a file path
- */
-static ProfStatus ensure_parent_dir(const char* file_path) {
-    char path_copy[512];
-    char* last_sep;
-    int rc;
-
-    if (file_path == NULL) {
-        return PROF_STATUS_PATH_INVALID;
-    }
-
-    strncpy(path_copy, file_path, sizeof(path_copy) - 1);
-    path_copy[sizeof(path_copy) - 1] = '\0';
-
-    last_sep = strrchr(path_copy, '/');
-    if (last_sep != NULL) {
-        *last_sep = '\0';
-        rc = MKDIR(path_copy);
-        if (rc != 0) {
-            return PROF_STATUS_IO_FAILED;
-        }
-    }
-
-    return PROF_STATUS_OK;
-}
-
-/**
- * @brief Capitalize first character of string
- */
-static void capitalize_first(const char* src, char* dest, size_t dest_size) {
-    size_t i;
-    for (i = 0; i < dest_size - 1 && src[i] != '\0'; i++) {
-        if (i == 0) {
-            dest[i] = (char)(src[i] >= 'a' && src[i] <= 'z' ?
-                src[i] - 'a' + 'A' : src[i]);
-        } else {
-            dest[i] = src[i];
-        }
-    }
-    dest[i] = '\0';
-}
-
-/**
- * @brief Convert activation type to string
- */
-static const char* activation_to_string(int activation) {
-    switch (activation) {
-        case 0: return "none";
-        case 1: return "relu";
-        case 2: return "sigmoid";
-        case 3: return "tanh";
-        case 4: return "softmax";
-        case 5: return "leaky_relu";
-        default: return "relu";
-    }
-}
-
 void prof_codegen_init(
     ProfCodegenContext* ctx,
     const NN_NetworkDef* network,
@@ -118,6 +54,7 @@ ProfStatus prof_codegen_metadata(
     const char* metadata_path
 ) {
     FILE* fp;
+    ProfStatus st;
     const NN_NetworkDef* network;
 
     if (ctx == NULL || metadata_path == NULL) {
@@ -127,6 +64,12 @@ ProfStatus prof_codegen_metadata(
     network = ctx->network;
     if (network == NULL) {
         return PROF_STATUS_INVALID_ARGUMENT;
+    }
+
+    st = prof_path_ensure_parent_directory(metadata_path);
+    if (st != PROF_STATUS_OK) {
+        return prof_error_set(ctx->error, st,
+            "Failed to create directory for metadata output");
     }
 
     fp = fopen(metadata_path, "w");
@@ -223,10 +166,9 @@ ProfStatus prof_codegen_tokenizer(ProfCodegenContext* ctx) {
         "    (void)encoded;\n"
         "    (void)encoded_count;\n"
         "    return 0;\n"
-        "}\n",
-        (size_t)0, (size_t)0);
+        "}\n");
 
-    st = ensure_parent_dir(layout->tokenizer.c_path);
+    st = prof_path_ensure_parent_directory(layout->tokenizer.c_path);
     if (st != PROF_STATUS_OK) {
         return prof_error_set(ctx->error, st,
             "Failed to create directory for tokenizer.c");
@@ -251,7 +193,7 @@ ProfStatus prof_codegen_tokenizer(ProfCodegenContext* ctx) {
             "int tokenizer_decode(void* ctx, const float* encoded, size_t encoded_count);\n\n"
             "#endif\n";
 
-        st = ensure_parent_dir(layout->tokenizer.h_path);
+        st = prof_path_ensure_parent_directory(layout->tokenizer.h_path);
         if (st == PROF_STATUS_OK) {
             write_file(layout->tokenizer.h_path, header_content);
         }
@@ -332,7 +274,7 @@ ProfStatus prof_codegen_network_init(ProfCodegenContext* ctx) {
         "    return 0;\n"
         "}\n");
 
-    st = ensure_parent_dir(layout->network_init.c_path);
+    st = prof_path_ensure_parent_directory(layout->network_init.c_path);
     if (st != PROF_STATUS_OK) {
         return prof_error_set(ctx->error, st,
             "Failed to create directory for network_init.c");
@@ -356,7 +298,7 @@ ProfStatus prof_codegen_network_init(ProfCodegenContext* ctx) {
             "int network_init_weights(void* ctx, void* network_ctx);\n\n"
             "#endif\n";
 
-        st = ensure_parent_dir(layout->network_init.h_path);
+        st = prof_path_ensure_parent_directory(layout->network_init.h_path);
         if (st == PROF_STATUS_OK) {
             write_file(layout->network_init.h_path, header_content);
         }
@@ -425,7 +367,7 @@ ProfStatus prof_codegen_weights_load(ProfCodegenContext* ctx) {
         (unsigned long long)ctx->network_hash,
         (unsigned long long)ctx->layout_hash);
 
-    st = ensure_parent_dir(layout->weights_load.c_path);
+    st = prof_path_ensure_parent_directory(layout->weights_load.c_path);
     if (st != PROF_STATUS_OK) {
         return prof_error_set(ctx->error, st,
             "Failed to create directory for weights_load.c");
@@ -449,7 +391,7 @@ ProfStatus prof_codegen_weights_load(ProfCodegenContext* ctx) {
             "int weights_load_validate(const char* file_path);\n\n"
             "#endif\n";
 
-        st = ensure_parent_dir(layout->weights_load.h_path);
+        st = prof_path_ensure_parent_directory(layout->weights_load.h_path);
         if (st == PROF_STATUS_OK) {
             write_file(layout->weights_load.h_path, header_content);
         }
@@ -458,11 +400,18 @@ ProfStatus prof_codegen_weights_load(ProfCodegenContext* ctx) {
     return PROF_STATUS_OK;
 }
 
+/**
+ * @brief Get the type-specific train include path
+ */
 ProfStatus prof_codegen_train(ProfCodegenContext* ctx) {
     ProfStatus st;
     const ProfOutputLayout* layout;
     const NN_NetworkDef* network;
-    char content[4096];
+    NNSubnetDef* subnet;
+    char content[8192];
+    size_t pos = 0U;
+    size_t remaining = sizeof(content);
+    int written;
 
     if (ctx == NULL) {
         return PROF_STATUS_INVALID_ARGUMENT;
@@ -475,53 +424,114 @@ ProfStatus prof_codegen_train(ProfCodegenContext* ctx) {
         return PROF_STATUS_PATH_INVALID;
     }
 
-    snprintf(content, sizeof(content),
+    subnet = (network != NULL && network->subnet_count > 0U) ? network->subnets[0] : NULL;
+
+    written = snprintf(content + pos, remaining,
         "/* train.c - Training module */\n"
         "/* Auto-generated by profiler */\n"
-        "/* Network: %s */\n\n"
+        "/* Network: %s */\n"
+        "/* Network type: %s */\n\n"
         "#include \"train.h\"\n"
+        "#include \"infer.h\"\n"
+        "#include \"nn/nn_codegen_hooks.h\"\n"
+        "#include \"nn/nn_train_registry.h\"\n"
         "#include <stdlib.h>\n"
-        "#include <string.h>\n\n"
+        "#include <string.h>\n\n",
+        network != NULL ? network->network_name : "unknown",
+        subnet != NULL ? subnet->subnet_type : "unknown");
+    pos += (size_t)written;
+    remaining -= (size_t)written;
+
+    written = snprintf(content + pos, remaining,
         "typedef struct {\n"
-        "    void* network_ctx;\n"
-        "    float learning_rate;\n"
+        "    const NNTrainRegistryEntry* registry_entry;\n"
+        "    void* infer_ctx;\n"
+        "    void* train_ctx;\n"
+        "    NNCodegenTrainConfig config;\n"
         "    int epoch_count;\n"
-        "} TrainContext;\n\n"
-        "void* train_create(void) {\n"
-        "    TrainContext* ctx = (TrainContext*)malloc(sizeof(TrainContext));\n"
+        "} TrainContext;\n\n");
+    pos += (size_t)written;
+    remaining -= (size_t)written;
+
+    written = snprintf(content + pos, remaining,
+        "void* train_create(void* infer_ctx) {\n"
+        "    TrainContext* ctx;\n"
+        "    void* native_infer_ctx;\n"
+        "    if (infer_ctx == NULL) return NULL;\n"
+        "    native_infer_ctx = infer_get_native_context(infer_ctx);\n"
+        "    if (native_infer_ctx == NULL) return NULL;\n"
+        "    if (nn_train_registry_bootstrap() != 0) return NULL;\n"
+        "    ctx = (TrainContext*)malloc(sizeof(TrainContext));\n"
         "    if (ctx == NULL) return NULL;\n"
-        "    ctx->network_ctx = NULL;\n"
-        "    ctx->learning_rate = 0.01f;\n"
-        "    ctx->epoch_count = 0;\n"
+        "    memset(ctx, 0, sizeof(TrainContext));\n"
+        "    ctx->registry_entry = nn_train_registry_find_entry(\"%s\");\n"
+        "    if (ctx->registry_entry == NULL || ctx->registry_entry->create == NULL ||\n"
+        "        ctx->registry_entry->destroy == NULL || ctx->registry_entry->step_with_data == NULL) {\n"
+        "        free(ctx);\n"
+        "        return NULL;\n"
+        "    }\n"
+        "    ctx->infer_ctx = native_infer_ctx;\n"
+        "    ctx->config.learning_rate = 0.01f;\n"
+        "    ctx->config.momentum = 0.9f;\n"
+        "    ctx->config.weight_decay = 0.0001f;\n"
+        "    ctx->config.batch_size = 1U;\n"
+        "    ctx->config.seed = 42U;\n"
+        "    ctx->train_ctx = ctx->registry_entry->create(native_infer_ctx, &ctx->config);\n"
+        "    if (ctx->train_ctx == NULL) {\n"
+        "        free(ctx);\n"
+        "        return NULL;\n"
+        "    }\n"
         "    return ctx;\n"
-        "}\n\n"
+        "}\n\n",
+        subnet != NULL ? subnet->subnet_type : "unknown");
+    pos += (size_t)written;
+    remaining -= (size_t)written;
+
+    written = snprintf(content + pos, remaining,
         "void train_destroy(void* ctx) {\n"
-        "    if (ctx != NULL) free(ctx);\n"
+        "    TrainContext* tc = (TrainContext*)ctx;\n"
+        "    if (tc == NULL) return;\n"
+        "    if (tc->registry_entry != NULL && tc->registry_entry->destroy != NULL && tc->train_ctx != NULL) {\n"
+        "        tc->registry_entry->destroy(tc->train_ctx);\n"
+        "    }\n"
+        "    free(tc);\n"
         "}\n\n"
         "int train_step(void* ctx, const void* input, const void* target) {\n"
-        "    (void)ctx;\n"
-        "    (void)input;\n"
-        "    (void)target;\n"
-        "    return 0;\n"
+        "    TrainContext* tc = (TrainContext*)ctx;\n"
+        "    if (tc == NULL || tc->registry_entry == NULL || tc->registry_entry->step_with_data == NULL || tc->train_ctx == NULL) return -1;\n"
+        "    return tc->registry_entry->step_with_data(tc->train_ctx, input, target);\n"
         "}\n\n"
         "int train_epoch(void* ctx, int epoch) {\n"
-        "    (void)ctx;\n"
+        "    TrainContext* tc = (TrainContext*)ctx;\n"
         "    (void)epoch;\n"
+        "    if (tc == NULL) return -1;\n"
+        "    tc->epoch_count += 1;\n"
         "    return 0;\n"
         "}\n\n"
         "int train_auto_run(void* ctx, int epochs) {\n"
         "    TrainContext* tc = (TrainContext*)ctx;\n"
         "    int e;\n"
         "    if (tc == NULL) return -1;\n"
-        "    for (e = 0; e < epochs; e++) {\n"
-        "        train_epoch(ctx, e);\n"
+        "    for (e = 0; e < epochs; ++e) {\n"
+        "        if (train_epoch(ctx, e) != 0) return -1;\n"
         "    }\n"
-        "    tc->epoch_count += epochs;\n"
         "    return 0;\n"
-        "}\n",
-        network != NULL ? network->network_name : "unknown");
+        "}\n\n"
+        "float train_get_loss(void* ctx) {\n"
+        "    size_t epochs = 0U;\n"
+        "    size_t steps = 0U;\n"
+        "    float avg_loss = 0.0f;\n"
+        "    TrainContext* tc = (TrainContext*)ctx;\n"
+        "    if (tc == NULL || tc->registry_entry == NULL || tc->train_ctx == NULL) return 0.0f;\n"
+        "    if (tc->registry_entry->get_stats != NULL) {\n"
+        "        tc->registry_entry->get_stats(tc->train_ctx, &epochs, &steps, &avg_loss);\n"
+        "    }\n"
+        "    return avg_loss;\n"
+        "}\n");
+    pos += (size_t)written;
+    remaining -= (size_t)written;
 
-    st = ensure_parent_dir(layout->train.c_path);
+    st = prof_path_ensure_parent_directory(layout->train.c_path);
     if (st != PROF_STATUS_OK) {
         return prof_error_set(ctx->error, st,
             "Failed to create directory for train.c");
@@ -536,18 +546,18 @@ ProfStatus prof_codegen_train(ProfCodegenContext* ctx) {
     if (layout->train.h_path != NULL) {
         const char* header_content =
             "/* train.h - Training interface */\n"
-            "/* Auto-generated by profiler */\n\n"
+            "/* Auto-generated by profiler */\n"
             "#ifndef TRAIN_H\n"
             "#define TRAIN_H\n\n"
-            "#include <stddef.h>\n\n"
-            "void* train_create(void);\n"
+            "void* train_create(void* infer_ctx);\n"
             "void train_destroy(void* ctx);\n"
             "int train_step(void* ctx, const void* input, const void* target);\n"
             "int train_epoch(void* ctx, int epoch);\n"
-            "int train_auto_run(void* ctx, int epochs);\n\n"
+            "int train_auto_run(void* ctx, int epochs);\n"
+            "float train_get_loss(void* ctx);\n\n"
             "#endif\n";
 
-        st = ensure_parent_dir(layout->train.h_path);
+        st = prof_path_ensure_parent_directory(layout->train.h_path);
         if (st == PROF_STATUS_OK) {
             write_file(layout->train.h_path, header_content);
         }
@@ -610,7 +620,7 @@ ProfStatus prof_codegen_weights_save(ProfCodegenContext* ctx) {
         "    return 0;\n"
         "}\n");
 
-    st = ensure_parent_dir(layout->weights_save.c_path);
+    st = prof_path_ensure_parent_directory(layout->weights_save.c_path);
     if (st != PROF_STATUS_OK) {
         return prof_error_set(ctx->error, st,
             "Failed to create directory for weights_save.c");
@@ -634,7 +644,7 @@ ProfStatus prof_codegen_weights_save(ProfCodegenContext* ctx) {
             "int weights_save_to_file(void* ctx, const char* file_path);\n\n"
             "#endif\n";
 
-        st = ensure_parent_dir(layout->weights_save.h_path);
+        st = prof_path_ensure_parent_directory(layout->weights_save.h_path);
         if (st == PROF_STATUS_OK) {
             write_file(layout->weights_save.h_path, header_content);
         }
@@ -643,11 +653,21 @@ ProfStatus prof_codegen_weights_save(ProfCodegenContext* ctx) {
     return PROF_STATUS_OK;
 }
 
+/**
+ * @brief Get the type-specific include path for network operations
+ *
+ * Maps network type (mlp, transformer, cnn, rnn) to the corresponding
+ * header file path in src/nn/types/.
+ */
 ProfStatus prof_codegen_infer(ProfCodegenContext* ctx) {
     ProfStatus st;
     const ProfOutputLayout* layout;
     const NN_NetworkDef* network;
-    char content[4096];
+    NNSubnetDef* subnet;
+    char content[8192];
+    size_t pos = 0U;
+    size_t remaining = sizeof(content);
+    int written;
     size_t i;
 
     if (ctx == NULL) {
@@ -661,49 +681,115 @@ ProfStatus prof_codegen_infer(ProfCodegenContext* ctx) {
         return PROF_STATUS_PATH_INVALID;
     }
 
-    snprintf(content, sizeof(content),
+    subnet = (network != NULL && network->subnet_count > 0U) ? network->subnets[0] : NULL;
+
+    written = snprintf(content + pos, remaining,
         "/* infer.c - Inference module */\n"
         "/* Auto-generated by profiler */\n"
-        "/* Network: %s */\n\n"
+        "/* Network: %s */\n"
+        "/* Network type: %s */\n\n"
         "#include \"infer.h\"\n"
+        "#include \"nn/nn_codegen_hooks.h\"\n"
+        "#include \"nn/nn_infer_registry.h\"\n"
         "#include <stdlib.h>\n"
         "#include <string.h>\n\n",
-        network != NULL ? network->network_name : "unknown");
+        network != NULL ? network->network_name : "unknown",
+        subnet != NULL ? subnet->subnet_type : "unknown");
+    pos += (size_t)written;
+    remaining -= (size_t)written;
 
-    if (network != NULL) {
-        for (i = 0; i < network->subnet_count; i++) {
-            NNSubnetDef* subnet = network->subnets[i];
-            char type_cap[64];
-            if (subnet == NULL) continue;
+    written = snprintf(content + pos, remaining,
+        "typedef struct {\n"
+        "    const NNInferRegistryEntry* registry_entry;\n"
+        "    void* network_ctx;\n"
+        "    NNCodegenInferConfig config;\n"
+        "} InferContext;\n\n");
+    pos += (size_t)written;
+    remaining -= (size_t)written;
 
-            capitalize_first(subnet->subnet_type, type_cap, sizeof(type_cap));
+    written = snprintf(content + pos, remaining,
+        "void* infer_create(void) {\n"
+        "    InferContext* ctx;\n"
+        "    if (nn_infer_registry_bootstrap() != 0) return NULL;\n"
+        "    ctx = (InferContext*)malloc(sizeof(InferContext));\n"
+        "    if (ctx == NULL) return NULL;\n"
+        "    memset(ctx, 0, sizeof(InferContext));\n"
+        "    ctx->registry_entry = nn_infer_registry_find_entry(\"%s\");\n"
+        "    if (ctx->registry_entry == NULL || ctx->registry_entry->create == NULL ||\n"
+        "        ctx->registry_entry->destroy == NULL || ctx->registry_entry->auto_run == NULL) {\n"
+        "        free(ctx);\n"
+        "        return NULL;\n"
+        "    }\n"
+        "    ctx->config.network_type = \"%s\";\n"
+        "    ctx->config.input_size = %zu;\n"
+        "    ctx->config.hidden_layer_count = %zu;\n"
+        "    ctx->config.output_size = %zu;\n"
+        "    ctx->config.seed = 42U;\n",
+        subnet != NULL ? subnet->subnet_type : "unknown",
+        subnet != NULL ? subnet->subnet_type : "unknown",
+        subnet != NULL ? (size_t)subnet->input_layer_size : (size_t)0U,
+        subnet != NULL ? (size_t)subnet->hidden_layer_count : (size_t)0U,
+        subnet != NULL ? (size_t)subnet->output_layer_size : (size_t)0U);
+    pos += (size_t)written;
+    remaining -= (size_t)written;
+
+    if (subnet != NULL && subnet->hidden_layer_sizes != NULL) {
+        size_t hidden_count = subnet->hidden_layer_count;
+        if (hidden_count > 4U) {
+            hidden_count = 4U;
+        }
+        for (i = 0U; i < hidden_count && remaining > 64U; ++i) {
+            written = snprintf(content + pos, remaining,
+                "    ctx->config.hidden_sizes[%zu] = %zu;\n",
+                i, (size_t)subnet->hidden_layer_sizes[i]);
+            pos += (size_t)written;
+            remaining -= (size_t)written;
         }
     }
+    for (; i < 4U && remaining > 48U; ++i) {
+        written = snprintf(content + pos, remaining,
+            "    ctx->config.hidden_sizes[%zu] = 0U;\n", i);
+        pos += (size_t)written;
+        remaining -= (size_t)written;
+    }
 
-    strcat(content,
-        "typedef struct {\n"
-        "    void* network_ctx;\n"
-        "} InferContext;\n\n"
-        "void* infer_create(void) {\n"
-        "    InferContext* ctx = (InferContext*)malloc(sizeof(InferContext));\n"
-        "    if (ctx == NULL) return NULL;\n"
-        "    ctx->network_ctx = NULL;\n"
+    written = snprintf(content + pos, remaining,
+        "    ctx->network_ctx = ctx->registry_entry->create(&ctx->config);\n"
+        "    if (ctx->network_ctx == NULL) {\n"
+        "        free(ctx);\n"
+        "        return NULL;\n"
+        "    }\n"
         "    return ctx;\n"
         "}\n\n"
         "void infer_destroy(void* ctx) {\n"
-        "    if (ctx != NULL) free(ctx);\n"
+        "    InferContext* ic = (InferContext*)ctx;\n"
+        "    if (ic == NULL) return;\n"
+        "    if (ic->registry_entry != NULL && ic->registry_entry->destroy != NULL && ic->network_ctx != NULL) {\n"
+        "        ic->registry_entry->destroy(ic->network_ctx);\n"
+        "    }\n"
+        "    free(ic);\n"
+        "}\n\n"
+        "void* infer_get_native_context(void* ctx) {\n"
+        "    InferContext* ic = (InferContext*)ctx;\n"
+        "    if (ic == NULL) return NULL;\n"
+        "    return ic->network_ctx;\n"
         "}\n\n"
         "int infer_step(void* ctx, const void* input, void* output) {\n"
-        "    (void)ctx;\n"
+        "    InferContext* ic = (InferContext*)ctx;\n"
         "    (void)input;\n"
         "    (void)output;\n"
-        "    return 0;\n"
+        "    if (ic == NULL || ic->registry_entry == NULL || ic->registry_entry->infer_step == NULL || ic->network_ctx == NULL) return -1;\n"
+        "    return ic->registry_entry->infer_step(ic->network_ctx);\n"
         "}\n\n"
         "int infer_auto_run(void* ctx, const void* input, void* output) {\n"
-        "    return infer_step(ctx, input, output);\n"
+        "    InferContext* ic = (InferContext*)ctx;\n"
+        "    if (ic == NULL || ic->registry_entry == NULL || ic->registry_entry->auto_run == NULL || ic->network_ctx == NULL) return -1;\n"
+        "    return ic->registry_entry->auto_run(ic->network_ctx, input, output);\n"
         "}\n");
+    pos += (size_t)written;
+    remaining -= (size_t)written;
 
-    st = ensure_parent_dir(layout->infer.c_path);
+    st = prof_path_ensure_parent_directory(layout->infer.c_path);
     if (st != PROF_STATUS_OK) {
         return prof_error_set(ctx->error, st,
             "Failed to create directory for infer.c");
@@ -718,17 +804,17 @@ ProfStatus prof_codegen_infer(ProfCodegenContext* ctx) {
     if (layout->infer.h_path != NULL) {
         const char* header_content =
             "/* infer.h - Inference interface */\n"
-            "/* Auto-generated by profiler */\n\n"
+            "/* Auto-generated by profiler */\n"
             "#ifndef INFER_H\n"
             "#define INFER_H\n\n"
-            "#include <stddef.h>\n\n"
             "void* infer_create(void);\n"
             "void infer_destroy(void* ctx);\n"
+            "void* infer_get_native_context(void* ctx);\n"
             "int infer_step(void* ctx, const void* input, void* output);\n"
             "int infer_auto_run(void* ctx, const void* input, void* output);\n\n"
             "#endif\n";
 
-        st = ensure_parent_dir(layout->infer.h_path);
+        st = prof_path_ensure_parent_directory(layout->infer.h_path);
         if (st == PROF_STATUS_OK) {
             write_file(layout->infer.h_path, header_content);
         }

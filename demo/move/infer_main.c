@@ -1,91 +1,89 @@
 /**
  * @file infer_main.c
- * @brief Move Demo 推理入口
+ * @brief Move Demo inference entry
  *
- * 6步流程步骤6：运行推理
+ * Demonstrates usage of profiler-generated inference API.
+ * This demo ONLY includes the generated infer.h header,
+ * NOT any src/nn implementation headers.
  *
- * 用户输入：
- * - 起始坐标 (x, y)
- * - 命令序列：0=上, 1=下, 2=左, 3=右, 4=停止
+ * User input:
+ * - Start position (x, y)
+ * - Commands: 0=up, 1=down, 2=left, 3=right, 4=stop
  *
- * 输出：每一步执行后的坐标
+ * Output: position after each command
  */
 
-#include "move.h"
+#include "infer.h"
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 
 /**
- * @brief 简化的上下文结构
- *
- * 与生成的 move.c 中的 moveContext 相同。
- * 直接使用 void* 也可以，这里为了清晰定义为结构体。
+ * @brief Normalize input to [0, 1] range
  */
-typedef struct {
-    int input_x;
-    int input_y;
-    int command;
-    int output_x;
-    int output_y;
-} MoveContext;
+static void normalize_input(float* input, int x, int y, int cmd) {
+    input[0] = (float)x / 10.0f;
+    input[1] = (float)y / 10.0f;
+    input[2] = (float)cmd / 3.0f;
+}
 
 /**
- * @brief 主函数
- *
- * 流程：
- * 1. 读取起始坐标
- * 2. 创建网络上下文
- * 3. 循环读取命令并执行推理
- * 4. 销毁网络上下文
+ * @brief Denormalize output from [0, 1] range
  */
+static void denormalize_output(float x, float y, int* out_x, int* out_y) {
+    *out_x = (int)roundf(x * 10.0f);
+    *out_y = (int)roundf(y * 10.0f);
+
+    if (*out_x < 0) *out_x = 0;
+    if (*out_x > 10) *out_x = 10;
+    if (*out_y < 0) *out_y = 0;
+    if (*out_y > 10) *out_y = 10;
+}
+
 int main(void) {
     int x = 0;
     int y = 0;
     int cmd = 0;
-    void* net_ctx = NULL;
+    void* infer_ctx;
+    float input[3];
+    float output[2];
+    int out_x, out_y;
 
-    printf("input startX startY first, then commands: 0=up 1=down 2=left 3=right 4=stop\n");
+    printf("=== Move Network Inference ===\n");
+    printf("Input format: startX startY, then commands\n");
+    printf("Commands: 0=up, 1=down, 2=left, 3=right, 4=stop\n\n");
 
-    /* 读取起始坐标 */
+    printf("Enter start position (x y): ");
     if (scanf("%d %d", &x, &y) != 2) {
         return 1;
     }
 
-    /* 创建网络上下文 */
-    net_ctx = move_create();
-    if (net_ctx == NULL) {
-        fprintf(stderr, "create network failed\n");
+    infer_ctx = infer_create();
+    if (infer_ctx == NULL) {
+        fprintf(stderr, "Failed to create inference context\n");
         return 1;
     }
 
-    /* 循环处理命令 */
+    printf("Enter commands (0-4):\n");
+
     while (scanf("%d", &cmd) == 1) {
         if (cmd == 4) {
             break;
         }
 
-        /* 设置输入 */
-        MoveContext* mc = (MoveContext*)net_ctx;
-        mc->input_x = x;
-        mc->input_y = y;
-        mc->command = cmd;
+        normalize_input(input, x, y, cmd);
+        infer_auto_run(infer_ctx, input, output);
+        denormalize_output(output[0], output[1], &out_x, &out_y);
 
-        /* 执行推理 */
-        if (move_forward(net_ctx) != 0) {
-            printf("forward failed\n");
-            continue;
-        }
-
-        /* 获取输出 */
-        x = mc->output_x;
-        y = mc->output_y;
+        x = out_x;
+        y = out_y;
         printf("x=%d y=%d\n", x, y);
     }
 
-    /* 销毁网络上下文 */
-    move_destroy(net_ctx);
+    printf("\nFinal position: x=%d y=%d\n", x, y);
 
-    printf("final_x=%d final_y=%d\n", x, y);
+    infer_destroy(infer_ctx);
+
     return 0;
 }

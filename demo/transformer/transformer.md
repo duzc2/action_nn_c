@@ -2,79 +2,82 @@
 
 ## 功能说明
 
-演示小参数量自然语言对话流程的网络。
+演示小型对话 transformer 网络的生成、训练与推理流程。
 
-使用 Transformer 架构实现简单的对话功能，适用于低资源场景下的语言模型部署。
+## 流程要求
 
-## 数据准备
+本 demo 必须按 6 步执行，并且每一步都在独立构建目录中完成：
 
-训练数据由用户自行准备，存放在 `demo/transformer/data/` 目录下。
+1. 配置并编译 `generate`
+2. 运行 `generate`
+3. 配置并编译 `train`
+4. 运行 `train`
+5. 配置并编译 `infer`
+6. 运行 `infer`
 
-可使用提供的语料文件：
-- `corpus.txt` - 原始语料
-- `dialogue_pairs.txt` - 对话问答对
+可直接使用：
 
-## 6步使用流程
+- `run_demo.bat`
+- `run_demo.sh`
 
-### 步骤1：编译生成器
+## 运行时生成物位置
 
-```powershell
-cmake --build . --target transformer_generate
+运行时生成的代码、头文件、元数据等，不写回源码目录。
+
+统一生成到相对当前可执行文件的：
+
+```text
+../../data/
 ```
 
-### 步骤2：运行生成器
+对应实际目录：
 
-```powershell
-./demo/transformer/Debug/transformer_generate.exe
+```text
+build/demo/transformer/data/
 ```
 
-### 步骤3：编译训练
+## 6 步命令
+
+### 1. configure + build generate
 
 ```powershell
-cmake --build . --target transformer_train
+cmake -S demo/transformer/generate -B build/demo/transformer/generate
+cmake --build build/demo/transformer/generate --config Debug
 ```
 
-### 步骤4：运行训练
+### 2. run generate
 
 ```powershell
-./demo/transformer/Debug/transformer_train.exe
+build/demo/transformer/generate/Debug/transformer_generate.exe
 ```
 
-### 步骤5：编译推理
+### 3. configure + build train
 
 ```powershell
-cmake --build . --target transformer_infer
+cmake -S demo/transformer/train -B build/demo/transformer/train
+cmake --build build/demo/transformer/train --config Debug
 ```
 
-### 步骤6：运行推理
+### 4. run train
 
 ```powershell
-./demo/transformer/Debug/transformer_infer.exe
+build/demo/transformer/train/Debug/transformer_train.exe
 ```
 
-## 输入输出格式
+### 5. configure + build infer
 
-### 输入格式
+```powershell
+cmake -S demo/transformer/infer -B build/demo/transformer/infer
+cmake --build build/demo/transformer/infer --config Debug
+```
 
-英文句子或单词
+### 6. run infer
 
-### 输出格式
+```powershell
+build/demo/transformer/infer/Debug/transformer_infer.exe
+```
 
-对话回复
+## 说明
 
-## 网络规格
-
-- **网络类型**: transformer
-- **输入**: 文本序列
-- **输出**: 文本序列
-
-## 文件说明
-
-| 文件 | 说明 |
-|------|------|
-| `generate_main.c` | 调用 profiler 生成网络结构代码 |
-| `train_main.c` | 训练网络，生成权重文件 |
-| `infer_main.c` | 加载权重，执行推理 |
-| `CMakeLists.txt` | 定义三个编译目标 |
-| `data/corpus.txt` | 训练语料 |
-| `data/dialogue_pairs.txt` | 对话数据 |
+- `train` 与 `infer` 的依赖代码都从 `build/demo/transformer/data/` 读取
+- 静态示例语料可以保留在源码目录，但运行时生成物不能写回 `demo/transformer/`
