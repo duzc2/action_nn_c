@@ -83,7 +83,7 @@ typedef struct {
 ### 4.3 生成函数
 
 ```c
-ProfStatus profiler_generate(
+ProfStatus profiler_generate_v2(
     const ProfGenerateRequest* req,
     ProfGenerateResult* out_result
 );

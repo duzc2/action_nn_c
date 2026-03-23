@@ -8,6 +8,7 @@
 #include "nn_infer_registry.h"
 #include "nn_train_registry.h"
 
+#include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
 #include <stdio.h>

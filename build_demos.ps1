@@ -3,9 +3,9 @@
 
 $ErrorActionPreference = "Stop"
 
-$RootDir = "C:\Users\ASUS\Desktop\ai-build-ai\action_c"
-$BuildDir = "$RootDir\build"
-$DemoRoot = "$RootDir\demo"
+$RootDir = (Resolve-Path -Path $PSScriptRoot).Path
+$BuildDir = Join-Path $RootDir "build"
+$DemoRoot = Join-Path $RootDir "demo"
 $Demos = @("move", "sevenseg", "target", "transformer")
 
 Write-Host "========================================" -ForegroundColor Cyan

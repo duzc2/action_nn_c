@@ -2,6 +2,7 @@ add_library(profiler_core STATIC
     profiler.c
     profiler_types.c
     prof_error.c
+    prof_path.c
     network_def.c
     prof_hash.c
     prof_validate.c
@@ -18,3 +19,5 @@ target_link_libraries(profiler_core PUBLIC
     nn_infer_core
     nn_train_core
 )
+
+add_custom_target(profiler DEPENDS profiler_core)

@@ -10,6 +10,9 @@ file(GLOB_RECURSE NN_INFER_OP_SOURCES
 file(GLOB_RECURSE NN_TRAIN_OP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/types/*/*_train_ops.c"
 )
+file(GLOB_RECURSE NN_LAYER_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/types/*/mlp_layers.c"
+)
 
 set(NN_INFER_AUTOGEN_C "${CMAKE_CURRENT_BINARY_DIR}/nn_infer_registry_autogen.c")
 set(NN_INFER_AUTOGEN_CONTENT "#include \"nn_infer_registry.h\"\n\n")
@@ -56,6 +59,7 @@ add_library(nn_infer_core STATIC
     ${NN_INFER_AUTOGEN_C}
     ${NN_INFER_OP_SOURCES}
     ${NN_INFER_ENTRY_SOURCES}
+    ${NN_LAYER_SOURCES}
 )
 target_include_directories(nn_infer_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}

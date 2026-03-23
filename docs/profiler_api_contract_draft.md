@@ -145,7 +145,7 @@
 ## 6. 编译与运行阶段合同
 
 1. 第一次编译：用户在 CMakeLists 选择启用类型，仅启用类型参与编译与注册。
-2. 第一次运行：用户程序调用 `profiler_generate`，生成训练/推理 `.c` 与固定 `.h`。
+2. 第一次运行：用户程序调用 `profiler_generate_v2`，生成训练/推理 `.c` 与固定 `.h`。
 3. 第二次编译：训练工程编译时依赖“推理 `.c` + 训练 `.c`”，训练后产出 `.bin` 与权重 `.c`。
 4. 第三次编译：推理工程编译时仅依赖推理 `.c`，运行时可加载 `.bin` 或直接使用权重 `.c`。
 5. 未启用类型不会出现在任何阶段，不新增该类运行时错误分支。
@@ -155,7 +155,7 @@
 ```c
 ProfGenerateRequest req;
 ProfGenerateResult result;
-ProfStatus st = profiler_generate(&req, &result);
+ProfStatus st = profiler_generate_v2(&req, &result);
 if (st != PROF_STATUS_OK) {
     /* 终端已有英文错误，同时可读取 req.error.buffer */
 }

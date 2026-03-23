@@ -2,77 +2,82 @@
 
 ## 功能说明
 
-演示字符到七段数码管引脚控制的映射网络。
+演示数字到七段数码管段位输出的映射网络。
 
-大模型学习数码管引脚配置后，生成小的映射网络，将数字/字符转换为引脚高低电平。
+## 流程要求
 
-## 数据准备
+本 demo 必须按 6 步执行，并且每一步都在独立构建目录中完成：
 
-训练数据由用户自行准备，存放在 `demo/sevenseg/data/` 目录下。
+1. 配置并编译 `generate`
+2. 运行 `generate`
+3. 配置并编译 `train`
+4. 运行 `train`
+5. 配置并编译 `infer`
+6. 运行 `infer`
 
-训练数据格式：
-- 每行：输入数字/字符 + 7个引脚状态
-- 例如：`0 1 1 1 1 1 1 0` 表示数字0对应的七段状态
+可直接使用：
 
-## 6步使用流程
+- `run_demo.bat`
+- `run_demo.sh`
 
-### 步骤1：编译生成器
+## 运行时生成物位置
 
-```powershell
-cmake --build . --target sevenseg_generate
+运行时生成的代码、头文件、元数据等，不写回源码目录。
+
+统一生成到相对当前可执行文件的：
+
+```text
+../../data/
 ```
 
-### 步骤2：运行生成器
+对应实际目录：
 
-```powershell
-./demo/sevenseg/Debug/sevenseg_generate.exe
+```text
+build/demo/sevenseg/data/
 ```
 
-### 步骤3：编译训练
+## 6 步命令
+
+### 1. configure + build generate
 
 ```powershell
-cmake --build . --target sevenseg_train
+cmake -S demo/sevenseg/generate -B build/demo/sevenseg/generate
+cmake --build build/demo/sevenseg/generate --config Debug
 ```
 
-### 步骤4：运行训练
+### 2. run generate
 
 ```powershell
-./demo/sevenseg/Debug/sevenseg_train.exe
+build/demo/sevenseg/generate/Debug/sevenseg_generate.exe
 ```
 
-### 步骤5：编译推理
+### 3. configure + build train
 
 ```powershell
-cmake --build . --target sevenseg_infer
+cmake -S demo/sevenseg/train -B build/demo/sevenseg/train
+cmake --build build/demo/sevenseg/train --config Debug
 ```
 
-### 步骤6：运行推理
+### 4. run train
 
 ```powershell
-./demo/sevenseg/Debug/sevenseg_infer.exe
+build/demo/sevenseg/train/Debug/sevenseg_train.exe
 ```
 
-## 输入输出格式
+### 5. configure + build infer
 
-### 输入格式
+```powershell
+cmake -S demo/sevenseg/infer -B build/demo/sevenseg/infer
+cmake --build build/demo/sevenseg/infer --config Debug
+```
 
-数字 (0-9) 或字符 (A-F)
+### 6. run infer
 
-### 输出格式
+```powershell
+build/demo/sevenseg/infer/Debug/sevenseg_infer.exe
+```
 
-七段数码管各段的状态
+## 说明
 
-## 网络规格
-
-- **网络类型**: mlp
-- **输入**: 数字/字符编码
-- **输出**: 7个引脚状态
-
-## 文件说明
-
-| 文件 | 说明 |
-|------|------|
-| `generate_main.c` | 调用 profiler 生成网络结构代码 |
-| `train_main.c` | 训练网络，生成权重文件 |
-| `infer_main.c` | 加载权重，执行推理 |
-| `CMakeLists.txt` | 定义三个编译目标 |
+- `train` 与 `infer` 的依赖代码都从 `build/demo/sevenseg/data/` 读取
+- 不应回到 `demo/sevenseg/` 源码目录寻找运行时生成物
