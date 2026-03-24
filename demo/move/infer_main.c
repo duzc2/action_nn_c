@@ -14,6 +14,8 @@
  */
 
 #include "infer.h"
+#include "weights_load.h"
+#include "../demo_runtime_paths.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -46,9 +48,15 @@ int main(void) {
     int y = 0;
     int cmd = 0;
     void* infer_ctx;
+    const char* weights_file = "../../data/weights.bin";
     float input[3];
     float output[2];
     int out_x, out_y;
+
+    if (demo_set_working_directory_to_executable() != 0) {
+        fprintf(stderr, "Failed to switch working directory to executable directory\n");
+        return 1;
+    }
 
     printf("=== Move Network Inference ===\n");
     printf("Input format: startX startY, then commands\n");
@@ -62,6 +70,12 @@ int main(void) {
     infer_ctx = infer_create();
     if (infer_ctx == NULL) {
         fprintf(stderr, "Failed to create inference context\n");
+        return 1;
+    }
+
+    if (weights_load_from_file(infer_ctx, weights_file) != 0) {
+        fprintf(stderr, "Failed to load weights from %s\n", weights_file);
+        infer_destroy(infer_ctx);
         return 1;
     }
 

@@ -261,7 +261,6 @@ int nn_mlp_load_weights(void* context, FILE* fp) {
     uint64_t file_layout_hash;
     uint32_t file_abi_version;
     size_t i;
-    size_t j;
     int rc;
 
     if (ctx == NULL || fp == NULL) {
@@ -276,6 +275,16 @@ int nn_mlp_load_weights(void* context, FILE* fp) {
 
     rc = (int)fread(&file_abi_version, sizeof(file_abi_version), 1, fp);
     if (rc != 1) return 0;
+
+    if (ctx->expected_network_hash != 0U &&
+        file_hash != ctx->expected_network_hash) {
+        return 0;
+    }
+
+    if (ctx->expected_layout_hash != 0U &&
+        file_layout_hash != ctx->expected_layout_hash) {
+        return 0;
+    }
 
     if (file_abi_version != ABI_VERSION) {
         return 0;
@@ -311,8 +320,12 @@ int nn_mlp_save_weights(void* context, FILE* fp) {
         return 0;
     }
 
-    hash = nn_mlp_get_network_hash(ctx);
-    layout_hash = compute_layout_hash(&ctx->config);
+    hash = (ctx->expected_network_hash != 0U)
+        ? ctx->expected_network_hash
+        : nn_mlp_get_network_hash(ctx);
+    layout_hash = (ctx->expected_layout_hash != 0U)
+        ? ctx->expected_layout_hash
+        : compute_layout_hash(&ctx->config);
 
     rc = (int)fwrite(&hash, sizeof(hash), 1, fp);
     if (rc != 1) return 0;

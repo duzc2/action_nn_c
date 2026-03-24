@@ -10,9 +10,11 @@ action_c_add_core_subdirectory()
 action_c_get_demo_generated_dir(GENERATED_DIR)
 set(GENERATED_INFER_C "${GENERATED_DIR}/infer.c")
 set(GENERATED_TRAIN_C "${GENERATED_DIR}/train.c")
+set(GENERATED_WEIGHTS_SAVE_C "${GENERATED_DIR}/weights_save.c")
 set_source_files_properties(
     "${GENERATED_INFER_C}"
     "${GENERATED_TRAIN_C}"
+    "${GENERATED_WEIGHTS_SAVE_C}"
     PROPERTIES GENERATED TRUE
 )
 
@@ -20,6 +22,7 @@ add_executable(move_train
     ../train_main.c
     "${GENERATED_INFER_C}"
     "${GENERATED_TRAIN_C}"
+    "${GENERATED_WEIGHTS_SAVE_C}"
 )
 
 target_include_directories(move_train PRIVATE

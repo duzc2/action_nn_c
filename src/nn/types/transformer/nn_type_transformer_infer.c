@@ -5,9 +5,12 @@
 
 static void* nn_type_transformer_infer_create_codegen(const NNCodegenInferConfig* config) {
     TransformerInferContext* context;
-    (void)config;
 
     context = (TransformerInferContext*)calloc(1U, sizeof(TransformerInferContext));
+    if (context != 0 && config != 0) {
+        context->expected_network_hash = config->network_hash;
+        context->expected_layout_hash = config->layout_hash;
+    }
     return context;
 }
 
@@ -29,9 +32,11 @@ static int nn_type_transformer_infer_auto_run_codegen(void* context, const void*
 }
 
 const NNInferRegistryEntry nn_type_transformer_infer_entry = {
-    "transformer",
-    nn_transformer_infer_step,
-    nn_type_transformer_infer_create_codegen,
-    nn_type_transformer_infer_destroy_codegen,
-    nn_type_transformer_infer_auto_run_codegen
+    .type_name = "transformer",
+    .infer_step = nn_transformer_infer_step,
+    .create = nn_type_transformer_infer_create_codegen,
+    .destroy = nn_type_transformer_infer_destroy_codegen,
+    .auto_run = nn_type_transformer_infer_auto_run_codegen,
+    .load_weights = nn_transformer_load_weights,
+    .save_weights = nn_transformer_save_weights
 };

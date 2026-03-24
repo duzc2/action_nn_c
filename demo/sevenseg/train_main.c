@@ -9,6 +9,7 @@
 
 #include "infer.h"
 #include "train.h"
+#include "weights_save.h"
 #include "../demo_runtime_paths.h"
 
 #include <stdio.h>
@@ -46,6 +47,7 @@ int main(void) {
     size_t digit;
     int epoch_count = 100;
     float total_loss = 0.0f;
+    int save_rc;
     float input[10];
     float target[7];
     float output[7];
@@ -93,7 +95,14 @@ int main(void) {
     }
 
     printf("\nTraining completed! Average loss: %.4f\n", total_loss / (float)epoch_count);
-    printf("Weights should be saved to: %s\n", output_file);
+    save_rc = weights_save_to_file(infer_ctx, output_file);
+    if (save_rc != 0) {
+        fprintf(stderr, "Failed to save weights to %s (rc=%d)\n", output_file, save_rc);
+        train_destroy(train_ctx);
+        infer_destroy(infer_ctx);
+        return 1;
+    }
+    printf("Weights saved to: %s\n", output_file);
 
     train_destroy(train_ctx);
     infer_destroy(infer_ctx);

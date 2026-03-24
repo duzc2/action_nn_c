@@ -13,6 +13,8 @@ typedef struct {
     NNInferCreateFn create;
     NNInferDestroyFn destroy;
     NNInferAutoRunFn auto_run;
+    NNInferLoadWeightsFn load_weights;
+    NNInferSaveWeightsFn save_weights;
 } NNInferRegistryEntry;
 
 int nn_infer_registry_register(const NNInferRegistryEntry* entry);
