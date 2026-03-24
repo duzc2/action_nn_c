@@ -1,4 +1,5 @@
 #include "infer.h"
+#include "weights_load.h"
 #include "../demo_runtime_paths.h"
 
 #include <stdio.h>
@@ -18,6 +19,7 @@ static void normalize_input(
 
 int main(void) {
     const float max_speed = 5.0f;
+    const char* weights_file = "../../data/weights.bin";
     void* infer_ctx;
     float current_x = 0.0f;
     float current_y = 0.0f;
@@ -34,6 +36,12 @@ int main(void) {
     infer_ctx = infer_create();
     if (infer_ctx == NULL) {
         fprintf(stderr, "failed to create inference context\n");
+        return 1;
+    }
+
+    if (weights_load_from_file(infer_ctx, weights_file) != 0) {
+        fprintf(stderr, "failed to load weights from %s\n", weights_file);
+        infer_destroy(infer_ctx);
         return 1;
     }
 

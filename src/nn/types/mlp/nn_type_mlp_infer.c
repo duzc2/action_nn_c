@@ -3,6 +3,7 @@
 
 static void* nn_type_mlp_infer_create_codegen(const NNCodegenInferConfig* config) {
     MlpConfig mlp_config;
+    MlpInferContext* context;
     size_t i;
 
     if (config == 0) {
@@ -22,7 +23,13 @@ static void* nn_type_mlp_infer_create_codegen(const NNCodegenInferConfig* config
     }
     mlp_config.output_size = config->output_size;
 
-    return nn_mlp_infer_create_with_config(&mlp_config, config->seed);
+    context = nn_mlp_infer_create_with_config(&mlp_config, config->seed);
+    if (context != 0) {
+        context->expected_network_hash = config->network_hash;
+        context->expected_layout_hash = config->layout_hash;
+    }
+
+    return context;
 }
 
 static int nn_type_mlp_infer_auto_run_codegen(void* context, const void* input, void* output) {
@@ -30,9 +37,11 @@ static int nn_type_mlp_infer_auto_run_codegen(void* context, const void* input, 
 }
 
 const NNInferRegistryEntry nn_type_mlp_infer_entry = {
-    "mlp",
-    nn_mlp_infer_step,
-    nn_type_mlp_infer_create_codegen,
-    nn_mlp_infer_destroy,
-    nn_type_mlp_infer_auto_run_codegen
+    .type_name = "mlp",
+    .infer_step = nn_mlp_infer_step,
+    .create = nn_type_mlp_infer_create_codegen,
+    .destroy = nn_mlp_infer_destroy,
+    .auto_run = nn_type_mlp_infer_auto_run_codegen,
+    .load_weights = nn_mlp_load_weights,
+    .save_weights = nn_mlp_save_weights
 };

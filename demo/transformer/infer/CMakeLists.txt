@@ -9,11 +9,17 @@ action_c_add_core_subdirectory()
 
 action_c_get_demo_generated_dir(GENERATED_DIR)
 set(GENERATED_INFER_C "${GENERATED_DIR}/infer.c")
-set_source_files_properties("${GENERATED_INFER_C}" PROPERTIES GENERATED TRUE)
+set(GENERATED_WEIGHTS_LOAD_C "${GENERATED_DIR}/weights_load.c")
+set_source_files_properties(
+    "${GENERATED_INFER_C}"
+    "${GENERATED_WEIGHTS_LOAD_C}"
+    PROPERTIES GENERATED TRUE
+)
 
 add_executable(transformer_infer
     ../infer_main.c
     "${GENERATED_INFER_C}"
+    "${GENERATED_WEIGHTS_LOAD_C}"
 )
 
 target_include_directories(transformer_infer PRIVATE

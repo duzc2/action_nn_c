@@ -34,6 +34,8 @@ typedef struct {
     MlpDenseLayer** layers;
     size_t layer_count;
     size_t max_buffer_size;
+    uint64_t expected_network_hash;
+    uint64_t expected_layout_hash;
     float* input_buffer;
     float* output_buffer;
     float* work_buffer_a;

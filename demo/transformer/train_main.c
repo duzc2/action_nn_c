@@ -5,6 +5,7 @@
 
 #include "infer.h"
 #include "train.h"
+#include "weights_save.h"
 #include "../demo_runtime_paths.h"
 
 #include <stdio.h>
@@ -36,6 +37,7 @@ int main(void) {
     const char* output_file = "../../data/weights.bin";
     void* infer_ctx;
     void* train_ctx;
+    int save_rc;
     int epoch;
     int i;
     int total_epochs = 5;
@@ -87,7 +89,14 @@ int main(void) {
 
     printf("\nTraining completed.\n");
     printf("Average loss: %.4f\n", train_get_loss(train_ctx));
-    printf("Weights should be saved to: %s\n", output_file);
+    save_rc = weights_save_to_file(infer_ctx, output_file);
+    if (save_rc != 0) {
+        fprintf(stderr, "failed to save weights to %s (rc=%d)\n", output_file, save_rc);
+        train_destroy(train_ctx);
+        infer_destroy(infer_ctx);
+        return 1;
+    }
+    printf("Weights saved to: %s\n", output_file);
 
     train_destroy(train_ctx);
     infer_destroy(infer_ctx);
