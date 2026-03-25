@@ -31,6 +31,14 @@
 - `train_main.c` - 训练网络，生成权重文件
 - `infer_main.c` - 加载权重，执行推理
 
+补充约束：
+- `generate_main.c` 属于用户侧代码。
+- 用户侧若要构造具体网络类型配置，只允许包含 config-only 头文件。
+- 例如：
+  - `types/mlp/mlp_config.h`
+  - `types/transformer/transformer_config.h`
+- 不要在用户侧 `generate_main.c` 里直接包含 `*_infer_ops.h` 或 `*_train_ops.h`。
+
 ### 3.1 准备工作：清理旧构建（如需要）
 
 ```powershell
@@ -150,6 +158,7 @@ add_dependencies(move_infer move_train)
 
 ```
 src/nn/types/新类型名/
+├── 新类型名_config.h          # 用户侧与生成代码共享的配置类型
 ├── nn_type_新类型名_infer.c   # 推理实现注册
 ├── nn_type_新类型名_train.c   # 训练实现注册
 ├── 新类型名_infer_ops.c       # 推理操作实现
