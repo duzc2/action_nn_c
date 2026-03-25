@@ -4,6 +4,7 @@
 
 包含内容：
 
+- `transformer_config.h`：用户侧与生成代码共享的 Transformer 配置类型。
 - `transformer_infer_ops.c/.h`：字符级 tokenizer、嵌入、自注意力编码、响应分类推理。
 - `transformer_train_ops.c/.h`：训练步骤、损失统计与参数更新。
 - `nn_type_transformer_infer.c`：推理注册入口。

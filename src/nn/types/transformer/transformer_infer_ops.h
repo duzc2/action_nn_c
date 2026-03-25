@@ -1,6 +1,8 @@
 #ifndef TRANSFORMER_INFER_OPS_H
 #define TRANSFORMER_INFER_OPS_H
 
+#include "transformer_config.h"
+
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -10,11 +12,6 @@
 #define TRANSFORMER_MAX_MODEL_DIM 32U
 #define TRANSFORMER_MAX_RESPONSE_CLASSES 32U
 #define TRANSFORMER_MAX_TEXT_LENGTH 256U
-
-typedef struct {
-    size_t model_dim;
-    uint32_t seed;
-} TransformerModelConfig;
 
 typedef struct {
     const char* question;

@@ -11,22 +11,11 @@
 #ifndef MLP_INFER_OPS_H
 #define MLP_INFER_OPS_H
 
+#include "mlp_config.h"
+
 #include <stddef.h>
 #include <stdio.h>
 #include <stdint.h>
-#include "mlp_layers.h"
-
-/**
- * @brief MLP network configuration
- */
-typedef struct {
-    size_t input_size;
-    size_t hidden_layer_count;
-    size_t hidden_sizes[4];
-    size_t output_size;
-    MlpActivationType hidden_activation;
-    MlpActivationType output_activation;
-} MlpConfig;
 
 /**
  * @brief MLP inference context

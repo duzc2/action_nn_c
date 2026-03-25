@@ -5,8 +5,7 @@
 
 #include "profiler.h"
 #include "network_def.h"
-#include "types/transformer/transformer_infer_ops.h"
-#include "types/transformer/transformer_train_ops.h"
+#include "types/transformer/transformer_config.h"
 #include "../demo_runtime_paths.h"
 
 #include <stdio.h>
@@ -41,7 +40,7 @@ static NN_NetworkDef* create_transformer_network(void) {
             subnet,
             &infer_config,
             sizeof(infer_config),
-            "types/transformer/transformer_infer_ops.h",
+            "types/transformer/transformer_config.h",
             "TransformerModelConfig") != 0) {
         nn_subnet_def_free(subnet);
         nn_network_def_free(network);
@@ -51,7 +50,7 @@ static NN_NetworkDef* create_transformer_network(void) {
             subnet,
             &train_config,
             sizeof(train_config),
-            "types/transformer/transformer_train_ops.h",
+            "types/transformer/transformer_config.h",
             "TransformerTrainConfig") != 0) {
         nn_subnet_def_free(subnet);
         nn_network_def_free(network);
