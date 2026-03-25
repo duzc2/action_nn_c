@@ -1,6 +1,6 @@
 # Transformer Network Type
 
-本目录提供 demo 所使用的小型真实 Transformer 实现。
+本目录提供小型真实 Transformer 网络类型实现。
 
 包含内容：
 
@@ -11,6 +11,7 @@
 
 实现定位：
 
-- 面向 demo 的小参数量对话场景。
+- 面向小参数量对话与分类场景。
 - 保留真实参数、真实训练、真实权重保存/加载链路。
+- profiler 只转发用户侧提供的 `TransformerModelConfig` / `TransformerTrainConfig`。
 - 不把核心算法下沉到 profiler 生成代码中。

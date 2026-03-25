@@ -37,6 +37,21 @@ static uint64_t hash_size_t(size_t val) {
     return prof_fnv1a_hash(&val, sizeof(val));
 }
 
+static void hash_blob(uint64_t* hash, const void* data, size_t len) {
+    if (hash == NULL) {
+        return;
+    }
+
+    if (data == NULL || len == 0U) {
+        *hash ^= FNV_64_OFFSET_BASIS;
+        *hash *= FNV_64_PRIME;
+        return;
+    }
+
+    *hash ^= prof_fnv1a_hash(data, len);
+    *hash *= FNV_64_PRIME;
+}
+
 uint64_t prof_subnet_hash(const NNSubnetDef* subnet) {
     uint64_t hash = FNV_64_OFFSET_BASIS;
     size_t i;
@@ -69,6 +84,14 @@ uint64_t prof_subnet_hash(const NNSubnetDef* subnet) {
 
     hash ^= (uint64_t)subnet->default_activation;
     hash *= FNV_64_PRIME;
+
+    hash ^= hash_string(subnet->infer_config_header_path);
+    hash *= FNV_64_PRIME;
+
+    hash ^= hash_string(subnet->infer_config_type_name);
+    hash *= FNV_64_PRIME;
+
+    hash_blob(&hash, subnet->infer_type_config_data, subnet->infer_type_config_size);
 
     return hash;
 }
@@ -134,6 +157,14 @@ uint64_t prof_layout_hash(const NN_NetworkDef* network) {
 
         hash ^= hash_string(subnet->subnet_id);
         hash *= FNV_64_PRIME;
+
+        hash ^= hash_string(subnet->infer_config_header_path);
+        hash *= FNV_64_PRIME;
+
+        hash ^= hash_string(subnet->infer_config_type_name);
+        hash *= FNV_64_PRIME;
+
+        hash_blob(&hash, subnet->infer_type_config_data, subnet->infer_type_config_size);
 
         param_count = 0;
 

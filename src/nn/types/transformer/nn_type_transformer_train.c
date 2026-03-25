@@ -2,14 +2,21 @@
 #include "transformer_train_ops.h"
 
 #include <stdlib.h>
+#include <string.h>
 
 static void* nn_type_transformer_train_create_codegen(
     void* infer_ctx,
     const NNCodegenTrainConfig* config
 ) {
     TransformerTrainContext* context;
+    TransformerTrainConfig typed_config;
 
-    if (infer_ctx == 0) {
+    if (infer_ctx == 0 ||
+        config == 0 ||
+        config->type_config == 0 ||
+        config->type_config_size != sizeof(TransformerTrainConfig) ||
+        config->type_config_type_name == 0 ||
+        strcmp(config->type_config_type_name, "TransformerTrainConfig") != 0) {
         return 0;
     }
 
@@ -18,11 +25,9 @@ static void* nn_type_transformer_train_create_codegen(
         return 0;
     }
 
+    typed_config = *(const TransformerTrainConfig*)config->type_config;
     context->infer_ctx = (TransformerInferContext*)infer_ctx;
-    context->learning_rate = 0.002f;
-    if (config != 0 && config->learning_rate > 0.0f) {
-        context->learning_rate = config->learning_rate * 0.2f;
-    }
+    context->learning_rate = typed_config.learning_rate;
 
     return context;
 }

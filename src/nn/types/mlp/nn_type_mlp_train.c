@@ -1,43 +1,29 @@
-﻿#include "nn_train_registry.h"
+#include "nn_train_registry.h"
 #include "mlp_train_ops.h"
+
+#include <string.h>
 
 static void* nn_type_mlp_train_create_codegen(void* infer_ctx, const NNCodegenTrainConfig* config) {
     MlpTrainConfig train_config;
 
-    if (config == 0) {
+    if (infer_ctx == 0 ||
+        config == 0 ||
+        config->type_config == 0 ||
+        config->type_config_size != sizeof(MlpTrainConfig) ||
+        config->type_config_type_name == 0 ||
+        strcmp(config->type_config_type_name, "MlpTrainConfig") != 0) {
         return 0;
     }
 
-    train_config.learning_rate = (config->learning_rate > 0.0f)
-        ? (config->learning_rate * 0.3f)
-        : 0.003f;
-    train_config.momentum = config->momentum;
-    train_config.weight_decay = config->weight_decay;
-    train_config.optimizer = MLP_OPT_ADAM;
-    train_config.loss_func = MLP_LOSS_MSE;
-    train_config.batch_size = config->batch_size;
-    train_config.seed = config->seed;
-
+    train_config = *(const MlpTrainConfig*)config->type_config;
     return nn_mlp_train_create(infer_ctx, &train_config);
-}
-
-static void nn_type_mlp_train_destroy_codegen(void* context) {
-    nn_mlp_train_destroy((MlpTrainContext*)context);
-}
-
-static int nn_type_mlp_train_step_with_data_codegen(void* context, const void* input, const void* target) {
-    return nn_mlp_train_step_with_data((MlpTrainContext*)context, (const float*)input, (const float*)target);
-}
-
-static void nn_type_mlp_train_get_stats_codegen(void* context, size_t* out_epochs, size_t* out_steps, float* out_avg_loss) {
-    nn_mlp_train_get_stats((MlpTrainContext*)context, out_epochs, out_steps, out_avg_loss);
 }
 
 const NNTrainRegistryEntry nn_type_mlp_train_entry = {
     "mlp",
     nn_mlp_train_step,
     nn_type_mlp_train_create_codegen,
-    nn_type_mlp_train_destroy_codegen,
-    nn_type_mlp_train_step_with_data_codegen,
-    nn_type_mlp_train_get_stats_codegen
+    (void (*)(void*))nn_mlp_train_destroy,
+    (NNTrainStepWithDataFn)nn_mlp_train_step_with_data,
+    (NNTrainGetStatsFn)nn_mlp_train_get_stats
 };

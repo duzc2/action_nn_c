@@ -5,6 +5,8 @@
 
 #include "profiler.h"
 #include "network_def.h"
+#include "types/transformer/transformer_infer_ops.h"
+#include "types/transformer/transformer_train_ops.h"
 #include "../demo_runtime_paths.h"
 
 #include <stdio.h>
@@ -17,6 +19,8 @@ static NN_NetworkDef* create_transformer_network(void) {
     NN_NetworkDef* network;
     NNSubnetDef* subnet;
     size_t hidden_sizes[2] = {32U, 32U};
+    TransformerModelConfig infer_config;
+    TransformerTrainConfig train_config;
 
     network = nn_network_def_create("transformer");
     if (network == NULL) {
@@ -30,6 +34,29 @@ static NN_NetworkDef* create_transformer_network(void) {
     }
 
     nn_subnet_def_set_hidden_layers(subnet, 2U, hidden_sizes);
+    infer_config.model_dim = 32U;
+    infer_config.seed = 42U;
+    train_config.learning_rate = 0.002f;
+    if (nn_subnet_def_set_infer_type_config(
+            subnet,
+            &infer_config,
+            sizeof(infer_config),
+            "types/transformer/transformer_infer_ops.h",
+            "TransformerModelConfig") != 0) {
+        nn_subnet_def_free(subnet);
+        nn_network_def_free(network);
+        return NULL;
+    }
+    if (nn_subnet_def_set_train_type_config(
+            subnet,
+            &train_config,
+            sizeof(train_config),
+            "types/transformer/transformer_train_ops.h",
+            "TransformerTrainConfig") != 0) {
+        nn_subnet_def_free(subnet);
+        nn_network_def_free(network);
+        return NULL;
+    }
     nn_network_def_add_subnet(network, subnet);
 
     return network;
