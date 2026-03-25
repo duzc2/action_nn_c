@@ -40,7 +40,7 @@ int main(void) {
     int save_rc;
     int epoch;
     int i;
-    int total_epochs = 5;
+    int total_epochs = 200;
 
     if (demo_set_working_directory_to_executable() != 0) {
         fprintf(stderr, "failed to switch working directory to executable directory\n");
@@ -64,7 +64,9 @@ int main(void) {
     }
 
     for (epoch = 0; epoch < total_epochs; epoch++) {
-        printf("Epoch %d/%d\n", epoch + 1, total_epochs);
+        if (epoch == 0 || ((epoch + 1) % 20) == 0 || epoch + 1 == total_epochs) {
+            printf("Epoch %d/%d\n", epoch + 1, total_epochs);
+        }
 
         for (i = 0; i < DIALOGUE_COUNT; i++) {
             const char* input = DIALOGUE_PAIRS[i].input;
@@ -84,7 +86,9 @@ int main(void) {
             }
         }
 
-        printf("  average loss: %.4f\n", train_get_loss(train_ctx));
+        if (epoch == 0 || ((epoch + 1) % 20) == 0 || epoch + 1 == total_epochs) {
+            printf("  average loss: %.4f\n", train_get_loss(train_ctx));
+        }
     }
 
     printf("\nTraining completed.\n");

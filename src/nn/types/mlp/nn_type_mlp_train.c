@@ -8,10 +8,12 @@ static void* nn_type_mlp_train_create_codegen(void* infer_ctx, const NNCodegenTr
         return 0;
     }
 
-    train_config.learning_rate = config->learning_rate;
+    train_config.learning_rate = (config->learning_rate > 0.0f)
+        ? (config->learning_rate * 0.3f)
+        : 0.003f;
     train_config.momentum = config->momentum;
     train_config.weight_decay = config->weight_decay;
-    train_config.optimizer = MLP_OPT_SGD;
+    train_config.optimizer = MLP_OPT_ADAM;
     train_config.loss_func = MLP_LOSS_MSE;
     train_config.batch_size = config->batch_size;
     train_config.seed = config->seed;

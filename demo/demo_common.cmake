@@ -1,5 +1,26 @@
 set(ACTION_C_DEMO_COMMON_DIR "${CMAKE_CURRENT_LIST_DIR}")
 get_filename_component(ACTION_C_ROOT "${ACTION_C_DEMO_COMMON_DIR}/.." ABSOLUTE)
+include(CMakeParseArguments)
+
+function(action_c_enable_network_types)
+    set(options)
+    set(oneValueArgs)
+    set(multiValueArgs TYPES)
+    cmake_parse_arguments(ACTION_C_ENABLE "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+
+    set(ACTION_C_ENABLE_NN_MLP OFF CACHE BOOL "Enable the built-in MLP network type" FORCE)
+    set(ACTION_C_ENABLE_NN_TRANSFORMER OFF CACHE BOOL "Enable the built-in transformer network type" FORCE)
+
+    foreach(ACTION_C_TYPE IN LISTS ACTION_C_ENABLE_TYPES)
+        if(ACTION_C_TYPE STREQUAL "mlp")
+            set(ACTION_C_ENABLE_NN_MLP ON CACHE BOOL "Enable the built-in MLP network type" FORCE)
+        elseif(ACTION_C_TYPE STREQUAL "transformer")
+            set(ACTION_C_ENABLE_NN_TRANSFORMER ON CACHE BOOL "Enable the built-in transformer network type" FORCE)
+        else()
+            message(FATAL_ERROR "Unsupported demo network type: ${ACTION_C_TYPE}")
+        endif()
+    endforeach()
+endfunction()
 
 function(action_c_add_core_subdirectory)
     add_subdirectory("${ACTION_C_ROOT}/src" "${CMAKE_BINARY_DIR}/action_c_src")

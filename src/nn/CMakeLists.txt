@@ -1,18 +1,43 @@
-file(GLOB_RECURSE NN_INFER_ENTRY_SOURCES
-    "${CMAKE_CURRENT_SOURCE_DIR}/types/*/nn_type_*_infer.c"
-)
-file(GLOB_RECURSE NN_TRAIN_ENTRY_SOURCES
-    "${CMAKE_CURRENT_SOURCE_DIR}/types/*/nn_type_*_train.c"
-)
-file(GLOB_RECURSE NN_INFER_OP_SOURCES
-    "${CMAKE_CURRENT_SOURCE_DIR}/types/*/*_infer_ops.c"
-)
-file(GLOB_RECURSE NN_TRAIN_OP_SOURCES
-    "${CMAKE_CURRENT_SOURCE_DIR}/types/*/*_train_ops.c"
-)
-file(GLOB_RECURSE NN_LAYER_SOURCES
-    "${CMAKE_CURRENT_SOURCE_DIR}/types/*/mlp_layers.c"
-)
+set(NN_ENABLED_TYPES "")
+set(NN_INFER_ENTRY_SOURCES "")
+set(NN_TRAIN_ENTRY_SOURCES "")
+set(NN_INFER_OP_SOURCES "")
+set(NN_TRAIN_OP_SOURCES "")
+set(NN_LAYER_SOURCES "")
+
+function(action_c_append_type_sources TYPE_NAME)
+    file(GLOB _infer_entry "${CMAKE_CURRENT_SOURCE_DIR}/types/${TYPE_NAME}/nn_type_*_infer.c")
+    file(GLOB _train_entry "${CMAKE_CURRENT_SOURCE_DIR}/types/${TYPE_NAME}/nn_type_*_train.c")
+    file(GLOB _infer_ops "${CMAKE_CURRENT_SOURCE_DIR}/types/${TYPE_NAME}/*_infer_ops.c")
+    file(GLOB _train_ops "${CMAKE_CURRENT_SOURCE_DIR}/types/${TYPE_NAME}/*_train_ops.c")
+    file(GLOB _layers "${CMAKE_CURRENT_SOURCE_DIR}/types/${TYPE_NAME}/*_layers.c")
+
+    list(APPEND NN_INFER_ENTRY_SOURCES ${_infer_entry})
+    list(APPEND NN_TRAIN_ENTRY_SOURCES ${_train_entry})
+    list(APPEND NN_INFER_OP_SOURCES ${_infer_ops})
+    list(APPEND NN_TRAIN_OP_SOURCES ${_train_ops})
+    list(APPEND NN_LAYER_SOURCES ${_layers})
+
+    set(NN_INFER_ENTRY_SOURCES "${NN_INFER_ENTRY_SOURCES}" PARENT_SCOPE)
+    set(NN_TRAIN_ENTRY_SOURCES "${NN_TRAIN_ENTRY_SOURCES}" PARENT_SCOPE)
+    set(NN_INFER_OP_SOURCES "${NN_INFER_OP_SOURCES}" PARENT_SCOPE)
+    set(NN_TRAIN_OP_SOURCES "${NN_TRAIN_OP_SOURCES}" PARENT_SCOPE)
+    set(NN_LAYER_SOURCES "${NN_LAYER_SOURCES}" PARENT_SCOPE)
+endfunction()
+
+if(ACTION_C_ENABLE_NN_MLP)
+    list(APPEND NN_ENABLED_TYPES mlp)
+    action_c_append_type_sources(mlp)
+endif()
+
+if(ACTION_C_ENABLE_NN_TRANSFORMER)
+    list(APPEND NN_ENABLED_TYPES transformer)
+    action_c_append_type_sources(transformer)
+endif()
+
+if(NOT NN_ENABLED_TYPES)
+    message(FATAL_ERROR "No network types are enabled for nn core")
+endif()
 
 set(NN_INFER_AUTOGEN_C "${CMAKE_CURRENT_BINARY_DIR}/nn_infer_registry_autogen.c")
 set(NN_INFER_AUTOGEN_CONTENT "#include \"nn_infer_registry.h\"\n\n")

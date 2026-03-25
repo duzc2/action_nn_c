@@ -4,29 +4,33 @@
 
 #include <stdio.h>
 
-static void normalize_input(
+static void build_input(
     float* input,
+    float target_x,
+    float target_y,
     float current_x,
     float current_y,
-    float target_x,
-    float target_y
+    float max_speed
 ) {
-    input[0] = current_x / 50.0f;
-    input[1] = current_y / 50.0f;
-    input[2] = target_x / 50.0f;
-    input[3] = target_y / 50.0f;
+    input[0] = target_x / 50.0f;
+    input[1] = target_y / 50.0f;
+    input[2] = current_x / 50.0f;
+    input[3] = current_y / 50.0f;
+    input[4] = max_speed / 5.0f;
 }
 
 int main(void) {
-    const float max_speed = 5.0f;
     const char* weights_file = "../../data/weights.bin";
     void* infer_ctx;
     float current_x = 0.0f;
     float current_y = 0.0f;
     float target_x = 0.0f;
     float target_y = 0.0f;
-    float input[4];
+    float max_speed = 0.0f;
+    float input[5];
     float output[2];
+    float move_dx;
+    float move_dy;
 
     if (demo_set_working_directory_to_executable() != 0) {
         fprintf(stderr, "failed to switch working directory to executable directory\n");
@@ -45,18 +49,38 @@ int main(void) {
         return 1;
     }
 
-    printf("input: targetX targetY currentX currentY\n");
-    while (scanf("%f %f %f %f", &target_x, &target_y, &current_x, &current_y) == 4) {
-        normalize_input(input, current_x, current_y, target_x, target_y);
+    printf("input: targetX targetY currentX currentY maxSpeed\n");
+    while (scanf("%f %f %f %f %f", &target_x, &target_y, &current_x, &current_y, &max_speed) == 5) {
+        if (max_speed <= 0.0f) {
+            printf("maxSpeed must be positive\n");
+            continue;
+        }
+
+        build_input(input, target_x, target_y, current_x, current_y, max_speed);
         if (infer_auto_run(infer_ctx, input, output) != 0) {
             fprintf(stderr, "inference failed\n");
             infer_destroy(infer_ctx);
             return 1;
         }
+
+        move_dx = output[0];
+        move_dy = output[1];
+        if (move_dx > 1.0f) {
+            move_dx = 1.0f;
+        }
+        if (move_dx < -1.0f) {
+            move_dx = -1.0f;
+        }
+        if (move_dy > 1.0f) {
+            move_dy = 1.0f;
+        }
+        if (move_dy < -1.0f) {
+            move_dy = -1.0f;
+        }
         printf(
             "move_dx=%.6f move_dy=%.6f\n",
-            output[0] * max_speed,
-            output[1] * max_speed
+            move_dx * max_speed,
+            move_dy * max_speed
         );
     }
 

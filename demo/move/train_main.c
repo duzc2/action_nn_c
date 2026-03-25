@@ -7,10 +7,10 @@
  * NOT any src/nn implementation headers.
  *
  * Trains MLP to learn move commands:
- * - Input: (x, y, command)
+ * - Input: (x, y, one-hot command[5])
  * - Output: (new_x, new_y)
  *
- * Network structure: 3 -> [16, 8] -> 2
+ * Network structure: 7 -> [32, 16] -> 2
  */
 
 #include "infer.h"
@@ -18,82 +18,97 @@
 #include "weights_save.h"
 #include "../demo_runtime_paths.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
-#include <math.h>
 
-#define LEARNING_RATE 0.1f
+#define MOVE_MIN_COORD 0
+#define MOVE_MAX_COORD 10
+#define MOVE_COMMAND_COUNT 5
+#define MOVE_EPOCHS 180
 
 /**
- * @brief Normalize input to [0, 1] range
+ * @brief Normalize discrete grid coordinate to [-1, 1]
  */
-static void normalize_input(float* input, int x, int y, int cmd) {
-    input[0] = (float)x / 10.0f;
-    input[1] = (float)y / 10.0f;
-    input[2] = (float)cmd / 3.0f;
+static float normalize_coordinate(int value) {
+    return ((float)value - 5.0f) / 5.0f;
 }
 
 /**
- * @brief Denormalize output from [0, 1] range
+ * @brief Encode discrete command into a single centered scalar feature
  */
-static void denormalize_output(float x, float y, int* out_x, int* out_y) {
-    *out_x = (int)roundf(x * 10.0f);
-    *out_y = (int)roundf(y * 10.0f);
+static void build_input(float* input, int x, int y, int cmd) {
+    int command_index;
 
-    if (*out_x < 0) *out_x = 0;
-    if (*out_x > 10) *out_x = 10;
-    if (*out_y < 0) *out_y = 0;
-    if (*out_y > 10) *out_y = 10;
+    input[0] = normalize_coordinate(x);
+    input[1] = normalize_coordinate(y);
+    for (command_index = 0; command_index < MOVE_COMMAND_COUNT; ++command_index) {
+        input[2 + command_index] = (command_index == cmd) ? 1.0f : 0.0f;
+    }
 }
 
 /**
- * @brief Compute expected output for given move
+ * @brief Apply one move command on the bounded 2D grid
  */
-static void compute_expected(float* expected, int x, int y, int cmd) {
-    float norm_x = (float)x / 10.0f;
-    float norm_y = (float)y / 10.0f;
-    float norm_dx = 0.0f;
-    float norm_dy = 0.0f;
+static void apply_command(int x, int y, int cmd, int* out_x, int* out_y) {
+    int next_x = x;
+    int next_y = y;
 
     switch (cmd) {
-        case 0: norm_dy = 0.1f; break;
-        case 1: norm_dy = -0.1f; break;
-        case 2: norm_dx = -0.1f; break;
-        case 3: norm_dx = 0.1f; break;
+        case 0:
+            if (next_y < MOVE_MAX_COORD) {
+                next_y += 1;
+            }
+            break;
+        case 1:
+            if (next_y > MOVE_MIN_COORD) {
+                next_y -= 1;
+            }
+            break;
+        case 2:
+            if (next_x > MOVE_MIN_COORD) {
+                next_x -= 1;
+            }
+            break;
+        case 3:
+            if (next_x < MOVE_MAX_COORD) {
+                next_x += 1;
+            }
+            break;
+        case 4:
+        default:
+            break;
     }
 
-    expected[0] = norm_x + norm_dx;
-    expected[1] = norm_y + norm_dy;
+    *out_x = next_x;
+    *out_y = next_y;
 }
 
 /**
- * @brief Compute MSE loss
+ * @brief Build normalized absolute-position target for one sample
+ */
+static void build_expected(float* expected, int x, int y, int cmd) {
+    int next_x;
+    int next_y;
+
+    apply_command(x, y, cmd, &next_x, &next_y);
+    expected[0] = normalize_coordinate(next_x);
+    expected[1] = normalize_coordinate(next_y);
+}
+
+/**
+ * @brief Compute simple mean squared error for reporting
  */
 static float compute_loss(const float* output, const float* expected, size_t size) {
     float loss = 0.0f;
     size_t i;
-    for (i = 0; i < size; i++) {
+
+    for (i = 0; i < size; ++i) {
         float diff = output[i] - expected[i];
         loss += diff * diff;
     }
-    return loss / 2.0f;
-}
 
-/**
- * @brief Run one training sample
- */
-static void train_sample(void* train_ctx, void* infer_ctx,
-                        const float* input, const float* expected) {
-    float output[2];
-
-    train_step(train_ctx, input, expected);
-    infer_auto_run(infer_ctx, input, output);
-
-    printf("  Input: (%.2f, %.2f, %.2f) -> Output: (%.3f, %.3f), Expected: (%.3f, %.3f), Loss: %.4f\n",
-           input[0], input[1], input[2],
-           output[0], output[1], expected[0], expected[1],
-           compute_loss(output, expected, 2));
+    return loss / (float)size;
 }
 
 int main(void) {
@@ -102,9 +117,11 @@ int main(void) {
     void* train_ctx;
     int save_rc;
     int epoch;
-    int sample;
-    int total_epochs = 20;
-    int total_samples = 50;
+    float input[7];
+    float expected[2];
+    float output[2];
+    float epoch_loss;
+    size_t sample_count;
 
     if (demo_set_working_directory_to_executable() != 0) {
         fprintf(stderr, "Failed to switch working directory to executable directory\n");
@@ -112,8 +129,8 @@ int main(void) {
     }
 
     printf("=== Move Network Training ===\n");
-    printf("Network structure: 3 -> [16, 8] -> 2\n");
-    printf("Learning rate: %.2f\n\n", LEARNING_RATE);
+    printf("Network structure: 7 -> [32, 16] -> 2\n");
+    printf("Dataset: exhaustive 11x11 grid with 5 commands\n\n");
 
     infer_ctx = infer_create();
     if (infer_ctx == NULL) {
@@ -128,29 +145,50 @@ int main(void) {
         return 1;
     }
 
-    printf("Training for %d epochs, %d samples each...\n\n", total_epochs, total_samples);
+    printf("Training for %d epochs...\n\n", MOVE_EPOCHS);
 
-    for (epoch = 0; epoch < total_epochs; epoch++) {
-        printf("Epoch %d/%d:\n", epoch + 1, total_epochs);
+    for (epoch = 0; epoch < MOVE_EPOCHS; ++epoch) {
+        int cmd;
+        int y;
+        int x;
 
-        for (sample = 0; sample < total_samples; sample++) {
-            int x, y, cmd;
-            float input[3];
-            float expected[2];
+        epoch_loss = 0.0f;
+        sample_count = 0U;
 
-            x = rand() % 10;
-            y = rand() % 10;
-            cmd = rand() % 4;
+        for (cmd = 0; cmd < MOVE_COMMAND_COUNT; ++cmd) {
+            for (y = MOVE_MIN_COORD; y <= MOVE_MAX_COORD; ++y) {
+                for (x = MOVE_MIN_COORD; x <= MOVE_MAX_COORD; ++x) {
+                    build_input(input, x, y, cmd);
+                    build_expected(expected, x, y, cmd);
 
-            normalize_input(input, x, y, cmd);
-            compute_expected(expected, x, y, cmd);
+                    if (train_step(train_ctx, input, expected) != 0) {
+                        fprintf(stderr, "Training step failed at epoch %d\n", epoch + 1);
+                        train_destroy(train_ctx);
+                        infer_destroy(infer_ctx);
+                        return 1;
+                    }
 
-            train_sample(train_ctx, infer_ctx, input, expected);
+                    if (infer_auto_run(infer_ctx, input, output) != 0) {
+                        fprintf(stderr, "Inference check failed at epoch %d\n", epoch + 1);
+                        train_destroy(train_ctx);
+                        infer_destroy(infer_ctx);
+                        return 1;
+                    }
+
+                    epoch_loss += compute_loss(output, expected, 2U);
+                    sample_count += 1U;
+                }
+            }
         }
 
-        if ((epoch + 1) % 5 == 0) {
-            printf("  [Checkpoint at epoch %d, Loss: %.4f]\n",
-                   epoch + 1, train_get_loss(train_ctx));
+        if (((epoch + 1) % 20) == 0 || epoch == 0 || epoch == (MOVE_EPOCHS - 1)) {
+            printf(
+                "Epoch %d/%d - dataset loss: %.4f - trainer loss: %.4f\n",
+                epoch + 1,
+                MOVE_EPOCHS,
+                epoch_loss / (float)sample_count,
+                train_get_loss(train_ctx)
+            );
         }
     }
 
@@ -166,6 +204,5 @@ int main(void) {
     printf("Weights saved to: %s\n", output_file);
     train_destroy(train_ctx);
     infer_destroy(infer_ctx);
-
     return 0;
 }

@@ -11,6 +11,7 @@
 #include "weights_load.h"
 #include "../demo_runtime_paths.h"
 
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -18,19 +19,19 @@
  * @brief Render 7-segment display pattern
  */
 static void render_sevenseg(const float* output) {
-    int seg = (output[0] > 0.5f);
-    int sea = (output[1] > 0.5f);
-    int seb = (output[2] > 0.5f);
-    int sec = (output[3] > 0.5f);
-    int sed = (output[4] > 0.5f);
-    int see = (output[5] > 0.5f);
-    int sef = (output[6] > 0.5f);
+    int seg_a = (output[0] > 0.5f);
+    int seg_b = (output[1] > 0.5f);
+    int seg_c = (output[2] > 0.5f);
+    int seg_d = (output[3] > 0.5f);
+    int seg_e = (output[4] > 0.5f);
+    int seg_f = (output[5] > 0.5f);
+    int seg_g = (output[6] > 0.5f);
 
-    printf(" %s \n", seg ? "---" : "   ");
-    printf("%c   %c\n", sef ? '|' : ' ', sea ? '|' : ' ');
-    printf(" %s \n", seb ? "---" : "   ");
-    printf("%c   %c\n", see ? '|' : ' ', sec ? '|' : ' ');
-    printf(" %s \n", sed ? "---" : "   ");
+    printf(" %s \n", seg_a ? "---" : "   ");
+    printf("%c   %c\n", seg_f ? '|' : ' ', seg_b ? '|' : ' ');
+    printf(" %s \n", seg_g ? "---" : "   ");
+    printf("%c   %c\n", seg_e ? '|' : ' ', seg_c ? '|' : ' ');
+    printf(" %s \n", seg_d ? "---" : "   ");
 }
 
 /**
@@ -74,8 +75,11 @@ int main(void) {
 
     while ((ch = getchar()) != EOF) {
         if (ch == 'q' || ch == 'Q') break;
+        if (isspace((unsigned char)ch) != 0) {
+            continue;
+        }
         if (ch < '0' || ch > '9') {
-            if (ch != '\n' && ch != '\r') printf("Invalid input.\n");
+            printf("Invalid input.\n");
             continue;
         }
         digit = ch - '0';

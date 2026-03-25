@@ -84,8 +84,7 @@ MlpInferContext* nn_mlp_infer_create_with_config(const MlpConfig* config, uint32
     prev_size = config->input_size;
 
     for (i = 0; i < config->hidden_layer_count; i++) {
-        MlpActivationType act = (i < config->hidden_layer_count - 1) ?
-            MLP_ACT_RELU : MLP_ACT_RELU;
+        MlpActivationType act = MLP_ACT_TANH;
         ctx->layers[i] = mlp_dense_create(prev_size, config->hidden_sizes[i], act, seed + (uint32_t)i);
         if (ctx->layers[i] == NULL) {
             for (size_t j = 0; j < i; j++) {

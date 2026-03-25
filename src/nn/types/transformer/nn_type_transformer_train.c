@@ -1,20 +1,29 @@
-﻿#include "nn_train_registry.h"
+#include "nn_train_registry.h"
 #include "transformer_train_ops.h"
 
 #include <stdlib.h>
 
-typedef struct {
-    size_t total_epochs;
-    size_t total_steps;
-    float average_loss;
-} TransformerTrainContext;
-
-static void* nn_type_transformer_train_create_codegen(void* infer_ctx, const NNCodegenTrainConfig* config) {
+static void* nn_type_transformer_train_create_codegen(
+    void* infer_ctx,
+    const NNCodegenTrainConfig* config
+) {
     TransformerTrainContext* context;
-    (void)infer_ctx;
-    (void)config;
+
+    if (infer_ctx == 0) {
+        return 0;
+    }
 
     context = (TransformerTrainContext*)calloc(1U, sizeof(TransformerTrainContext));
+    if (context == 0) {
+        return 0;
+    }
+
+    context->infer_ctx = (TransformerInferContext*)infer_ctx;
+    context->learning_rate = 0.002f;
+    if (config != 0 && config->learning_rate > 0.0f) {
+        context->learning_rate = config->learning_rate * 0.2f;
+    }
+
     return context;
 }
 
@@ -22,21 +31,28 @@ static void nn_type_transformer_train_destroy_codegen(void* context) {
     free(context);
 }
 
-static int nn_type_transformer_train_step_with_data_codegen(void* context, const void* input, const void* target) {
+static int nn_type_transformer_train_step_with_data_codegen(
+    void* context,
+    const void* input,
+    const void* target
+) {
     TransformerTrainContext* train_ctx = (TransformerTrainContext*)context;
-    (void)input;
-    (void)target;
 
-    if (train_ctx == 0) {
+    if (train_ctx == 0 || input == 0 || target == 0) {
         return -1;
     }
 
-    train_ctx->total_steps += 1U;
-    train_ctx->average_loss = 0.0f;
-    return nn_transformer_train_step(context);
+    train_ctx->current_question = (const char*)input;
+    train_ctx->current_answer = (const char*)target;
+    return nn_transformer_train_step(train_ctx);
 }
 
-static void nn_type_transformer_train_get_stats_codegen(void* context, size_t* out_epochs, size_t* out_steps, float* out_avg_loss) {
+static void nn_type_transformer_train_get_stats_codegen(
+    void* context,
+    size_t* out_epochs,
+    size_t* out_steps,
+    float* out_avg_loss
+) {
     TransformerTrainContext* train_ctx = (TransformerTrainContext*)context;
 
     if (train_ctx == 0) {

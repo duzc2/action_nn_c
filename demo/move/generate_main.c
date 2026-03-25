@@ -16,14 +16,14 @@
 static NN_NetworkDef* create_move_network(void) {
     NN_NetworkDef* network;
     NNSubnetDef* subnet;
-    size_t hidden_sizes[2] = {16U, 8U};
+    size_t hidden_sizes[2] = {32U, 16U};
 
     network = nn_network_def_create("move");
     if (network == NULL) {
         return NULL;
     }
 
-    subnet = nn_subnet_def_create("main", "mlp", 3U, 2U);
+    subnet = nn_subnet_def_create("main", "mlp", 7U, 2U);
     if (subnet == NULL) {
         nn_network_def_free(network);
         return NULL;
