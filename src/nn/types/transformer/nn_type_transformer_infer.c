@@ -1,16 +1,36 @@
-﻿#include "nn_infer_registry.h"
+#include "nn_infer_registry.h"
 #include "transformer_infer_ops.h"
 
 #include <stdlib.h>
 
 static void* nn_type_transformer_infer_create_codegen(const NNCodegenInferConfig* config) {
     TransformerInferContext* context;
+    size_t model_dim = 24U;
+    uint32_t seed = 42U;
+
+    if (config != 0) {
+        if (config->input_size > 0U && config->input_size <= TRANSFORMER_MAX_MODEL_DIM) {
+            model_dim = config->input_size;
+        }
+        if (config->seed != 0U) {
+            seed = config->seed;
+        }
+    }
 
     context = (TransformerInferContext*)calloc(1U, sizeof(TransformerInferContext));
-    if (context != 0 && config != 0) {
+    if (context == 0) {
+        return 0;
+    }
+    if (nn_transformer_init_parameters(context, model_dim, seed) != 0) {
+        free(context);
+        return 0;
+    }
+
+    if (config != 0) {
         context->expected_network_hash = config->network_hash;
         context->expected_layout_hash = config->layout_hash;
     }
+
     return context;
 }
 

@@ -97,5 +97,5 @@ final_x=5 final_y=8
 ## 网络规格
 
 - **网络类型**: mlp (多层感知机)
-- **输入**: x, y, command (3个整数)
+- **输入**: x, y, one-hot command[5] (7个特征)
 - **输出**: out_x, out_y (2个整数)

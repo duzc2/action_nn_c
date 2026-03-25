@@ -77,6 +77,12 @@ cmake --build build/demo/target/infer --config Debug
 build/demo/target/infer/Debug/target_infer.exe
 ```
 
+示例输入：
+
+```text
+10 12 0 0 5
+```
+
 ## 说明
 
 - `train` 与 `infer` 的依赖代码都从 `build/demo/target/data/` 读取

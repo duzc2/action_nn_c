@@ -40,7 +40,7 @@ cmake --build "%BUILD_ROOT%\infer" --config Debug
 if errorlevel 1 goto :fail
 
 echo [target] step 6/6 run infer
-set "RUN_COMMAND=(echo 10 12 0 0) ^| ""%BUILD_ROOT%\infer\Debug\target_infer.exe"""
+set "RUN_COMMAND=(echo 10 12 0 0 5) ^| ""%BUILD_ROOT%\infer\Debug\target_infer.exe"""
 set "RUN_TIMEOUT=30"
 call :run_with_timeout
 if errorlevel 1 goto :fail
