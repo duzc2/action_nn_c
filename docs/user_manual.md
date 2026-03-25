@@ -29,6 +29,10 @@ cmake --build build --config Debug --target profiler
 用户程序内部步骤：
 
 - 构建网络结构体
+- 用户侧若需要传入具体网络类型配置，只包含对应类型的 config-only 头文件，例如：
+  - `types/mlp/mlp_config.h`
+  - `types/transformer/transformer_config.h`
+- 用户侧不要直接包含 `*_infer_ops.h` / `*_train_ops.h`
 - 以网络结构体作为参数调用 profiler
 - profiler 生成训练 `.c` 与推理 `.c`
 - profiler 复制固定模板 `.h`（不做动态 `.h` 生成）

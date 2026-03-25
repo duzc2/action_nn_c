@@ -3,6 +3,7 @@
 ## 1. 设计原则
 
 - 网络由用户程序构建网络结构体，不再依赖统一配置头文件。
+- 若网络类型需要具体类型配置，用户侧只依赖 `src/nn/types/[网络类型]/` 下的 config-only 头文件。
 - profiler 只定义框架流程，不依赖具体网络实现细节。
 - 训练实现与推理实现分离，且训练可依赖推理，推理不可依赖训练。
 - 新增网络类型通过 CMake 开关 + 注册配置/注册宏接入，不改 profiler 主流程与旧实现。
@@ -10,6 +11,7 @@
 ## 2. 角色分工
 
 - 用户程序：构建网络结构体并调用 profiler。
+- 用户程序传入的具体类型配置由 config-only 头文件定义，不直接依赖 ops 头文件。
 - profiler：校验结构体、生成训练/推理 `.c`、复制固定 `.h`、产出元数据。
 - 网络类型实现：在 `src/nn/[网络类型]/` 提供训练/推理两套 `.c/.h` 与 `README.md`。
 - 常见网络基线：`src/nn/` 必须实现 `rnn`、`cnn`、`knn`、`transformer`、`mlp`、`rbfn`、`autoencoder`、`variational_autoencoder`、`tcn`、`gnn`、`ssm`、`mamba_s4`、`esn`、`siamese_triplet`、`unet_encoder_decoder_skip`、`capsule`、`kan`、`som`、`tree_random_forest_xgboost`、`svm`、`tiny_tcn`。
