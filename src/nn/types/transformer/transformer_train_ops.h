@@ -1,13 +1,10 @@
 #ifndef TRANSFORMER_TRAIN_OPS_H
 #define TRANSFORMER_TRAIN_OPS_H
 
+#include "transformer_config.h"
 #include "transformer_infer_ops.h"
 
 #include <stddef.h>
-
-typedef struct {
-    float learning_rate;
-} TransformerTrainConfig;
 
 typedef struct {
     TransformerInferContext* infer_ctx;

@@ -13,38 +13,11 @@
 #ifndef MLP_TRAIN_OPS_H
 #define MLP_TRAIN_OPS_H
 
+#include "mlp_config.h"
+
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
-
-/**
- * @brief Optimizer type
- */
-typedef enum {
-    MLP_OPT_SGD = 0,
-    MLP_OPT_ADAM = 1
-} MlpOptimizerType;
-
-/**
- * @brief Loss function type
- */
-typedef enum {
-    MLP_LOSS_MSE = 0,
-    MLP_LOSS_CROSS_ENTROPY = 1
-} MlpLossType;
-
-/**
- * @brief Training configuration
- */
-typedef struct {
-    float learning_rate;
-    float momentum;
-    float weight_decay;
-    MlpOptimizerType optimizer;
-    MlpLossType loss_func;
-    size_t batch_size;
-    uint32_t seed;
-} MlpTrainConfig;
 
 /**
  * @brief Gradient buffer for a single layer
