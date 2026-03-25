@@ -14,6 +14,9 @@ typedef struct {
     uint64_t network_hash;
     uint64_t layout_hash;
     uint32_t seed;
+    const void* type_config;
+    size_t type_config_size;
+    const char* type_config_type_name;
 } NNCodegenInferConfig;
 
 typedef struct {
@@ -22,6 +25,9 @@ typedef struct {
     float weight_decay;
     size_t batch_size;
     uint32_t seed;
+    const void* type_config;
+    size_t type_config_size;
+    const char* type_config_type_name;
 } NNCodegenTrainConfig;
 
 typedef void* (*NNInferCreateFn)(const NNCodegenInferConfig* config);

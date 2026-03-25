@@ -8,6 +8,68 @@
 #include <stdlib.h>
 #include <string.h>
 
+static char* nn_strdup_local(const char* source) {
+    char* copy;
+    size_t length;
+
+    if (source == NULL) {
+        return NULL;
+    }
+
+    length = strlen(source) + 1U;
+    copy = (char*)malloc(length);
+    if (copy == NULL) {
+        return NULL;
+    }
+
+    (void)memcpy(copy, source, length);
+    return copy;
+}
+
+static unsigned char* nn_memdup_local(const void* source, size_t size) {
+    unsigned char* copy;
+
+    if (source == NULL || size == 0U) {
+        return NULL;
+    }
+
+    copy = (unsigned char*)malloc(size);
+    if (copy == NULL) {
+        return NULL;
+    }
+
+    (void)memcpy(copy, source, size);
+    return copy;
+}
+
+static void nn_subnet_def_clear_infer_type_config(NNSubnetDef* subnet) {
+    if (subnet == NULL) {
+        return;
+    }
+
+    free(subnet->infer_type_config_data);
+    free(subnet->infer_config_header_path);
+    free(subnet->infer_config_type_name);
+    subnet->infer_type_config_data = NULL;
+    subnet->infer_type_config_size = 0U;
+    subnet->infer_config_header_path = NULL;
+    subnet->infer_config_type_name = NULL;
+}
+
+static void nn_subnet_def_clear_train_type_config(NNSubnetDef* subnet) {
+    if (subnet == NULL) {
+        return;
+    }
+
+    free(subnet->train_type_config_data);
+    free(subnet->train_config_header_path);
+    free(subnet->train_config_type_name);
+    subnet->train_type_config_data = NULL;
+    subnet->train_type_config_size = 0U;
+    subnet->train_config_header_path = NULL;
+    subnet->train_config_type_name = NULL;
+}
+
 NN_NetworkDef* nn_network_def_create(const char* name) {
     NN_NetworkDef* def = (NN_NetworkDef*)malloc(sizeof(NN_NetworkDef));
     if (def == NULL) {
@@ -127,6 +189,14 @@ NNSubnetDef* nn_subnet_def_create(
     subnet->input_count = 0;
     subnet->outputs = NULL;
     subnet->output_count = 0;
+    subnet->infer_type_config_data = NULL;
+    subnet->infer_type_config_size = 0U;
+    subnet->infer_config_header_path = NULL;
+    subnet->infer_config_type_name = NULL;
+    subnet->train_type_config_data = NULL;
+    subnet->train_type_config_size = 0U;
+    subnet->train_config_header_path = NULL;
+    subnet->train_config_type_name = NULL;
     subnet->subnets = NULL;
     subnet->subnet_count = 0;
 
@@ -187,6 +257,9 @@ void nn_subnet_def_free(NNSubnetDef* subnet) {
         free(subnet->outputs);
     }
 
+    nn_subnet_def_clear_infer_type_config(subnet);
+    nn_subnet_def_clear_train_type_config(subnet);
+
     if (subnet->subnets != NULL) {
         for (i = 0; i < subnet->subnet_count; i++) {
             nn_subnet_def_free((NNSubnetDef*)subnet->subnets[i]);
@@ -227,4 +300,74 @@ void nn_connection_def_free(NNConnectionDef* conn) {
     }
 
     free(conn);
+}
+
+int nn_subnet_def_set_infer_type_config(
+    NNSubnetDef* subnet,
+    const void* config_data,
+    size_t config_size,
+    const char* header_path,
+    const char* type_name
+) {
+    unsigned char* config_copy;
+    char* header_copy;
+    char* type_copy;
+
+    if (subnet == NULL || config_data == NULL || config_size == 0U ||
+        header_path == NULL || header_path[0] == '\0' ||
+        type_name == NULL || type_name[0] == '\0') {
+        return -1;
+    }
+
+    config_copy = nn_memdup_local(config_data, config_size);
+    header_copy = nn_strdup_local(header_path);
+    type_copy = nn_strdup_local(type_name);
+    if (config_copy == NULL || header_copy == NULL || type_copy == NULL) {
+        free(config_copy);
+        free(header_copy);
+        free(type_copy);
+        return -1;
+    }
+
+    nn_subnet_def_clear_infer_type_config(subnet);
+    subnet->infer_type_config_data = config_copy;
+    subnet->infer_type_config_size = config_size;
+    subnet->infer_config_header_path = header_copy;
+    subnet->infer_config_type_name = type_copy;
+    return 0;
+}
+
+int nn_subnet_def_set_train_type_config(
+    NNSubnetDef* subnet,
+    const void* config_data,
+    size_t config_size,
+    const char* header_path,
+    const char* type_name
+) {
+    unsigned char* config_copy;
+    char* header_copy;
+    char* type_copy;
+
+    if (subnet == NULL || config_data == NULL || config_size == 0U ||
+        header_path == NULL || header_path[0] == '\0' ||
+        type_name == NULL || type_name[0] == '\0') {
+        return -1;
+    }
+
+    config_copy = nn_memdup_local(config_data, config_size);
+    header_copy = nn_strdup_local(header_path);
+    type_copy = nn_strdup_local(type_name);
+    if (config_copy == NULL || header_copy == NULL || type_copy == NULL) {
+        free(config_copy);
+        free(header_copy);
+        free(type_copy);
+        return -1;
+    }
+
+    nn_subnet_def_clear_train_type_config(subnet);
+    subnet->train_type_config_data = config_copy;
+    subnet->train_type_config_size = config_size;
+    subnet->train_config_header_path = header_copy;
+    subnet->train_config_type_name = type_copy;
+    return 0;
 }

@@ -12,6 +12,11 @@
 #define TRANSFORMER_MAX_TEXT_LENGTH 256U
 
 typedef struct {
+    size_t model_dim;
+    uint32_t seed;
+} TransformerModelConfig;
+
+typedef struct {
     const char* question;
     char* answer;
     size_t answer_capacity;

@@ -24,6 +24,8 @@ typedef struct {
     size_t hidden_layer_count;
     size_t hidden_sizes[4];
     size_t output_size;
+    MlpActivationType hidden_activation;
+    MlpActivationType output_activation;
 } MlpConfig;
 
 /**
@@ -44,9 +46,13 @@ typedef struct {
 } MlpInferContext;
 
 /**
- * @brief Create MLP inference context with default move network config
+ * @brief Create MLP inference context without explicit configuration
  *
- * @return New context, or NULL on failure
+ * This framework now requires user-side code to provide a concrete
+ * type configuration through the profiler pipeline. Calling this helper
+ * without an explicit configuration returns NULL.
+ *
+ * @return NULL because explicit configuration is required
  */
 MlpInferContext* nn_mlp_infer_create(void);
 
@@ -69,8 +75,6 @@ void nn_mlp_infer_destroy(void* context);
 /**
  * @brief Set input values for inference
  *
- * For move network: input[0]=x, input[1]=y, input[2]=command
- *
  * @param context MLP context
  * @param input Input array
  * @param size Input size (must match config.input_size)
@@ -79,8 +83,6 @@ void nn_mlp_infer_set_input(void* context, const float* input, size_t size);
 
 /**
  * @brief Get output values after inference
- *
- * For move network: output[0]=new_x, output[1]=new_y
  *
  * @param context MLP context
  * @param output Output array (caller must provide buffer)

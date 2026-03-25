@@ -1,6 +1,6 @@
 # MLP Network Type
 
-本目录提供 demo 所使用的真实 MLP 实现。
+本目录提供通用 MLP 网络类型实现。
 
 包含内容：
 
@@ -13,5 +13,6 @@
 职责边界：
 
 - MLP 算法逻辑保留在 `src/nn/types/mlp/`。
-- profiler 生成代码只负责把网络定义转成统一调用路径。
-- demo 的 move / sevenseg / target 都通过这里的统一 MLP 实现运行。
+- profiler 只负责转发用户侧提供的具体类型配置与调用路径。
+- 生成代码负责把用户配置的 `MlpConfig` / `MlpTrainConfig` 耦合到注册入口。
+- 核心算法、前向传播、反向传播与权重读写逻辑不下沉到 profiler 生成代码。

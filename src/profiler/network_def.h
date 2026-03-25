@@ -95,6 +95,14 @@ typedef struct {
     size_t input_count;
     NNPortDef* outputs;
     size_t output_count;
+    unsigned char* infer_type_config_data;
+    size_t infer_type_config_size;
+    char* infer_config_header_path;
+    char* infer_config_type_name;
+    unsigned char* train_type_config_data;
+    size_t train_type_config_size;
+    char* train_config_header_path;
+    char* train_config_type_name;
     struct NNSubnetDef_tag** subnets;
     size_t subnet_count;
 } NNSubnetDef;
@@ -210,6 +218,47 @@ void nn_subnet_def_set_hidden_layers(
  * @param subnet Subnet to free
  */
 void nn_subnet_def_free(NNSubnetDef* subnet);
+
+/**
+ * @brief Set type-specific inference configuration for a subnet
+ *
+ * The profiler copies this opaque configuration blob without interpreting
+ * the concrete type. Generated code will include @p header_path, rebuild
+ * the concrete type identified by @p type_name, and pass the blob to the
+ * type-specific create hook.
+ *
+ * @param subnet Subnet to update
+ * @param config_data Opaque config bytes
+ * @param config_size Opaque config byte size
+ * @param header_path Header to include in generated infer.c
+ * @param type_name Concrete C type name used in generated infer.c
+ * @return 0 on success, -1 on failure
+ */
+int nn_subnet_def_set_infer_type_config(
+    NNSubnetDef* subnet,
+    const void* config_data,
+    size_t config_size,
+    const char* header_path,
+    const char* type_name
+);
+
+/**
+ * @brief Set type-specific training configuration for a subnet
+ *
+ * @param subnet Subnet to update
+ * @param config_data Opaque config bytes
+ * @param config_size Opaque config byte size
+ * @param header_path Header to include in generated train.c
+ * @param type_name Concrete C type name used in generated train.c
+ * @return 0 on success, -1 on failure
+ */
+int nn_subnet_def_set_train_type_config(
+    NNSubnetDef* subnet,
+    const void* config_data,
+    size_t config_size,
+    const char* header_path,
+    const char* type_name
+);
 
 /**
  * @brief Create a connection definition

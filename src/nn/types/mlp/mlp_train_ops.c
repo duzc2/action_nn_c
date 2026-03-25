@@ -24,22 +24,6 @@
 #define ADAM_BETA2 0.999f
 
 /**
- * @brief Default training configuration
- *
- * Uses SGD with moderate learning rate,
- * MSE loss function.
- */
-static const MlpTrainConfig g_default_config = {
-    .learning_rate = 0.01f,
-    .momentum = 0.9f,
-    .weight_decay = 0.0001f,
-    .optimizer = MLP_OPT_SGD,
-    .loss_func = MLP_LOSS_MSE,
-    .batch_size = 1,
-    .seed = 42
-};
-
-/**
  * @brief Get inference layer at index
  *
  * @param infer_ctx Inference context
@@ -558,7 +542,8 @@ MlpTrainContext* nn_mlp_train_create(void* infer_ctx, const MlpTrainConfig* conf
     if (config != NULL) {
         ctx->config = *config;
     } else {
-        ctx->config = g_default_config;
+        free(ctx);
+        return NULL;
     }
 
     ctx->infer_ctx = infer_ctx;

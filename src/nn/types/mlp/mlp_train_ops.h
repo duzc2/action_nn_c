@@ -126,7 +126,7 @@ typedef struct {
  * @brief Create MLP training context
  *
  * @param infer_ctx Inference context (borrowed reference)
- * @param config Training configuration
+ * @param config Training configuration. Must not be NULL.
  * @return New training context, or NULL on failure
  */
 MlpTrainContext* nn_mlp_train_create(void* infer_ctx, const MlpTrainConfig* config);

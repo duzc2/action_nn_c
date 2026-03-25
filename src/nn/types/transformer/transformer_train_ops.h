@@ -6,6 +6,10 @@
 #include <stddef.h>
 
 typedef struct {
+    float learning_rate;
+} TransformerTrainConfig;
+
+typedef struct {
     TransformerInferContext* infer_ctx;
     const char* current_question;
     const char* current_answer;

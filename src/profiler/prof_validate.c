@@ -173,6 +173,24 @@ ProfStatus prof_validate_subnet(
         }
     }
 
+    if (subnet->infer_type_config_data == NULL ||
+        subnet->infer_type_config_size == 0U ||
+        is_empty(subnet->infer_config_header_path) ||
+        is_empty(subnet->infer_config_type_name)) {
+        return prof_error_set(error, PROF_STATUS_VALIDATION_FAILED,
+            "Subnet '%s' is missing infer type configuration metadata",
+            subnet->subnet_id);
+    }
+
+    if (subnet->train_type_config_data == NULL ||
+        subnet->train_type_config_size == 0U ||
+        is_empty(subnet->train_config_header_path) ||
+        is_empty(subnet->train_config_type_name)) {
+        return prof_error_set(error, PROF_STATUS_VALIDATION_FAILED,
+            "Subnet '%s' is missing train type configuration metadata",
+            subnet->subnet_id);
+    }
+
     return PROF_STATUS_OK;
 }
 

@@ -11,16 +11,6 @@
 #define ABI_VERSION 1
 
 /**
- * @brief Default MLP config for move network
- */
-static const MlpConfig g_default_config = {
-    .input_size = 3,
-    .hidden_layer_count = 2,
-    .hidden_sizes = { 16, 8 },
-    .output_size = 2
-};
-
-/**
  * @brief FNV-1a hash for network structure
  */
 static uint64_t compute_layout_hash(const MlpConfig* config) {
@@ -45,11 +35,17 @@ static uint64_t compute_layout_hash(const MlpConfig* config) {
         hash *= 0x100000001b3ULL;
     }
 
+    hash ^= (uint64_t)config->hidden_activation;
+    hash *= 0x100000001b3ULL;
+
+    hash ^= (uint64_t)config->output_activation;
+    hash *= 0x100000001b3ULL;
+
     return hash;
 }
 
 MlpInferContext* nn_mlp_infer_create(void) {
-    return nn_mlp_infer_create_with_config(&g_default_config, 42);
+    return NULL;
 }
 
 MlpInferContext* nn_mlp_infer_create_with_config(const MlpConfig* config, uint32_t seed) {
@@ -84,8 +80,12 @@ MlpInferContext* nn_mlp_infer_create_with_config(const MlpConfig* config, uint32
     prev_size = config->input_size;
 
     for (i = 0; i < config->hidden_layer_count; i++) {
-        MlpActivationType act = MLP_ACT_TANH;
-        ctx->layers[i] = mlp_dense_create(prev_size, config->hidden_sizes[i], act, seed + (uint32_t)i);
+        ctx->layers[i] = mlp_dense_create(
+            prev_size,
+            config->hidden_sizes[i],
+            config->hidden_activation,
+            seed + (uint32_t)i
+        );
         if (ctx->layers[i] == NULL) {
             for (size_t j = 0; j < i; j++) {
                 mlp_dense_free(ctx->layers[j]);
@@ -100,7 +100,7 @@ MlpInferContext* nn_mlp_infer_create_with_config(const MlpConfig* config, uint32
     ctx->layers[ctx->layer_count - 1] = mlp_dense_create(
         prev_size,
         config->output_size,
-        MLP_ACT_NONE,
+        config->output_activation,
         seed + (uint32_t)ctx->layer_count
     );
 
