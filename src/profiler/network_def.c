@@ -8,6 +8,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+/**
+ * @brief Duplicate a NUL-terminated string into profiler-owned memory.
+ *
+ * The network definition keeps several caller-supplied identifiers and header
+ * paths. Copying them when needed prevents later mutations in user code from
+ * invalidating the generated model description.
+ */
 static char* nn_strdup_local(const char* source) {
     char* copy;
     size_t length;
@@ -26,6 +33,12 @@ static char* nn_strdup_local(const char* source) {
     return copy;
 }
 
+/**
+ * @brief Duplicate an opaque configuration blob into profiler-owned memory.
+ *
+ * Type-specific config data is intentionally treated as bytes because the core
+ * profiler must not depend on concrete network implementation structs.
+ */
 static unsigned char* nn_memdup_local(const void* source, size_t size) {
     unsigned char* copy;
 
@@ -42,6 +55,12 @@ static unsigned char* nn_memdup_local(const void* source, size_t size) {
     return copy;
 }
 
+/**
+ * @brief Release inference-side type metadata currently attached to a subnet.
+ *
+ * The helper exists so config replacement and final destruction share exactly
+ * the same cleanup path. That keeps ownership rules simple and leak resistant.
+ */
 static void nn_subnet_def_clear_infer_type_config(NNSubnetDef* subnet) {
     if (subnet == NULL) {
         return;
@@ -56,6 +75,9 @@ static void nn_subnet_def_clear_infer_type_config(NNSubnetDef* subnet) {
     subnet->infer_config_type_name = NULL;
 }
 
+/**
+ * @brief Release training-side type metadata currently attached to a subnet.
+ */
 static void nn_subnet_def_clear_train_type_config(NNSubnetDef* subnet) {
     if (subnet == NULL) {
         return;
@@ -70,6 +92,13 @@ static void nn_subnet_def_clear_train_type_config(NNSubnetDef* subnet) {
     subnet->train_config_type_name = NULL;
 }
 
+/**
+ * @brief Allocate the root network definition with conservative defaults.
+ *
+ * The root object starts empty and leaves topology population to the caller,
+ * which matches the documented workflow where user code explicitly builds the
+ * full graph before invoking the profiler.
+ */
 NN_NetworkDef* nn_network_def_create(const char* name) {
     NN_NetworkDef* def = (NN_NetworkDef*)malloc(sizeof(NN_NetworkDef));
     if (def == NULL) {
@@ -88,6 +117,13 @@ NN_NetworkDef* nn_network_def_create(const char* name) {
     return def;
 }
 
+/**
+ * @brief Recursively free the full network definition tree.
+ *
+ * Ownership flows from the root network into subnets and connection objects,
+ * so freeing the root must also release every nested subnet, opaque config
+ * blob, and auxiliary routing record.
+ */
 void nn_network_def_free(NN_NetworkDef* def) {
     size_t i;
 
@@ -119,6 +155,12 @@ void nn_network_def_free(NN_NetworkDef* def) {
     free(def);
 }
 
+/**
+ * @brief Append a top-level subnet to the network definition.
+ *
+ * The container grows with realloc because the user-facing construction API is
+ * append-oriented and the expected topology size is moderate.
+ */
 void nn_network_def_add_subnet(NN_NetworkDef* network, NNSubnetDef* subnet) {
     NNSubnetDef** new_subnets;
     size_t new_count;
@@ -142,6 +184,9 @@ void nn_network_def_add_subnet(NN_NetworkDef* network, NNSubnetDef* subnet) {
     network->subnet_count = new_count;
 }
 
+/**
+ * @brief Append a connection record to the root network definition.
+ */
 void nn_network_def_add_connection(NN_NetworkDef* network, NNConnectionDef* connection) {
     NNConnectionDef** new_conns;
     size_t new_count;
@@ -165,6 +210,12 @@ void nn_network_def_add_connection(NN_NetworkDef* network, NNConnectionDef* conn
     network->connection_count = new_count;
 }
 
+/**
+ * @brief Allocate one subnet definition with safe defaults for optional fields.
+ *
+ * Leaf subnets may later receive layer sizes and type-specific config blobs,
+ * while container subnets simply keep their nested child list populated.
+ */
 NNSubnetDef* nn_subnet_def_create(
     const char* subnet_id,
     const char* subnet_type,
@@ -203,6 +254,12 @@ NNSubnetDef* nn_subnet_def_create(
     return subnet;
 }
 
+/**
+ * @brief Replace the hidden-layer description owned by a subnet.
+ *
+ * The setter fully replaces previous storage so callers can rebuild a subnet
+ * description incrementally without manually freeing old buffers first.
+ */
 void nn_subnet_def_set_hidden_layers(
     NNSubnetDef* subnet,
     size_t layer_count,
@@ -234,6 +291,9 @@ void nn_subnet_def_set_hidden_layers(
     }
 }
 
+/**
+ * @brief Append a child subnet to a container subnet.
+ */
 void nn_subnet_def_add_subnet(NNSubnetDef* parent, NNSubnetDef* child) {
     NNSubnetDef** new_subnets;
     size_t new_count;
@@ -257,6 +317,9 @@ void nn_subnet_def_add_subnet(NNSubnetDef* parent, NNSubnetDef* child) {
     parent->subnet_count = new_count;
 }
 
+/**
+ * @brief Recursively free one subnet and every resource it owns.
+ */
 void nn_subnet_def_free(NNSubnetDef* subnet) {
     size_t i;
 
@@ -293,6 +356,12 @@ void nn_subnet_def_free(NNSubnetDef* subnet) {
     free(subnet);
 }
 
+/**
+ * @brief Allocate one connection record with the default merge strategy.
+ *
+ * Merge strategy defaults to SUM so callers get a deterministic baseline even
+ * before advanced routing policies are configured.
+ */
 NNConnectionDef* nn_connection_def_create(
     const char* src_subnet,
     const char* src_port,
@@ -317,6 +386,9 @@ NNConnectionDef* nn_connection_def_create(
     return conn;
 }
 
+/**
+ * @brief Release one connection record.
+ */
 void nn_connection_def_free(NNConnectionDef* conn) {
     if (conn == NULL) {
         return;
@@ -325,6 +397,12 @@ void nn_connection_def_free(NNConnectionDef* conn) {
     free(conn);
 }
 
+/**
+ * @brief Copy inference-side type metadata into the subnet definition.
+ *
+ * The profiler stores the raw bytes plus the header/type names needed to
+ * reconstruct the concrete configuration inside generated infer.c.
+ */
 int nn_subnet_def_set_infer_type_config(
     NNSubnetDef* subnet,
     const void* config_data,
@@ -360,6 +438,9 @@ int nn_subnet_def_set_infer_type_config(
     return 0;
 }
 
+/**
+ * @brief Copy training-side type metadata into the subnet definition.
+ */
 int nn_subnet_def_set_train_type_config(
     NNSubnetDef* subnet,
     const void* config_data,

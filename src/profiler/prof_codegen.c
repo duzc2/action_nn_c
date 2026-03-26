@@ -16,6 +16,34 @@
 #define ABI_VERSION 1
 #define CODE_BUFFER_CAPACITY 524288U
 
+/**
+ * @section prof_codegen_pipeline Generated-module emission strategy
+ *
+ * The profiler does not emit one monolithic source file. Instead it produces a
+ * family of focused modules that mirror the documented workflow: tokenizer,
+ * runtime initialization, inference, training, save, load, and shared metadata.
+ * This file is therefore less about machine-learning math and more about safely
+ * translating a validated network definition into deterministic C99 source.
+ *
+ * Several design choices are worth calling out because they explain many of the
+ * helpers below:
+ * - all emitters share one flattened leaf-graph view so execution order stays
+ *   consistent across metadata, init, train, infer, save, and load modules;
+ * - type-specific configuration is emitted as opaque byte arrays so the profiler
+ *   never depends on backend-private struct layouts beyond the typed blob name;
+ * - every buffer append goes through a single bounded helper so overflow checks
+ *   are centralized and failures stop the pipeline immediately;
+ * - optional headers are written only when the caller provides explicit target
+ *   paths, which preserves the documented no-implicit-output-directory rule.
+ */
+
+/**
+ * @brief Flattened leaf-graph view shared by all generation stages.
+ *
+ * Code generation repeatedly needs the same executable-leaf ordering, so the
+ * helper struct caches both the flattened subnet list and the topology metadata
+ * derived from it.
+ */
 typedef struct {
     ProfSubnetList leaf_subnets;
     size_t* topology_order;
@@ -23,6 +51,18 @@ typedef struct {
     size_t* outgoing_counts;
 } ProfLeafGraph;
 
+/**
+ * @section prof_codegen_buffer_helpers Buffer-oriented emission primitives
+ *
+ * The first helper group is intentionally generic: write a finished blob,
+ * append formatted text into a bounded buffer, and serialize opaque config
+ * bytes. Every later emitter builds on these primitives so overflow handling,
+ * I/O failure handling, and byte-for-byte determinism stay centralized.
+ */
+
+/**
+ * @brief Write one generated source blob to its final destination path.
+ */
 static ProfStatus write_file(const char* path, const char* content) {
     FILE* fp;
 
@@ -40,6 +80,14 @@ static ProfStatus write_file(const char* path, const char* content) {
     return PROF_STATUS_OK;
 }
 
+/**
+ * @brief Append formatted text into a bounded generation buffer.
+ *
+ * Every code-emission helper builds its output incrementally through this one
+ * function so buffer-overflow handling stays centralized and consistent. The
+ * return convention is intentionally minimal: zero means the append succeeded,
+ * while any failure tells the caller to abort generation immediately.
+ */
 static int append_format(
     char* buffer,
     size_t buffer_capacity,
@@ -71,6 +119,13 @@ static int append_format(
     return 0;
 }
 
+/**
+ * @brief Emit an opaque type-config blob as a static byte array literal.
+ *
+ * Code generation never interprets backend-private config layouts directly.
+ * Serializing them as byte arrays lets the generated C module reconstruct a
+ * typed local variable only at the moment it calls the backend contract.
+ */
 static int append_type_config_blob(
     char* buffer,
     size_t buffer_capacity,
@@ -130,6 +185,9 @@ static int append_type_config_blob(
     return 0;
 }
 
+/**
+ * @brief Release every heap allocation owned by a flattened leaf graph view.
+ */
 static void prof_leaf_graph_cleanup(ProfLeafGraph* graph) {
     if (graph == NULL) {
         return;
@@ -144,6 +202,23 @@ static void prof_leaf_graph_cleanup(ProfLeafGraph* graph) {
     graph->outgoing_counts = NULL;
 }
 
+/**
+ * @section prof_codegen_topology_helpers Flattened topology derivation
+ *
+ * The next helper group derives reusable graph facts from the validated
+ * network: executable leaf order, source/sink sizes, and packed sink offsets.
+ * These values are emitted into multiple generated files, so they must all come
+ * from the same cached leaf graph rather than being recomputed ad hoc.
+ */
+
+/**
+ * @brief Build the flattened executable graph view required by code generation.
+ *
+ * Generation deliberately materializes this view once per emitted module. That
+ * keeps helper code simple, ensures cleanup happens in one place on failure,
+ * and guarantees that metadata, infer/train orchestration, and save/load logic
+ * are all derived from the same topological facts.
+ */
 static ProfStatus prof_leaf_graph_init(
     const NN_NetworkDef* network,
     ProfLeafGraph* graph
@@ -176,6 +251,13 @@ static ProfStatus prof_leaf_graph_init(
     return PROF_STATUS_OK;
 }
 
+/**
+ * @brief Compute the maximum external input width among source leaf subnets.
+ *
+ * Source leaves are the only leaves that read directly from the caller-provided
+ * input vector, so this helper defines the public graph-input width that the
+ * generated runtime exposes.
+ */
 static size_t prof_codegen_network_input_size(const ProfLeafGraph* graph) {
     size_t input_size = 0U;
     size_t leaf_index;
@@ -196,6 +278,13 @@ static size_t prof_codegen_network_input_size(const ProfLeafGraph* graph) {
     return input_size;
 }
 
+/**
+ * @brief Compute the concatenated output width of sink leaf subnets.
+ *
+ * Sink leaves contribute to the final caller-visible output vector in packed
+ * order. The generated runtime uses this total to size output buffers and to
+ * expose a stable network-level output contract.
+ */
 static size_t prof_codegen_network_output_size(const ProfLeafGraph* graph) {
     size_t output_size = 0U;
     size_t leaf_index;
@@ -216,6 +305,12 @@ static size_t prof_codegen_network_output_size(const ProfLeafGraph* graph) {
     return output_size;
 }
 
+/**
+ * @brief Compute the packed output offset assigned to one sink leaf subnet.
+ *
+ * Non-sink leaves do not contribute directly to the external output tensor, so
+ * the offset is defined only over sink leaves encountered in flattened order.
+ */
 static size_t prof_codegen_sink_offset(const ProfLeafGraph* graph, size_t target_leaf_index) {
     size_t offset = 0U;
     size_t leaf_index;
@@ -238,6 +333,13 @@ static size_t prof_codegen_sink_offset(const ProfLeafGraph* graph, size_t target
     return offset;
 }
 
+/**
+ * @brief Emit constants that describe flattened leaf ordering and graph sizes.
+ *
+ * These constants form the structural backbone of every generated module. By
+ * emitting them once per file from the same flattened graph view, infer/train
+ * scheduling and save/load metadata all agree on leaf indexing and tensor sizes.
+ */
 static int append_leaf_graph_constants(
     char* buffer,
     size_t buffer_capacity,
@@ -247,6 +349,7 @@ static int append_leaf_graph_constants(
 ) {
     size_t leaf_index;
 
+    /* Publish the basic graph dimensions first because later arrays depend on them. */
     if (append_format(
             buffer,
             buffer_capacity,
@@ -262,6 +365,7 @@ static int append_leaf_graph_constants(
         return -1;
     }
 
+    /* Topology order drives execution order for graph-mode infer/train code. */
     if (append_format(buffer, buffer_capacity, position,
             "static const size_t g_topology_order[GENERATED_LEAF_COUNT] = {") != 0) {
         return -1;
@@ -276,6 +380,7 @@ static int append_leaf_graph_constants(
         return -1;
     }
 
+    /* Incoming and outgoing counts let generated helpers detect sources and sinks cheaply. */
     if (append_format(buffer, buffer_capacity, position,
             "static const size_t g_incoming_counts[GENERATED_LEAF_COUNT] = {") != 0) {
         return -1;
@@ -304,6 +409,7 @@ static int append_leaf_graph_constants(
         return -1;
     }
 
+    /* Sink offsets pack multiple terminal leaves into one caller-visible output vector. */
     if (append_format(buffer, buffer_capacity, position,
             "static const size_t g_sink_output_offsets[GENERATED_LEAF_COUNT] = {") != 0) {
         return -1;
@@ -323,6 +429,13 @@ static int append_leaf_graph_constants(
     return 0;
 }
 
+/**
+ * @brief Emit a compact static table that mirrors root-level connection edges.
+ *
+ * Generated schedulers should not need to walk the original request object at
+ * runtime. This table snapshots the validated connection metadata into plain C
+ * arrays so infer/train helpers can route values deterministically.
+ */
 static int append_connection_table(
     char* buffer,
     size_t buffer_capacity,
@@ -332,6 +445,7 @@ static int append_connection_table(
 ) {
     size_t connection_index;
 
+    /* Reify connection metadata into a tiny POD table consumable by generated helpers. */
     if (append_format(
             buffer,
             buffer_capacity,
@@ -347,6 +461,7 @@ static int append_connection_table(
         return -1;
     }
 
+    /* Serialize each validated edge in declaration order so debugging stays intuitive. */
     for (connection_index = 0U; connection_index < network->connection_count; ++connection_index) {
         NNConnectionDef* connection = network->connections[connection_index];
         int source_index;
@@ -380,6 +495,13 @@ static int append_connection_table(
     return 0;
 }
 
+/**
+ * @brief Emit static byte arrays for every leaf inference config blob.
+ *
+ * Type-specific config remains opaque to the profiler. Emitting raw bytes keeps
+ * the generator decoupled from backend-private struct layouts while still
+ * letting generated code reconstruct typed config objects locally.
+ */
 static int append_infer_type_blobs(
     char* buffer,
     size_t buffer_capacity,
@@ -404,6 +526,12 @@ static int append_infer_type_blobs(
     return 0;
 }
 
+/**
+ * @brief Emit static byte arrays for every leaf training config blob.
+ *
+ * Training config is emitted separately from inference config because the two
+ * contracts may use different typed payloads even for the same backend.
+ */
 static int append_train_type_blobs(
     char* buffer,
     size_t buffer_capacity,
@@ -428,6 +556,13 @@ static int append_train_type_blobs(
     return 0;
 }
 
+/**
+ * @brief Write a generated header only when the caller configured a path for it.
+ *
+ * Some outputs in the documented pipeline are optional. This helper preserves
+ * that behaviour by treating a missing header path as a no-op instead of an
+ * error, while still creating parent directories for explicit destinations.
+ */
 static ProfStatus write_optional_header(const char* path, const char* content) {
     ProfStatus st;
 
@@ -442,6 +577,9 @@ static ProfStatus write_optional_header(const char* path, const char* content) {
     return write_file(path, content);
 }
 
+/**
+ * @brief Initialize the codegen context shared by all module emitters.
+ */
 void prof_codegen_init(
     ProfCodegenContext* ctx,
     const NN_NetworkDef* network,
@@ -457,6 +595,23 @@ void prof_codegen_init(
     ctx->error = error;
 }
 
+/**
+ * @section prof_codegen_stage_metadata Early-stage module emission
+ *
+ * Metadata, tokenizer, and network-init emission happen first because they
+ * define the stable structural contract that later runtime modules depend on.
+ * Even when some of these files are lightweight today, keeping them explicit in
+ * the pipeline preserves the documented multi-stage generation workflow.
+ */
+
+/**
+ * @brief Module stage 1: emit metadata that binds all later modules together.
+ *
+ * The metadata header is the common contract consumed by generated train,
+ * infer, save, and load modules, so it must be emitted before every other file.
+ * Only globally shared facts belong here: hashes, ABI tag, network name, and
+ * the flattened leaf count used for cross-module compatibility checks.
+ */
 ProfStatus prof_codegen_metadata(ProfCodegenContext* ctx, const char* metadata_path) {
     FILE* fp;
     ProfStatus st;
@@ -466,6 +621,11 @@ ProfStatus prof_codegen_metadata(ProfCodegenContext* ctx, const char* metadata_p
         return PROF_STATUS_INVALID_ARGUMENT;
     }
 
+    /*
+     * Flatten once up front so every later emitter can trust the same leaf view.
+     * Even though metadata only writes a few macros, using the shared helper here
+     * prevents subtle disagreement about executable leaf count.
+     */
     st = prof_leaf_graph_init(ctx->network, &graph);
     if (st != PROF_STATUS_OK) {
         return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
@@ -479,6 +639,8 @@ ProfStatus prof_codegen_metadata(ProfCodegenContext* ctx, const char* metadata_p
             "Failed to create directory for metadata output");
     }
 
+    /* Write a plain C header so generated modules can include it directly. */
+    /* The header stays intentionally small because it is included nearly everywhere. */
     fp = fopen(metadata_path, "w");
     if (fp == NULL) {
         prof_leaf_graph_cleanup(&graph);
@@ -499,6 +661,14 @@ ProfStatus prof_codegen_metadata(ProfCodegenContext* ctx, const char* metadata_p
     return PROF_STATUS_OK;
 }
 
+/**
+ * @brief Module stage 2: emit tokenizer glue for external program I/O.
+ *
+ * The tokenizer module is intentionally lightweight. It primarily captures the
+ * flattened graph's external input/output counts in a stable, compilable form.
+ * This keeps the generated pipeline complete even when a demo network uses raw
+ * float inputs and does not yet need a real text or binary tokenizer.
+ */
 ProfStatus prof_codegen_tokenizer(ProfCodegenContext* ctx) {
     const ProfOutputLayout* layout;
     ProfLeafGraph graph;
@@ -523,6 +693,11 @@ ProfStatus prof_codegen_tokenizer(ProfCodegenContext* ctx) {
             "Failed to flatten leaf graph for tokenizer generation");
     }
 
+    /*
+     * The tokenizer stub only needs aggregate I/O sizes today. We still compute
+     * them from the flattened leaf view so the generated file documents the same
+     * external contract seen by infer/train code.
+     */
     for (leaf_index = 0U; leaf_index < graph.leaf_subnets.count; ++leaf_index) {
         NNSubnetDef* subnet = graph.leaf_subnets.items[leaf_index];
         if (subnet != NULL) {
@@ -595,6 +770,14 @@ ProfStatus prof_codegen_tokenizer(ProfCodegenContext* ctx) {
     return PROF_STATUS_OK;
 }
 
+/**
+ * @brief Module stage 3: emit runtime construction code for every leaf subnet.
+ *
+ * network_init.c is where generated code binds validated graph metadata to the
+ * concrete backend factories exposed through the registry contracts. The file is
+ * intentionally simple because its main role is to document and preserve the
+ * validated leaf inventory rather than implement heavy runtime logic.
+ */
 ProfStatus prof_codegen_network_init(ProfCodegenContext* ctx) {
     const ProfOutputLayout* layout;
     ProfLeafGraph graph;
@@ -618,6 +801,7 @@ ProfStatus prof_codegen_network_init(ProfCodegenContext* ctx) {
             "Failed to flatten leaf graph for network_init generation");
     }
 
+    /* Start with a tiny prologue because the generated module is mainly descriptive today. */
     if (append_format(content, sizeof(content), &pos,
             "/* network_init.c - Network initialization module */\n"
             "#include \"network_init.h\"\n\n") != 0) {
@@ -626,6 +810,7 @@ ProfStatus prof_codegen_network_init(ProfCodegenContext* ctx) {
             "Failed to assemble network_init.c");
     }
 
+    /* Emit one comment per leaf so generated output doubles as an execution manifest. */
     for (leaf_index = 0U; leaf_index < graph.leaf_subnets.count; ++leaf_index) {
         NNSubnetDef* subnet = graph.leaf_subnets.items[leaf_index];
         if (subnet != NULL && append_format(content, sizeof(content), &pos,
@@ -688,11 +873,28 @@ ProfStatus prof_codegen_network_init(ProfCodegenContext* ctx) {
     return PROF_STATUS_OK;
 }
 
+/**
+ * @section prof_codegen_stage_infer Generated inference scaffolding
+ *
+ * The inference stage emits both reusable helper code and the public runtime
+ * entry points that generated applications call. The surrounding comments focus
+ * on how validated graph facts are translated into self-contained C99 source.
+ */
+
+/**
+ * @brief Emit the runtime structs used by generated infer.c.
+ *
+ * These structs are the generated runtime's bridge between validated graph
+ * metadata and the concrete backend contexts created through registry hooks.
+ * They deliberately keep both human-readable identity fields and backend-owned
+ * pointers because generated save/load and diagnostics need both views.
+ */
 static int append_generated_infer_structs(
     char* buffer,
     size_t buffer_capacity,
     size_t* position
 ) {
+    /* Emit plain old data structs so generated infer.c remains self-contained C99. */
     return append_format(
         buffer,
         buffer_capacity,
@@ -716,11 +918,25 @@ static int append_generated_infer_structs(
     );
 }
 
+/**
+ * @brief Emit helper functions used internally by generated infer.c.
+ *
+ * The helpers encapsulate repetitive buffer-routing work so the generated public
+ * API remains small even when the validated graph contains many leaves. They
+ * also encode subtle graph semantics such as averaged merges and sink packing,
+ * which are easier to audit once in generated helper code than inline at every
+ * call site.
+ */
 static int append_generated_infer_helpers(
     char* buffer,
     size_t buffer_capacity,
     size_t* position
 ) {
+    /*
+     * The emitted helper bundle owns four responsibilities: leaf teardown,
+     * graph-input staging, connection routing, and sink-output collection.
+     * Keeping them adjacent makes the generated infer.c easier to inspect.
+     */
     return append_format(
         buffer,
         buffer_capacity,
@@ -813,6 +1029,14 @@ static int append_generated_infer_helpers(
     );
 }
 
+/**
+ * @brief Module stage 4: emit inference orchestration over the flattened graph.
+ *
+ * infer.c owns the generated scheduler: it routes buffers along validated graph
+ * edges and calls backend graph-run hooks in the shared topological order. This
+ * is the main bridge between static validation results and executable runtime
+ * behaviour, so most emitted helpers focus on preserving graph invariants.
+ */
 ProfStatus prof_codegen_infer(ProfCodegenContext* ctx) {
     const ProfOutputLayout* layout;
     const NN_NetworkDef* network;
@@ -832,12 +1056,18 @@ ProfStatus prof_codegen_infer(ProfCodegenContext* ctx) {
         return PROF_STATUS_PATH_INVALID;
     }
 
+    /*
+     * infer.c needs the full flattened executable graph because scheduling,
+     * source/sink detection, and buffer routing all depend on the same topology.
+     */
     st = prof_leaf_graph_init(network, &graph);
     if (st != PROF_STATUS_OK) {
         return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
             "Failed to flatten leaf graph for infer generation");
     }
 
+    /* Reserve one large bounded buffer so code emission remains deterministic. */
+    /* A fixed upper bound also makes overflow handling consistent across emitters. */
     content = (char*)calloc(CODE_BUFFER_CAPACITY, sizeof(char));
     if (content == NULL) {
         prof_leaf_graph_cleanup(&graph);
@@ -845,6 +1075,7 @@ ProfStatus prof_codegen_infer(ProfCodegenContext* ctx) {
             "Failed to allocate infer code buffer");
     }
 
+    /* Emit file prologue and shared includes before any topology-derived fragments. */
     if (append_format(content, CODE_BUFFER_CAPACITY, &pos,
             "/* infer.c - Inference module */\n"
             "/* Auto-generated by profiler */\n"
@@ -863,6 +1094,7 @@ ProfStatus prof_codegen_infer(ProfCodegenContext* ctx) {
             "Failed to assemble infer prologue");
     }
 
+    /* Pull in every backend-specific infer config header referenced by a leaf. */
     for (leaf_index = 0U; leaf_index < graph.leaf_subnets.count; ++leaf_index) {
         NNSubnetDef* subnet = graph.leaf_subnets.items[leaf_index];
         if (subnet != NULL && subnet->infer_config_header_path != NULL &&
@@ -875,6 +1107,7 @@ ProfStatus prof_codegen_infer(ProfCodegenContext* ctx) {
         }
     }
 
+    /* Append structural constants, routing tables, type blobs, and runtime helpers in order. */
     if (append_format(content, CODE_BUFFER_CAPACITY, &pos, "\n") != 0 ||
         append_leaf_graph_constants(content, CODE_BUFFER_CAPACITY, &pos, network, &graph) != 0 ||
         append_connection_table(content, CODE_BUFFER_CAPACITY, &pos, network, &graph) != 0 ||
@@ -893,6 +1126,7 @@ ProfStatus prof_codegen_infer(ProfCodegenContext* ctx) {
             "Failed to assemble infer helper code");
     }
 
+    /* Rehydrate one generated leaf descriptor per flattened executable subnet. */
     for (leaf_index = 0U; leaf_index < graph.leaf_subnets.count; ++leaf_index) {
         NNSubnetDef* subnet = graph.leaf_subnets.items[leaf_index];
         size_t hidden_index;
@@ -953,6 +1187,7 @@ ProfStatus prof_codegen_infer(ProfCodegenContext* ctx) {
                 "Failed to append infer leaf configuration");
         }
 
+        /* Emit a fixed-width hidden-size array so generated config stays plain C. */
         for (hidden_index = 0U; hidden_index < 4U; ++hidden_index) {
             size_t hidden_size = hidden_index < subnet->hidden_layer_count ?
                 subnet->hidden_layer_sizes[hidden_index] : 0U;
@@ -966,6 +1201,7 @@ ProfStatus prof_codegen_infer(ProfCodegenContext* ctx) {
             }
         }
 
+        /* Graph mode needs per-leaf staging buffers; single-leaf mode can delegate directly. */
         if (graph.leaf_subnets.count > 1U &&
             append_format(content, CODE_BUFFER_CAPACITY, &pos,
                 "    ctx->leaves[%zuU].input_buffer = (float*)calloc(%zuU, sizeof(float));\n"
@@ -989,6 +1225,7 @@ ProfStatus prof_codegen_infer(ProfCodegenContext* ctx) {
                 "Failed to append infer buffer allocation");
         }
 
+        /* Reconstruct the typed config blob on the stack and pass it into the backend factory. */
         if (append_format(content, CODE_BUFFER_CAPACITY, &pos,
                 "    {\n"
                 "        %s typed_config;\n"
@@ -1020,6 +1257,7 @@ ProfStatus prof_codegen_infer(ProfCodegenContext* ctx) {
         }
     }
 
+    /* Finish by emitting lifecycle helpers and the public auto-run entry points. */
     if (append_format(content, CODE_BUFFER_CAPACITY, &pos,
             "    return ctx;\n"
             "}\n\n"
@@ -1118,7 +1356,27 @@ ProfStatus prof_codegen_infer(ProfCodegenContext* ctx) {
     return PROF_STATUS_OK;
 }
 
+/**
+ * @section prof_codegen_stage_train Generated training scaffolding
+ *
+ * Training generation mirrors inference generation but adds optimizer-facing
+ * buffers and reverse routing helpers. Keeping the train helpers grouped here
+ * makes it easier to verify that forward scheduling and backward scheduling are
+ * derived from the same flattened graph.
+ */
+
+/**
+ * @brief Emit the inference-side mirror structs reused by generated train.c.
+ *
+ * train.c needs read-only access to the same leaf metadata infer.c already
+ * owns, so it mirrors only the fields required for gradient routing and save/load.
+ * Keeping the definition centralized here prevents the two generated modules
+ * from drifting apart in subtle layout details. The mirror also establishes the
+ * exact ownership boundary between infer-owned forward buffers and train-owned
+ * gradient buffers.
+ */
 static int append_generated_train_infer_mirror(char* buffer, size_t buffer_capacity, size_t* position) {
+    /* Mirror infer-side fields first, then append train-only gradient state. */
     return append_format(
         buffer,
         buffer_capacity,
@@ -1158,7 +1416,20 @@ static int append_generated_train_infer_mirror(char* buffer, size_t buffer_capac
     );
 }
 
+/**
+ * @brief Emit helper routines used internally by generated train.c.
+ *
+ * The generated training helpers keep graph-mode loss accumulation, input
+ * routing, and leaf cleanup logic out of the public entry points. They also
+ * preserve the documented ordering of graph-mode training: forward routing,
+ * sink-loss seeding, reverse gradient propagation, and per-leaf cleanup.
+ */
 static int append_generated_train_helpers(char* buffer, size_t buffer_capacity, size_t* position) {
+    /*
+     * The helper bundle mirrors the graph-training pipeline stage by stage so
+     * the generated public API can read like orchestration code instead of a
+     * wall of buffer-manipulation details.
+     */
     return append_format(
         buffer,
         buffer_capacity,
@@ -1287,6 +1558,14 @@ static int append_generated_train_helpers(char* buffer, size_t buffer_capacity, 
     );
 }
 
+/**
+ * @brief Module stage 5: emit training orchestration and graph backprop glue.
+ *
+ * The generated training module mirrors inference scheduling but layers in
+ * gradient buffers, backward routing, and loss tracking. Keeping its structure
+ * close to infer.c reduces the chance that forward and backward graph views
+ * diverge over time.
+ */
 ProfStatus prof_codegen_train(ProfCodegenContext* ctx) {
     const ProfOutputLayout* layout;
     const NN_NetworkDef* network;
@@ -1307,6 +1586,7 @@ ProfStatus prof_codegen_train(ProfCodegenContext* ctx) {
             "Failed to flatten leaf graph for train generation");
     }
 
+    /* Reuse the same bounded-buffer emission strategy as infer.c for consistency. */
     content = (char*)calloc(CODE_BUFFER_CAPACITY, sizeof(char));
     if (content == NULL) {
         prof_leaf_graph_cleanup(&graph);
@@ -1314,6 +1594,7 @@ ProfStatus prof_codegen_train(ProfCodegenContext* ctx) {
             "Failed to allocate train code buffer");
     }
 
+    /* Emit shared includes first; later fragments assume these contracts are already visible. */
     if (append_format(content, CODE_BUFFER_CAPACITY, &pos,
             "/* train.c - Training module */\n"
             "#include \"train.h\"\n"
@@ -1328,6 +1609,7 @@ ProfStatus prof_codegen_train(ProfCodegenContext* ctx) {
             "Failed to assemble train prologue");
     }
 
+    /* Pull in every backend-specific training config header referenced by a leaf. */
     for (leaf_index = 0U; leaf_index < graph.leaf_subnets.count; ++leaf_index) {
         NNSubnetDef* subnet = graph.leaf_subnets.items[leaf_index];
         if (subnet != NULL && subnet->train_config_header_path != NULL &&
@@ -1340,6 +1622,7 @@ ProfStatus prof_codegen_train(ProfCodegenContext* ctx) {
         }
     }
 
+    /* Append the same structural facts used by inference, then layer on train-only helpers. */
     if (append_format(content, CODE_BUFFER_CAPACITY, &pos, "\n") != 0 ||
         append_leaf_graph_constants(content, CODE_BUFFER_CAPACITY, &pos, network, &graph) != 0 ||
         append_connection_table(content, CODE_BUFFER_CAPACITY, &pos, network, &graph) != 0 ||
@@ -1360,6 +1643,7 @@ ProfStatus prof_codegen_train(ProfCodegenContext* ctx) {
             "Failed to assemble train helper code");
     }
 
+    /* Bind each generated training leaf to the corresponding registered backend contract. */
     for (leaf_index = 0U; leaf_index < graph.leaf_subnets.count; ++leaf_index) {
         NNSubnetDef* subnet = graph.leaf_subnets.items[leaf_index];
         if (subnet == NULL) {
@@ -1411,6 +1695,7 @@ ProfStatus prof_codegen_train(ProfCodegenContext* ctx) {
                 leaf_index,
                 leaf_index,
                 leaf_index) != 0 ||
+            /* Rehydrate typed training config and create the backend-specific train context. */
             append_format(content, CODE_BUFFER_CAPACITY, &pos,
                 "    {\n"
                 "        %s typed_config;\n"
@@ -1444,6 +1729,7 @@ ProfStatus prof_codegen_train(ProfCodegenContext* ctx) {
         }
     }
 
+    /* Emit lifecycle, training-step, epoch, and loss access helpers as the public API. */
     if (append_format(content, CODE_BUFFER_CAPACITY, &pos,
             "    return ctx;\n}\n\n"
             "void train_destroy(void* context) {\n"
@@ -1570,6 +1856,22 @@ ProfStatus prof_codegen_train(ProfCodegenContext* ctx) {
     return PROF_STATUS_OK;
 }
 
+/**
+ * @section prof_codegen_stage_weights Weight compatibility scaffolding
+ *
+ * Save/load emission is split into shared structural arrays plus two runtime
+ * modules. This separation lets both directions reuse the exact same notion of
+ * leaf identity, topology order, and compatibility metadata.
+ */
+
+/**
+ * @brief Emit shared weight-array metadata used by save/load modules.
+ *
+ * Save and load modules both need the same expected leaf IDs, types, and stable
+ * topological order so they can serialize and deserialize compatible files.
+ * Centralizing these arrays avoids the risk that one module silently encodes a
+ * different notion of leaf identity from the other.
+ */
 static int append_weight_runtime_arrays(
     char* buffer,
     size_t buffer_capacity,
@@ -1579,6 +1881,7 @@ static int append_weight_runtime_arrays(
 ) {
     size_t order_index;
 
+    /* Reuse the standard graph constants so save/load share the same leaf numbering. */
     if (append_leaf_graph_constants(buffer, buffer_capacity, position, network, graph) != 0) {
         return -1;
     }
@@ -1613,6 +1916,14 @@ static int append_weight_runtime_arrays(
     return 0;
 }
 
+/**
+ * @brief Module stage 6: emit parameter serialization code with hash metadata.
+ *
+ * Save code must mirror the exact leaf ordering used everywhere else so weight
+ * files remain compatible with the generated loader and runtime metadata. The
+ * emitted file writes a small global header first, then one leaf record per
+ * topology slot, then delegates payload serialization to each backend contract.
+ */
 ProfStatus prof_codegen_weights_save(ProfCodegenContext* ctx) {
     const ProfOutputLayout* layout;
     ProfLeafGraph graph;
@@ -1637,6 +1948,8 @@ ProfStatus prof_codegen_weights_save(ProfCodegenContext* ctx) {
             "Failed to allocate weights_save code buffer");
     }
 
+    /* Emit one compact module that writes metadata followed by ordered leaf payloads. */
+    /* The generated save path never needs the original request object at runtime. */
     if (append_format(content, CODE_BUFFER_CAPACITY, &pos,
             "/* weights_save.c - Weights saving module */\n"
             "#include \"weights_save.h\"\n"
@@ -1723,6 +2036,14 @@ ProfStatus prof_codegen_weights_save(ProfCodegenContext* ctx) {
     return PROF_STATUS_OK;
 }
 
+/**
+ * @brief Module stage 7: emit guarded weight-loading code with hash checks.
+ *
+ * The loader validates hashes, ABI version, leaf count, leaf IDs, and leaf
+ * types before letting any backend-specific deserializer consume file data.
+ * This keeps compatibility failures deterministic and prevents partially loaded
+ * weights from corrupting otherwise valid runtime contexts.
+ */
 ProfStatus prof_codegen_weights_load(ProfCodegenContext* ctx) {
     const ProfOutputLayout* layout;
     ProfLeafGraph graph;
@@ -1747,6 +2068,8 @@ ProfStatus prof_codegen_weights_load(ProfCodegenContext* ctx) {
             "Failed to allocate weights_load code buffer");
     }
 
+    /* Emit a guarded loader that validates metadata before touching leaf state. */
+    /* validate_only mode reuses the same parser so tooling sees identical checks. */
     if (append_format(content, CODE_BUFFER_CAPACITY, &pos,
             "/* weights_load.c - Weights loading module */\n"
             "#include \"weights_load.h\"\n"
@@ -1840,6 +2163,14 @@ ProfStatus prof_codegen_weights_load(ProfCodegenContext* ctx) {
     return PROF_STATUS_OK;
 }
 
+/**
+ * @brief Run every module emitter in the documented generation order.
+ *
+ * Ordering is intentional: metadata and structural headers must exist before the
+ * runtime modules that include them, and save/load must observe the same graph
+ * facts already embedded into infer/train generation. This function is the
+ * concrete implementation of the documented first-fail generation pipeline.
+ */
 ProfStatus prof_codegen_generate_all(ProfCodegenContext* ctx) {
     ProfStatus st;
 
@@ -1847,6 +2178,8 @@ ProfStatus prof_codegen_generate_all(ProfCodegenContext* ctx) {
         return PROF_STATUS_INVALID_ARGUMENT;
     }
 
+    /* Generation order matters because later modules depend on earlier headers. */
+    /* Each call returns immediately on failure to preserve fast-fail diagnostics. */
     st = prof_codegen_metadata(ctx, ctx->output_layout->metadata_path);
     if (st != PROF_STATUS_OK) return st;
     st = prof_codegen_tokenizer(ctx);

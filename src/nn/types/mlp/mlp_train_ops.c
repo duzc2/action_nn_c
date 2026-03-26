@@ -24,6 +24,41 @@
 #define ADAM_BETA2 0.999f
 
 /**
+ * @section mlp_train_design MLP training data flow
+ *
+ * This file carries almost the entire hand-written MLP training pipeline. The
+ * implementation is intentionally organized in layers so profiler-generated code
+ * can reuse the same primitives in both standalone and composed-graph modes:
+ * 1. lightweight helpers expose layer geometry and allocate gradient storage;
+ * 2. loss helpers convert predictions into output gradients;
+ * 3. optimizer helpers consume accumulated gradients and update parameters;
+ * 4. forward/backward helpers perform the actual dense-network training step;
+ * 5. public entry points wrap the internals into checkpoints, reports, and
+ *    graph-compatible APIs.
+ *
+ * The comments below focus on why each stage exists and which invariants it
+ * maintains, because this file is one of the main places where training logic
+ * and generated orchestration code meet.
+ */
+
+/**
+ * @section mlp_train_helpers Low-level helper stage
+ *
+ * The following helpers avoid duplicating shape logic throughout the training
+ * loop. They keep topology lookups, temporary storage allocation, and loss math
+ * in small units so the public entry points remain readable.
+ */
+
+/**
+ * @section mlp_train_grad_storage Gradient and optimizer state ownership
+ *
+ * Each train step needs transient gradients plus optional persistent optimizer
+ * state. The helpers in this section define that ownership model explicitly so
+ * context creation, teardown, and checkpoint logic all agree on where velocity
+ * or Adam moment buffers live.
+ */
+
+/**
  * @brief Get inference layer at index
  *
  * @param infer_ctx Inference context
@@ -65,6 +100,10 @@ static void get_layer_sizes(MlpInferContext* infer_ctx, size_t idx,
 /**
  * @brief Allocate gradient buffer for one layer
  *
+ * The allocation shape mirrors the associated dense layer exactly. Optimizer-
+ * specific state is added only for the selected optimizer so lightweight SGD
+ * configurations do not pay for Adam moment storage they never use.
+ *
  * @param input_size Number of input features
  * @param output_size Number of output features
  * @param optimizer Optimizer type
@@ -88,6 +127,7 @@ static MlpLayerGrad* alloc_gradients(size_t input_size, size_t output_size,
     weight_count = input_size * output_size;
     bias_count = output_size;
 
+    /* Always allocate the raw gradient tensors because every optimizer uses them. */
     grad->weight_grad = (float*)calloc(weight_count, sizeof(float));
     grad->bias_grad = (float*)calloc(bias_count, sizeof(float));
 
@@ -98,6 +138,7 @@ static MlpLayerGrad* alloc_gradients(size_t input_size, size_t output_size,
         return NULL;
     }
 
+    /* Allocate only the optimizer state required by the configured update rule. */
     if (optimizer == MLP_OPT_SGD) {
         grad->velocity_w = (float*)calloc(weight_count, sizeof(float));
         grad->velocity_b = (float*)calloc(bias_count, sizeof(float));
@@ -137,6 +178,9 @@ static MlpLayerGrad* alloc_gradients(size_t input_size, size_t output_size,
 /**
  * @brief Free gradient buffer
  *
+ * Free order mirrors allocation order: common gradient tensors first, then the
+ * optimizer-specific state block chosen for this layer.
+ *
  * @param grad Gradient buffer to free
  * @param optimizer Optimizer type
  */
@@ -162,6 +206,15 @@ static void free_gradients(MlpLayerGrad* grad, MlpOptimizerType optimizer) {
 }
 
 /**
+ * @section mlp_train_loss_helpers Loss and local-derivative helpers
+ *
+ * Loss helpers convert user-visible predictions and targets into the exact
+ * output gradient consumed by backpropagation. Keeping them separate from the
+ * reverse sweep makes it easy for graph-mode training to bypass task loss and
+ * inject an externally computed dL/dY directly.
+ */
+
+/**
  * @brief Compute softmax derivative for cross-entropy loss
  *
  * For cross-entropy with softmax, gradient simplifies to:
@@ -175,6 +228,7 @@ static void free_gradients(MlpLayerGrad* grad, MlpOptimizerType optimizer) {
 static void softmax_cross_entropy_grad(const float* output, const float* target,
                                        float* grad, size_t size) {
     size_t i;
+    /* Softmax + cross-entropy collapses to prediction minus target elementwise. */
     for (i = 0; i < size; i++) {
         grad[i] = output[i] - target[i];
     }
@@ -196,6 +250,7 @@ static float mse_loss(const float* pred, const float* target,
     size_t i;
     float loss = 0.0f;
 
+    /* Accumulate both scalar loss and output-layer gradient in one linear pass. */
     for (i = 0; i < size; i++) {
         float diff = pred[i] - target[i];
         loss += diff * diff;
@@ -222,6 +277,7 @@ static float cross_entropy_loss(const float* pred, const float* target,
     float loss = 0.0f;
     float clip_pred;
 
+    /* Clip probabilities to keep log() finite and gradient generation stable. */
     for (i = 0; i < size; i++) {
         clip_pred = pred[i] > 1e-7f ? pred[i] : 1e-7f;
         clip_pred = clip_pred < 1.0f - 1e-7f ? clip_pred : 1.0f - 1e-7f;
@@ -232,6 +288,14 @@ static float cross_entropy_loss(const float* pred, const float* target,
 
     return loss;
 }
+
+/**
+ * @section mlp_train_activation_helpers Reverse local derivative helpers
+ *
+ * The backward pass needs activation-specific local derivatives after each
+ * layer's output gradient has been formed. Applying them in one helper keeps
+ * the reverse sweep focused on data flow rather than per-activation formulas.
+ */
 
 /**
  * @brief Derivative of activation function
@@ -246,6 +310,7 @@ static void activation_derivative(MlpActivationType activation,
                                    float* grad, size_t size) {
     size_t i;
 
+    /* Gradients are modified in place because the caller already owns dL/dY. */
     switch (activation) {
         case MLP_ACT_RELU:
             for (i = 0; i < size; i++) {
@@ -282,19 +347,21 @@ static void activation_derivative(MlpActivationType activation,
 }
 
 /**
- * @brief Update parameters with SGD+momentum
+ * @section mlp_train_optimizer_helpers Parameter update rules
  *
- * v = momentum * v - lr * grad
- * w = w + v
+ * Once dL/dW and dL/dB have been computed for each layer, the selected
+ * optimizer consumes those tensors and mutates the live inference weights.
+ * The training pipeline keeps optimizer logic isolated here so changing the
+ * update rule does not affect forward/backward math.
+ */
+
+/**
+ * @brief Optimizer stage: apply SGD with optional momentum buffers.
  *
- * @param weights Weight parameters
- * @param bias Bias parameters
- * @param grad Gradient buffer
- * @param lr Learning rate
- * @param momentum Momentum coefficient
- * @param weight_decay Weight decay coefficient
- * @param weight_count Number of weights
- * @param bias_count Number of biases
+ * The implementation keeps classical momentum state inside the per-layer
+ * gradient object so repeated training steps can reuse the same velocity
+ * vectors. Weight decay is injected directly into the weight gradient, while
+ * bias updates intentionally skip decay to match common dense-layer practice.
  */
 static void update_sgd(float* weights, float* bias,
                        const MlpLayerGrad* grad,
@@ -302,12 +369,14 @@ static void update_sgd(float* weights, float* bias,
                        size_t weight_count, size_t bias_count) {
     size_t i;
 
+    /* Velocity buffers carry step-to-step momentum for each parameter tensor. */
     for (i = 0; i < weight_count; i++) {
         grad->velocity_w[i] = momentum * grad->velocity_w[i] -
                               lr * (grad->weight_grad[i] + weight_decay * weights[i]);
         weights[i] += grad->velocity_w[i];
     }
 
+    /* Biases follow the same momentum rule without L2 decay injection. */
     for (i = 0; i < bias_count; i++) {
         grad->velocity_b[i] = momentum * grad->velocity_b[i] -
                               lr * grad->bias_grad[i];
@@ -316,20 +385,12 @@ static void update_sgd(float* weights, float* bias,
 }
 
 /**
- * @brief Update parameters with Adam optimizer
+ * @brief Optimizer stage: apply Adam moments and bias correction.
  *
- * m = beta1 * m + (1-beta1) * grad
- * v = beta2 * v + (1-beta2) * grad^2
- * w = w - lr * m / (sqrt(v) + eps)
- *
- * @param weights Weight parameters
- * @param bias Bias parameters
- * @param grad Gradient buffer
- * @param lr Learning rate
- * @param weight_decay Weight decay coefficient
- * @param t Current step number
- * @param weight_count Number of weights
- * @param bias_count Number of biases
+ * Adam keeps first and second moments inside the gradient object so the
+ * optimizer state follows the layer wherever generated code stores it. Bias
+ * correction uses the effective step count supplied by the caller, which keeps
+ * the helper stateless apart from the moment buffers themselves.
  */
 static void update_adam(float* weights, float* bias,
                         const MlpLayerGrad* grad,
@@ -343,11 +404,13 @@ static void update_adam(float* weights, float* bias,
     float beta1_pow_t;
     float beta2_pow_t;
 
+    /* Caller supplies the global step so bias correction stays consistent. */
     beta1_pow_t = powf(grad->beta1, (float)t);
     beta2_pow_t = powf(grad->beta2, (float)t);
 
     lr_corr = lr * sqrtf(1.0f - beta2_pow_t) / (1.0f - beta1_pow_t);
 
+    /* Update dense weights using moment estimates of the same tensor shape. */
     for (i = 0; i < weight_count; i++) {
         grad->m_w[i] = grad->beta1 * grad->m_w[i] +
                        (1.0f - grad->beta1) * grad->weight_grad[i];
@@ -360,6 +423,7 @@ static void update_adam(float* weights, float* bias,
         weights[i] -= lr_corr * m_corr_w / (sqrtf(v_corr_w) + ADAM_EPS);
     }
 
+    /* Bias parameters carry their own first/second moments just like weights. */
     for (i = 0; i < bias_count; i++) {
         grad->m_b[i] = grad->beta1 * grad->m_b[i] +
                        (1.0f - grad->beta1) * grad->bias_grad[i];
@@ -374,16 +438,20 @@ static void update_adam(float* weights, float* bias,
 }
 
 /**
- * @brief Forward pass storing intermediate outputs
+ * @section mlp_train_execution_helpers Forward, backward, and update pipeline
  *
- * For training, we need to store activations for backprop.
- * This simplified version performs forward pass and computes loss gradient.
+ * These helpers form the core execution path used by both standalone training
+ * and graph-mode training. They keep the three conceptual stages separate:
+ * cache activations, propagate gradients, then apply optimizer updates.
+ */
+
+/**
+ * @brief Forward stage: run the network and convert predictions into loss terms.
  *
- * @param ctx Training context
- * @param input Input data
- * @param target Target data
- * @param loss Output loss value
- * @return 0 on success, -1 on failure
+ * Training needs more than the final output: every layer input and activation is
+ * cached so the backward stage can reconstruct local derivatives without
+ * rerunning the network. The helper therefore performs both user-visible work
+ * (latest output/loss) and bookkeeping work (activation storage).
  */
 static int train_forward_pass(MlpTrainContext* ctx,
                               const float* input) {
@@ -402,14 +470,17 @@ static int train_forward_pass(MlpTrainContext* ctx,
         return -1;
     }
 
+    /* Cache the original sample because backprop needs it later. */
     memcpy(ctx->input_buffer, input, infer_ctx->config.input_size * sizeof(float));
 
+    /* Materialize each layer activation so the backward pass can reuse it. */
     for (i = 0; i < infer_ctx->layer_count; i++) {
         current_input = (i == 0U) ? ctx->input_buffer : ctx->activations[i - 1U];
         layer = infer_ctx->layers[i];
         mlp_dense_forward(layer, ctx->activations[i], current_input);
     }
 
+    /* Mirror the final activation into the infer context so shared callers see fresh outputs. */
     memcpy(infer_ctx->output_buffer,
            ctx->activations[infer_ctx->layer_count - 1U],
            infer_ctx->config.output_size * sizeof(float));
@@ -417,6 +488,13 @@ static int train_forward_pass(MlpTrainContext* ctx,
     return 0;
 }
 
+/**
+ * @brief Backward stage: propagate gradients through every dense layer.
+ *
+ * The reverse sweep computes three things in lockstep: activation derivatives,
+ * parameter gradients for the current layer, and the input gradient that becomes
+ * the next layer's output gradient when moving backward.
+ */
 static int train_backward_pass(
     MlpTrainContext* ctx,
     const float* output_gradient,
@@ -435,6 +513,7 @@ static int train_backward_pass(
 
     infer_ctx = (MlpInferContext*)ctx->infer_ctx;
     max_size = infer_ctx->max_buffer_size;
+    /* Two scratch buffers are enough because backprop only needs adjacent layer deltas. */
     current_delta = (float*)calloc(max_size, sizeof(float));
     next_delta = (float*)calloc(max_size, sizeof(float));
     if (current_delta == NULL || next_delta == NULL) {
@@ -443,8 +522,10 @@ static int train_backward_pass(
         return -1;
     }
 
+    /* Seed the reverse sweep with dL/dY from the chosen loss function. */
     memcpy(current_delta, output_gradient, infer_ctx->config.output_size * sizeof(float));
 
+    /* Walk layers from output back to input exactly once. */
     for (layer_cursor = infer_ctx->layer_count; layer_cursor > 0U; --layer_cursor) {
         size_t layer_index = layer_cursor - 1U;
         MlpDenseLayer* layer = infer_ctx->layers[layer_index];
@@ -454,11 +535,14 @@ static int train_backward_pass(
         size_t output_index;
         size_t input_index;
 
+        /* Reset the previous-layer accumulator before filling it. */
         memset(next_delta, 0, max_size * sizeof(float));
+        /* Convert dL/dA into dL/dZ using the stored post-activation outputs. */
         activation_derivative(layer->activation, ctx->activations[layer_index], current_delta, output_size);
 
         prev_activation = (layer_index == 0U) ? ctx->input_buffer : ctx->activations[layer_index - 1U];
 
+        /* Compute both parameter gradients and dL/dX for the previous layer. */
         for (output_index = 0U; output_index < output_size; ++output_index) {
             grad->bias_grad[output_index] = current_delta[output_index];
             for (input_index = 0U; input_index < input_size; ++input_index) {
@@ -469,10 +553,12 @@ static int train_backward_pass(
             }
         }
 
+        /* Graph mode may request dL/dX from the first layer for upstream propagation. */
         if (layer_index == 0U && input_gradient != NULL) {
             memcpy(input_gradient, next_delta, input_size * sizeof(float));
         }
 
+        /* The freshly produced input delta becomes the next loop iteration's output delta. */
         memcpy(current_delta, next_delta, input_size * sizeof(float));
     }
 
@@ -482,10 +568,11 @@ static int train_backward_pass(
 }
 
 /**
- * @brief Update parameters using stored gradients
+ * @brief Update stage: dispatch the accumulated gradients to the selected optimizer.
  *
- * @param ctx Training context
- * @param step Current step number (for Adam)
+ * The forward and backward stages deliberately stay optimizer-agnostic. This
+ * helper is the single point where the chosen update rule is applied, which
+ * keeps SGD/Adam selection out of the math-heavy parts of the training step.
  */
 static void train_update(MlpTrainContext* ctx, size_t step) {
     MlpInferContext* infer_ctx;
@@ -502,6 +589,7 @@ static void train_update(MlpTrainContext* ctx, size_t step) {
     infer_ctx = (MlpInferContext*)ctx->infer_ctx;
     lr = ctx->config.learning_rate;
 
+    /* Apply the chosen optimizer layer by layer in the same order as forward execution. */
     for (i = 0; i < infer_ctx->layer_count; i++) {
         layer = infer_ctx->layers[i];
         get_layer_sizes(infer_ctx, i, &input_size, &output_size);
@@ -518,6 +606,13 @@ static void train_update(MlpTrainContext* ctx, size_t step) {
     }
 }
 
+/**
+ * @brief Public API stage: create the training context that wraps inference state.
+ *
+ * The training context borrows the live inference network and adds everything
+ * needed for learning around it: activation caches, gradient tensors, optimizer
+ * state, and rolling statistics.
+ */
 MlpTrainContext* nn_mlp_train_create(void* infer_ctx, const MlpTrainConfig* config) {
     MlpTrainContext* ctx;
     MlpInferContext* mlp_ctx;
@@ -538,6 +633,7 @@ MlpTrainContext* nn_mlp_train_create(void* infer_ctx, const MlpTrainConfig* conf
         return NULL;
     }
 
+    /* Copy user configuration once so later training steps can stay allocation free. */
     if (config != NULL) {
         ctx->config = *config;
     } else {
@@ -553,6 +649,7 @@ MlpTrainContext* nn_mlp_train_create(void* infer_ctx, const MlpTrainConfig* conf
         max_size = mlp_ctx->config.output_size;
     }
 
+    /* Allocate all top-level arrays up front so creation fails early and cleanly. */
     ctx->grads = (MlpLayerGrad*)calloc(ctx->layer_count, sizeof(MlpLayerGrad));
     ctx->activations = (float**)calloc(ctx->layer_count, sizeof(float*));
     ctx->input_buffer = (float*)malloc(max_size * sizeof(float));
@@ -570,6 +667,7 @@ MlpTrainContext* nn_mlp_train_create(void* infer_ctx, const MlpTrainConfig* conf
         return NULL;
     }
 
+    /* Each layer receives activation storage, gradients, and optimizer state. */
     for (i = 0; i < ctx->layer_count; i++) {
         get_layer_sizes(mlp_ctx, i, &input_size, &output_size);
         ctx->activations[i] = (float*)calloc(output_size, sizeof(float));
@@ -592,6 +690,7 @@ MlpTrainContext* nn_mlp_train_create(void* infer_ctx, const MlpTrainConfig* conf
             return NULL;
         }
 
+        /* Optimizer-specific state is allocated only for the configured algorithm. */
         if (ctx->config.optimizer == MLP_OPT_SGD) {
             ctx->grads[i].velocity_w = (float*)calloc(input_size * output_size, sizeof(float));
             ctx->grads[i].velocity_b = (float*)calloc(output_size, sizeof(float));
@@ -645,6 +744,12 @@ MlpTrainContext* nn_mlp_train_create(void* infer_ctx, const MlpTrainConfig* conf
     return ctx;
 }
 
+/**
+ * @brief Release the training context and every auxiliary buffer it owns.
+ *
+ * Destruction must mirror creation carefully because parts of the state are
+ * common to all optimizers while other parts are algorithm-specific.
+ */
 void nn_mlp_train_destroy(MlpTrainContext* ctx) {
     size_t i;
 
@@ -652,6 +757,7 @@ void nn_mlp_train_destroy(MlpTrainContext* ctx) {
         return;
     }
 
+    /* Free per-layer optimizer state before dropping shared arrays. */
     for (i = 0; i < ctx->layer_count; i++) {
         if (ctx->config.optimizer == MLP_OPT_SGD) {
             free(ctx->grads[i].velocity_w);
@@ -675,6 +781,12 @@ void nn_mlp_train_destroy(MlpTrainContext* ctx) {
     free(ctx);
 }
 
+/**
+ * @brief Run one full supervised update using raw input and target buffers.
+ *
+ * This is the canonical path used by standalone training. It executes the full
+ * forward-loss-backward-update cycle and records the resulting loss history.
+ */
 int nn_mlp_train_step_with_data(MlpTrainContext* ctx, const float* input, const float* target) {
     float loss;
     int rc;
@@ -687,11 +799,13 @@ int nn_mlp_train_step_with_data(MlpTrainContext* ctx, const float* input, const 
 
     infer_ctx = (MlpInferContext*)ctx->infer_ctx;
 
+    /* Stage 1: refresh activations and mirrored inference outputs. */
     rc = train_forward_pass(ctx, input);
     if (rc != 0) {
         return rc;
     }
 
+    /* Stage 2: compute loss and seed the output-layer gradient buffer. */
     memcpy(ctx->target_buffer, target, infer_ctx->config.output_size * sizeof(float));
     if (ctx->config.loss_func == MLP_LOSS_MSE) {
         loss = mse_loss(infer_ctx->output_buffer, target, ctx->loss_buffer,
@@ -701,11 +815,13 @@ int nn_mlp_train_step_with_data(MlpTrainContext* ctx, const float* input, const 
                                   infer_ctx->config.output_size);
     }
 
+    /* Stage 3: backpropagate dL/dY through the full network. */
     rc = train_backward_pass(ctx, ctx->loss_buffer, NULL);
     if (rc != 0) {
         return rc;
     }
 
+    /* Stage 4: update parameters and training statistics. */
     ctx->total_steps++;
     train_update(ctx, ctx->total_steps);
 
@@ -714,6 +830,7 @@ int nn_mlp_train_step_with_data(MlpTrainContext* ctx, const float* input, const 
         ctx->loss_history_count++;
     }
 
+    /* Keep the borrowed infer context synchronized with the latest training pass. */
     if (infer_ctx != NULL) {
         for (i = 0; i < infer_ctx->config.output_size; i++) {
             infer_ctx->output_buffer[i] = ctx->activations[infer_ctx->layer_count - 1U][i];
@@ -723,6 +840,12 @@ int nn_mlp_train_step_with_data(MlpTrainContext* ctx, const float* input, const 
     return 0;
 }
 
+/**
+ * @brief Extended single-step API that returns loss and optional predictions.
+ *
+ * This wrapper exposes richer per-step reporting without duplicating the core
+ * forward/backward/update choreography used by the simpler entry point.
+ */
 int nn_mlp_train_step_ex(MlpTrainContext* ctx,
                           const MlpTrainStepInput* step_in,
                           MlpTrainStepOutput* step_out) {
@@ -741,6 +864,7 @@ int nn_mlp_train_step_ex(MlpTrainContext* ctx,
 
     infer_ctx = (MlpInferContext*)ctx->infer_ctx;
 
+    /* Run the same four-stage pipeline as the plain step API. */
     rc = train_forward_pass(ctx, step_in->input);
     if (rc != 0) {
         return rc;
@@ -764,6 +888,7 @@ int nn_mlp_train_step_ex(MlpTrainContext* ctx,
 
     step_out->loss = loss;
 
+    /* Prediction export is optional so callers can avoid copies when they only need loss. */
     if (step_out->predictions != NULL && infer_ctx != NULL) {
         for (i = 0; i < infer_ctx->config.output_size; i++) {
             step_out->predictions[i] = infer_ctx->output_buffer[i];
@@ -778,6 +903,13 @@ int nn_mlp_train_step_ex(MlpTrainContext* ctx,
     return 0;
 }
 
+/**
+ * @brief Run one graph-mode training step with an externally supplied gradient.
+ *
+ * Composite graphs use this path when the MLP is one leaf among many. The leaf
+ * does not compute its own task loss in that case; it simply consumes dL/dY and
+ * optionally returns dL/dX for the previous graph edge.
+ */
 int nn_mlp_train_step_with_output_gradient(
     MlpTrainContext* ctx,
     const float* input,
@@ -790,11 +922,13 @@ int nn_mlp_train_step_with_output_gradient(
         return -1;
     }
 
+    /* Graph mode still needs a fresh forward pass to populate activations. */
     rc = train_forward_pass(ctx, input);
     if (rc != 0) {
         return rc;
     }
 
+    /* Backprop starts from caller-supplied dL/dY instead of a locally computed loss. */
     rc = train_backward_pass(ctx, output_gradient, input_gradient);
     if (rc != 0) {
         return rc;
@@ -805,6 +939,13 @@ int nn_mlp_train_step_with_output_gradient(
     return 0;
 }
 
+/**
+ * @brief Public API stage: run a caller-driven multi-epoch training loop.
+ *
+ * The loop intentionally reuses the single-step entry point rather than open-
+ * coding optimizer logic a second time. That keeps loss accounting, gradient
+ * clearing, and parameter updates consistent across batch and single-sample use.
+ */
 int nn_mlp_train_run_auto(MlpTrainContext* ctx, size_t epochs,
                            const float* input, const float* target,
                            size_t sample_count) {
@@ -824,6 +965,7 @@ int nn_mlp_train_run_auto(MlpTrainContext* ctx, size_t epochs,
         batch_size = 1;
     }
 
+    /* Reuse the single-step path so optimizer behaviour stays centralized. */
     for (e = 0; e < epochs; e++) {
         for (s = 0; s < sample_count; s += batch_size) {
             size_t offset_in = s * infer_ctx->config.input_size;
@@ -834,6 +976,7 @@ int nn_mlp_train_run_auto(MlpTrainContext* ctx, size_t epochs,
                 actual_batch = sample_count - s;
             }
 
+            /* Single-sample batches can reuse the caller's memory directly. */
             if (actual_batch == 1) {
                 rc = nn_mlp_train_step_with_data(ctx,
                                        input + offset_in,
@@ -843,6 +986,7 @@ int nn_mlp_train_run_auto(MlpTrainContext* ctx, size_t epochs,
                 float batch_target[256];
                 size_t k;
 
+                /* Materialize one contiguous temporary batch for the helper path. */
                 for (k = 0; k < actual_batch; k++) {
                     memcpy(batch_input + k * infer_ctx->config.input_size,
                            input + (s + k) * infer_ctx->config.input_size,
@@ -860,12 +1004,19 @@ int nn_mlp_train_run_auto(MlpTrainContext* ctx, size_t epochs,
             }
         }
 
+        /* Epoch accounting is advanced only after the full sample sweep succeeds. */
         ctx->total_epochs++;
     }
 
     return 0;
 }
 
+/**
+ * @brief Compute loss only, without mutating parameters or optimizer state.
+ *
+ * Callers use this helper for reporting and checkpoint selection when they want
+ * the configured loss semantics without running another training update.
+ */
 float nn_mlp_train_compute_loss(MlpTrainContext* ctx,
                                  const float* predictions,
                                  const float* targets,
@@ -877,6 +1028,7 @@ float nn_mlp_train_compute_loss(MlpTrainContext* ctx,
         return 0.0f;
     }
 
+    /* Use the same configured loss policy as the training step APIs. */
     if (ctx->config.loss_func == MLP_LOSS_MSE) {
         loss = mse_loss(predictions, targets, grad, count);
     } else {
@@ -886,6 +1038,12 @@ float nn_mlp_train_compute_loss(MlpTrainContext* ctx,
     return loss;
 }
 
+/**
+ * @brief Checkpoint stage: serialize parameters plus optimizer and progress data.
+ *
+ * The checkpoint header captures compatibility metadata first so loaders can
+ * reject stale files before mutating any in-memory tensor.
+ */
 int nn_mlp_train_save_checkpoint(MlpTrainContext* ctx, FILE* fp, float best_loss) {
     MlpInferContext* infer_ctx;
     MlpCheckpointHeader header;
@@ -907,9 +1065,11 @@ int nn_mlp_train_save_checkpoint(MlpTrainContext* ctx, FILE* fp, float best_loss
     header.step = (uint32_t)ctx->total_steps;
     header.best_loss = best_loss;
 
+    /* Header comes first because hash/layout validation must precede tensor reads. */
     rc = (int)fwrite(&header, sizeof(header), 1, fp);
     if (rc != 1) return 0;
 
+    /* Parameter payload is written layer-major to match the loader exactly. */
     for (i = 0; i < infer_ctx->layer_count; i++) {
         MlpDenseLayer* layer = infer_ctx->layers[i];
 
@@ -930,6 +1090,12 @@ int nn_mlp_train_save_checkpoint(MlpTrainContext* ctx, FILE* fp, float best_loss
     return 1;
 }
 
+/**
+ * @brief Checkpoint stage: restore parameters only after hash/layout validation.
+ *
+ * Loading is intentionally conservative: nothing is written into the live model
+ * until the checkpoint header proves that network and layout hashes match.
+ */
 int nn_mlp_train_load_checkpoint(MlpTrainContext* ctx, FILE* fp,
                                   uint64_t current_hash,
                                   uint64_t current_layout_hash) {
@@ -942,6 +1108,7 @@ int nn_mlp_train_load_checkpoint(MlpTrainContext* ctx, FILE* fp,
         return 0;
     }
 
+    /* Validate checkpoint compatibility before touching any layer tensors. */
     rc = (int)fread(&header, sizeof(header), 1, fp);
     if (rc != 1) return 0;
 
@@ -952,6 +1119,7 @@ int nn_mlp_train_load_checkpoint(MlpTrainContext* ctx, FILE* fp,
 
     infer_ctx = (MlpInferContext*)ctx->infer_ctx;
 
+    /* Tensor order mirrors the save path so restore can remain a simple stream read. */
     for (i = 0; i < infer_ctx->layer_count; i++) {
         MlpDenseLayer* layer = infer_ctx->layers[i];
 
@@ -969,6 +1137,7 @@ int nn_mlp_train_load_checkpoint(MlpTrainContext* ctx, FILE* fp,
         }
     }
 
+    /* Progress counters are restored only after every tensor read succeeds. */
     ctx->total_epochs = header.epoch;
     ctx->total_steps = header.step;
     ctx->checkpoint_network_hash = header.network_hash;
@@ -977,6 +1146,12 @@ int nn_mlp_train_load_checkpoint(MlpTrainContext* ctx, FILE* fp,
     return 1;
 }
 
+/**
+ * @brief Checkpoint stage: inspect a checkpoint header without mutating runtime state.
+ *
+ * Tooling can call this helper when it needs a compatibility probe but does not
+ * want to allocate or modify a live training context.
+ */
 int nn_mlp_train_validate_checkpoint(FILE* fp,
                                       uint64_t current_hash,
                                       uint64_t current_layout_hash) {
@@ -987,6 +1162,7 @@ int nn_mlp_train_validate_checkpoint(FILE* fp,
         return 0;
     }
 
+    /* Validation intentionally stops after the header because no payload read is required. */
     rc = (int)fread(&header, sizeof(header), 1, fp);
     if (rc != 1) return 0;
 
@@ -998,6 +1174,12 @@ int nn_mlp_train_validate_checkpoint(FILE* fp,
     return 1;
 }
 
+/**
+ * @brief Report coarse training statistics accumulated in the context.
+ *
+ * The rolling average is intentionally based on the loss-history ring buffer so
+ * callers get a recent trend instead of an average across the full lifetime.
+ */
 void nn_mlp_train_get_stats(MlpTrainContext* ctx,
                              size_t* out_epochs,
                              size_t* out_steps,
@@ -1021,6 +1203,7 @@ void nn_mlp_train_get_stats(MlpTrainContext* ctx,
         *out_avg_loss = 0.0f;
         if (ctx->loss_history_count > 0) {
             total = 0.0f;
+            /* Average only the populated portion of the ring buffer. */
             for (i = 0; i < ctx->loss_history_count; i++) {
                 total += ctx->loss_history[i];
             }
@@ -1030,13 +1213,11 @@ void nn_mlp_train_get_stats(MlpTrainContext* ctx,
 }
 
 /**
- * @brief Wrapper for registry-compatible train step
+ * @brief Compatibility wrapper that exposes the minimal single-step training hook.
  *
- * Adapter function that converts void* context to MlpTrainContext*
- * for registration in the train registry.
- *
- * @param context Void pointer to MlpTrainContext
- * @return 0 on success, -1 on failure
+ * The registry-facing contract uses a generic void* signature and does not pass
+ * sample buffers directly. This wrapper therefore manufactures a zero-valued
+ * sample of bounded size and forwards into the richer data-driven entry point.
  */
 int nn_mlp_train_step(void* context) {
     MlpTrainContext* ctx;
@@ -1050,6 +1231,7 @@ int nn_mlp_train_step(void* context) {
 
     ctx = (MlpTrainContext*)context;
 
+    /* The compatibility hook uses a fixed tiny sample purely to satisfy the registry signature. */
     for (i = 0; i < 16; i++) {
         dummy_input[i] = 0.0f;
         dummy_target[i] = 0.0f;

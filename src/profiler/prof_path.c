@@ -1,6 +1,11 @@
 /**
  * @file prof_path.c
- * @brief Shared profiler path utilities implementation
+ * @brief Shared profiler path utilities implementation.
+ *
+ * Generated files must be written exactly where the caller requested them. That
+ * means profiler code cannot rely on pre-existing directories or hard-coded
+ * source-tree paths; it must create missing directories defensively and stop on
+ * the first filesystem error.
  */
 
 #include "prof_path.h"
@@ -17,14 +22,14 @@
 #endif
 
 /**
- * @brief Check whether a character is a directory separator.
+ * @brief Treat both slash styles as valid directory separators.
  */
 static int prof_is_dir_separator(char ch) {
     return ch == '/' || ch == '\\';
 }
 
 /**
- * @brief Create one directory level if missing.
+ * @brief Create one directory level if it does not already exist.
  */
 static ProfStatus prof_mkdir_if_needed(const char* path) {
     int rc;
@@ -41,6 +46,9 @@ static ProfStatus prof_mkdir_if_needed(const char* path) {
     return PROF_STATUS_IO_FAILED;
 }
 
+/**
+ * @brief Recursively ensure a directory path exists.
+ */
 ProfStatus prof_path_ensure_directory(const char* dir_path) {
     char buffer[512];
     size_t len;
@@ -51,9 +59,11 @@ ProfStatus prof_path_ensure_directory(const char* dir_path) {
         return PROF_STATUS_PATH_INVALID;
     }
 
+    /* Work on a private copy because the algorithm inserts temporary terminators. */
     strncpy(buffer, dir_path, sizeof(buffer) - 1U);
     buffer[sizeof(buffer) - 1U] = '\0';
 
+    /* Strip trailing separators so the final mkdir call receives a real segment. */
     len = strlen(buffer);
     while (len > 0U && prof_is_dir_separator(buffer[len - 1U])) {
         buffer[len - 1U] = '\0';
@@ -64,6 +74,7 @@ ProfStatus prof_path_ensure_directory(const char* dir_path) {
         return PROF_STATUS_PATH_INVALID;
     }
 
+    /* Preserve drive roots and UNC-like leading separators when walking segments. */
     start = 0U;
     if (len >= 2U && buffer[1] == ':') {
         start = 2U;
@@ -74,6 +85,7 @@ ProfStatus prof_path_ensure_directory(const char* dir_path) {
         start = 1U;
     }
 
+    /* Create intermediate segments from left to right to mirror mkdir -p. */
     for (i = start; i < len; i++) {
         if (prof_is_dir_separator(buffer[i])) {
             char saved = buffer[i];
@@ -92,6 +104,9 @@ ProfStatus prof_path_ensure_directory(const char* dir_path) {
     return prof_mkdir_if_needed(buffer);
 }
 
+/**
+ * @brief Ensure the parent directory of a file path exists.
+ */
 ProfStatus prof_path_ensure_parent_directory(const char* file_path) {
     char buffer[512];
     char* last_sep;
@@ -103,11 +118,13 @@ ProfStatus prof_path_ensure_parent_directory(const char* file_path) {
     strncpy(buffer, file_path, sizeof(buffer) - 1U);
     buffer[sizeof(buffer) - 1U] = '\0';
 
+    /* Search for the last path separator using both Windows and POSIX styles. */
     last_sep = strrchr(buffer, '/');
     if (last_sep == NULL) {
         last_sep = strrchr(buffer, '\\');
     }
 
+    /* A bare filename has no parent directory requirement. */
     if (last_sep == NULL) {
         return PROF_STATUS_OK;
     }

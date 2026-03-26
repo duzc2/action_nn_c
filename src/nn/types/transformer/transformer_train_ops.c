@@ -1,8 +1,34 @@
+/**
+ * @file transformer_train_ops.c
+ * @brief Tiny transformer-style training backend used by generated code.
+ *
+ * This backend keeps training intentionally lightweight so the generated
+ * pipeline can demonstrate graph training, checkpointing, and registry-based
+ * dispatch without requiring a production-scale transformer implementation.
+ */
+
 #include "transformer_train_ops.h"
 
 #include <math.h>
 #include <string.h>
 
+/**
+ * @section transformer_train_design Tiny transformer training notes
+ *
+ * The transformer demo uses an intentionally lightweight training rule: predict
+ * an answer class, compare it with the target class, and nudge the classifier
+ * and selected embedding weights toward lower loss. The goal is not to model a
+ * full modern optimizer, but to expose enough structure for profiler-generated
+ * training and checkpoint flows to exercise a non-trivial backend.
+ */
+
+/**
+ * @brief Forward scratch space reused by the training step.
+ *
+ * Training needs the same intermediate tensors as inference, but it also needs
+ * them grouped into one cache object so classifier gradients can be derived
+ * without mutating the persistent inference context mid-step.
+ */
 typedef struct {
     size_t seq_length;
     uint8_t tokens[TRANSFORMER_MAX_SEQ_LENGTH];
@@ -19,6 +45,9 @@ typedef struct {
     float probabilities[TRANSFORMER_MAX_RESPONSE_CLASSES];
 } TransformerTrainCache;
 
+/**
+ * @brief Normalize a probability vector in-place with softmax.
+ */
 static void transformer_softmax(float* values, size_t count) {
     float max_value = values[0];
     float sum = 0.0f;
@@ -48,6 +77,9 @@ static void transformer_softmax(float* values, size_t count) {
     }
 }
 
+/**
+ * @brief Compute the Euclidean norm used to scale gradient updates.
+ */
 static float transformer_vector_norm(const float* values, size_t count) {
     float sum = 0.0f;
     size_t index;
@@ -59,6 +91,9 @@ static float transformer_vector_norm(const float* values, size_t count) {
     return sqrtf(sum + 1.0e-6f);
 }
 
+/**
+ * @brief Apply one normalized gradient update to a dense parameter vector.
+ */
 static void transformer_apply_gradient(float* parameter, float gradient, float learning_rate) {
     if (gradient > 5.0f) {
         gradient = 5.0f;
@@ -68,6 +103,13 @@ static void transformer_apply_gradient(float* parameter, float gradient, float l
     *parameter -= learning_rate * gradient;
 }
 
+/**
+ * @brief Forward stage: run class prediction while collecting training buffers.
+ *
+ * Training reuses the inference-style forward path but preserves extra cached
+ * values needed for loss evaluation and lightweight parameter updates. Keeping
+ * that logic in one helper prevents prediction and training from diverging.
+ */
 static void transformer_run_training_forward(
     const TransformerInferContext* context,
     const char* question,
@@ -79,6 +121,7 @@ static void transformer_run_training_forward(
     size_t output_index;
     float scale;
 
+    /* Stage 1: tokenize the question and reset scratch buffers. */
     (void)memset(cache, 0, sizeof(*cache));
     cache->seq_length = nn_transformer_tokenize_text(
         question,
@@ -86,6 +129,10 @@ static void transformer_run_training_forward(
         context->max_seq_length
     );
 
+    /* Stage 2: build token-plus-position input states. */
+    /* Stage 3: form query/key/value projections for each token. */
+    /* Stage 4: compute normalized attention weights for every token pair. */
+    /* Stage 5: aggregate attended states, project them, and mean-pool. */
     for (seq_index = 0U; seq_index < cache->seq_length; ++seq_index) {
         uint8_t token_id = cache->tokens[seq_index];
         for (feature_index = 0U; feature_index < context->model_dim; ++feature_index) {
@@ -157,6 +204,7 @@ static void transformer_run_training_forward(
         }
     }
 
+    /* Stage 6: score the pooled sentence representation against each class. */
     for (output_index = 0U; output_index < context->class_count; ++output_index) {
         float dot = 0.0f;
         float pooled_norm = transformer_vector_norm(cache->pooled, context->model_dim);
@@ -177,6 +225,15 @@ static void transformer_run_training_forward(
     transformer_softmax(cache->probabilities, context->class_count);
 }
 
+/**
+ * @brief Public API stage: perform one supervised update on question/answer text.
+ *
+ * This path treats the target answer as a class label, computes cross-entropy
+ * on the predicted class distribution, and then nudges classifier parameters
+ * and the target-class prototype toward the current pooled sentence feature.
+ * The simplified update rule is deliberate: it keeps the demo backend readable
+ * while still exercising the profiler's training contracts end to end.
+ */
 int nn_transformer_train_step(void* context) {
     TransformerTrainContext* train_ctx = (TransformerTrainContext*)context;
     TransformerInferContext* infer_ctx;
@@ -195,11 +252,13 @@ int nn_transformer_train_step(void* context) {
     }
 
     infer_ctx = train_ctx->infer_ctx;
+    /* Lazily map the target answer text into a trainable classifier slot. */
     target_class = nn_transformer_find_or_add_class(infer_ctx, train_ctx->current_answer);
     if (target_class < 0) {
         return -1;
     }
 
+    /* Reuse the shared forward routine so train and infer stay semantically aligned. */
     transformer_run_training_forward(infer_ctx, train_ctx->current_question, &cache);
 
     loss = -logf(cache.probabilities[target_class] + 1.0e-6f);
@@ -212,11 +271,13 @@ int nn_transformer_train_step(void* context) {
     (void)memset(classifier_bias_gradient, 0, sizeof(classifier_bias_gradient));
     (void)memset(dlogits, 0, sizeof(dlogits));
 
+    /* Cross-entropy on the class distribution gives a simple dL/dlogit signal. */
     for (class_index = 0U; class_index < infer_ctx->class_count; ++class_index) {
         dlogits[class_index] = cache.probabilities[class_index];
     }
     dlogits[target_class] -= 1.0f;
 
+    /* Convert class-level gradients into classifier weight and bias updates. */
     for (class_index = 0U; class_index < infer_ctx->class_count; ++class_index) {
         classifier_bias_gradient[class_index] = dlogits[class_index];
         for (feature_index = 0U; feature_index < infer_ctx->model_dim; ++feature_index) {
@@ -241,6 +302,7 @@ int nn_transformer_train_step(void* context) {
     }
 
     {
+        /* Blend the target-class prototype toward the normalized pooled feature. */
         float pooled_norm = transformer_vector_norm(cache.pooled, infer_ctx->model_dim);
         float prototype_rate = 0.15f;
 
@@ -257,6 +319,15 @@ int nn_transformer_train_step(void* context) {
     return 0;
 }
 
+/**
+ * @brief Graph stage: convert an external output gradient into parameter updates.
+ *
+ * Graph mode intentionally trains only the lightweight projection path exposed
+ * by nn_transformer_graph_run(). That keeps composite-graph differentiation
+ * simple while still allowing the transformer leaf to adapt to upstream losses.
+ * The routine therefore acts as a contract bridge rather than a full language-
+ * model training implementation.
+ */
 int nn_transformer_train_step_with_output_gradient(
     TransformerTrainContext* train_ctx,
     const float* input,
@@ -279,6 +350,7 @@ int nn_transformer_train_step_with_output_gradient(
         return -1;
     }
 
+    /* Rebuild the forward output so tanh derivative can be applied correctly. */
     if (nn_transformer_graph_run(infer_ctx, input, output_cache) != 0) {
         return -1;
     }
@@ -287,6 +359,7 @@ int nn_transformer_train_step_with_output_gradient(
         (void)memset(input_gradient, 0, infer_ctx->graph_input_size * sizeof(float));
     }
 
+    /* Update the lightweight graph-mode projection path and accumulate dL/dX. */
     for (output_index = 0U; output_index < infer_ctx->graph_output_size; ++output_index) {
         float dz = output_gradient[output_index] * (1.0f - output_cache[output_index] * output_cache[output_index]);
         size_t input_index;

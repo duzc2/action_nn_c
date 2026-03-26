@@ -12,21 +12,33 @@
 #include <string.h>
 
 /**
- * @brief Check if string is empty or NULL
+ * @section prof_validate_design Validation pipeline overview
+ *
+ * Validation is intentionally staged from cheap envelope checks to expensive
+ * topology checks. That ordering matches the documented fast-fail policy: reject
+ * malformed requests immediately, then verify subnet contracts, then confirm
+ * connection endpoints, and only finally spend work on DAG analysis.
+ */
+
+/**
+ * @brief Treat NULL and empty strings as equally invalid textual metadata.
  */
 static int is_empty(const char* str) {
     return str == NULL || str[0] == '\0';
 }
 
 /**
- * @brief Check whether subnet is a pure structural container
+ * @brief Return non-zero when a subnet acts only as a structural container.
  */
 static int is_container_subnet(const NNSubnetDef* subnet) {
     return subnet != NULL && subnet->subnet_count > 0U;
 }
 
 /**
- * @brief Check if all subnet identifiers are globally unique
+ * @brief Enforce globally unique subnet identifiers across the flattened tree.
+ *
+ * Global uniqueness is required because connections and generated execution
+ * code address leaf subnets by ID after container nesting has been flattened.
  */
 static int are_subnet_ids_unique(const ProfSubnetList* subnet_list) {
     size_t left_index;
@@ -55,6 +67,13 @@ static int are_subnet_ids_unique(const ProfSubnetList* subnet_list) {
     return 1;
 }
 
+/**
+ * @brief Validate the top-level request envelope before reading its contents.
+ *
+ * This is the shallowest validation stage and intentionally avoids traversing
+ * the network. It exists so callers get immediate argument errors before any
+ * deeper validation allocates temporary flattening buffers.
+ */
 ProfStatus prof_validate_request(
     const ProfGenerateRequest* req,
     ProfErrorBuffer* error
@@ -72,6 +91,15 @@ ProfStatus prof_validate_request(
     return PROF_STATUS_OK;
 }
 
+/**
+ * @brief Validate one subnet definition recursively.
+ *
+ * Container subnets are checked for structural purity, while leaf subnets must
+ * declare executable type information, valid layer sizes, and both infer/train
+ * type configuration blobs required by later code generation stages. Keeping
+ * this logic recursive ensures nested containers are rejected as soon as any
+ * child violates the documented structural contract.
+ */
 ProfStatus prof_validate_subnet(
     const NNSubnetDef* subnet,
     ProfErrorBuffer* error
@@ -89,6 +117,7 @@ ProfStatus prof_validate_subnet(
             "Subnet ID is empty");
     }
 
+    /* Container nodes may organize children, but they may not carry executable payload. */
     if (is_container_subnet(subnet)) {
         if (!is_empty(subnet->subnet_type)) {
             return prof_error_set(error, PROF_STATUS_VALIDATION_FAILED,
@@ -123,6 +152,7 @@ ProfStatus prof_validate_subnet(
         return PROF_STATUS_OK;
     }
 
+    /* Leaf nodes must provide enough metadata for registry lookup and code emission. */
     if (is_empty(subnet->subnet_type)) {
         return prof_error_set(error, PROF_STATUS_VALIDATION_FAILED,
             "Leaf subnet '%s' has empty type",
@@ -183,6 +213,13 @@ ProfStatus prof_validate_subnet(
     return PROF_STATUS_OK;
 }
 
+/**
+ * @brief Validate whole-network invariants that require flattened views.
+ *
+ * This stage reasons about properties that are invisible from a single subnet:
+ * global subnet-ID uniqueness, the presence of at least one executable leaf,
+ * and graph-mode capability when multiple leaves must cooperate in one network.
+ */
 ProfStatus prof_validate_network_def(
     const NN_NetworkDef* network,
     ProfErrorBuffer* error
@@ -207,6 +244,7 @@ ProfStatus prof_validate_network_def(
             "Network must contain at least one subnet");
     }
 
+    /* Collect both the full tree and the leaf-only view because later checks need both. */
     status = prof_flatten_collect_all_subnets(network, &all_subnets);
     if (status != PROF_STATUS_OK) {
         return prof_error_set(error, PROF_STATUS_INTERNAL_ERROR,
@@ -227,6 +265,7 @@ ProfStatus prof_validate_network_def(
             "Network must contain at least one executable leaf subnet");
     }
 
+    /* Connection metadata addresses flattened leaves by ID, so duplicates are fatal. */
     if (!are_subnet_ids_unique(&all_subnets)) {
         prof_flatten_free_list(&leaf_subnets);
         prof_flatten_free_list(&all_subnets);
@@ -234,6 +273,7 @@ ProfStatus prof_validate_network_def(
             "Subnet IDs must be unique across the full nested graph");
     }
 
+    /* Recurse from each root subnet so nested validation preserves original ownership. */
     for (leaf_index = 0U; leaf_index < network->subnet_count; ++leaf_index) {
         status = prof_validate_subnet(network->subnets[leaf_index], error);
         if (status != PROF_STATUS_OK) {
@@ -243,6 +283,7 @@ ProfStatus prof_validate_network_def(
         }
     }
 
+    /* Multi-leaf graphs require explicit graph-mode forward and backward support. */
     if (leaf_subnets.count > 1U) {
         for (leaf_index = 0U; leaf_index < leaf_subnets.count; ++leaf_index) {
             NNSubnetDef* leaf = leaf_subnets.items[leaf_index];
@@ -276,6 +317,13 @@ ProfStatus prof_validate_network_def(
     return PROF_STATUS_OK;
 }
 
+/**
+ * @brief Validate that every declared connection targets real leaf endpoints.
+ *
+ * Endpoint validation is separated from subnet validation because it needs a
+ * flattened executable view and because it can produce more precise diagnostics
+ * about which connection index and endpoint field is invalid.
+ */
 ProfStatus prof_validate_connections(
     const NN_NetworkDef* network,
     ProfErrorBuffer* error
@@ -294,6 +342,7 @@ ProfStatus prof_validate_connections(
             "Failed to flatten leaf subnets for connection validation");
     }
 
+    /* Resolve each declared edge against the executable leaf set and its tensor sizes. */
     for (connection_index = 0U; connection_index < network->connection_count; ++connection_index) {
         NNConnectionDef* connection = network->connections[connection_index];
         int source_index;
@@ -316,6 +365,7 @@ ProfStatus prof_validate_connections(
                 "Connection %zu has empty target subnet ID", connection_index);
         }
 
+        /* Both endpoints must resolve to flattened leaves before index bounds are checked. */
         source_index = prof_flatten_find_subnet_index(&leaf_subnets, connection->source_subnet_id);
         if (source_index < 0) {
             prof_flatten_free_list(&leaf_subnets);
@@ -340,6 +390,7 @@ ProfStatus prof_validate_connections(
                 "Connection flattening produced NULL subnet pointer");
         }
 
+        /* Node indices are validated against the leaf's exposed tensor widths. */
         if (connection->source_node_index >= source_subnet->output_layer_size) {
             prof_flatten_free_list(&leaf_subnets);
             return prof_error_set(error, PROF_STATUS_VALIDATION_FAILED,
@@ -363,6 +414,13 @@ ProfStatus prof_validate_connections(
     return PROF_STATUS_OK;
 }
 
+/**
+ * @brief Validate that the flattened executable graph is acyclic.
+ *
+ * DAG validation intentionally reuses the same topology builder that code
+ * generation later consumes. That guarantees the scheduler cannot silently see
+ * a different graph from the validator.
+ */
 ProfStatus prof_validate_dag(
     const NN_NetworkDef* network,
     ProfErrorBuffer* error
@@ -377,6 +435,7 @@ ProfStatus prof_validate_dag(
         return PROF_STATUS_OK;
     }
 
+    /* Reuse the executable leaf view because container nodes never participate in scheduling. */
     status = prof_flatten_collect_leaf_subnets(network, &leaf_subnets);
     if (status != PROF_STATUS_OK) {
         return prof_error_set(error, PROF_STATUS_INTERNAL_ERROR,
@@ -410,6 +469,13 @@ ProfStatus prof_validate_dag(
     return PROF_STATUS_OK;
 }
 
+/**
+ * @brief Run the full validation pipeline in documented fast-fail order.
+ *
+ * The order here is part of the public behaviour: callers first get argument
+ * errors, then structural subnet errors, then connection diagnostics, and only
+ * then cycle reports. That keeps failures specific and easier to act on.
+ */
 ProfStatus prof_validate_all(
     const ProfGenerateRequest* req,
     ProfErrorBuffer* error
@@ -417,6 +483,7 @@ ProfStatus prof_validate_all(
     NN_NetworkDef* network;
     ProfStatus status;
 
+    /* Stop at the first failing stage so the returned error describes the earliest cause. */
     status = prof_validate_request(req, error);
     if (status != PROF_STATUS_OK) {
         return status;
