@@ -19,11 +19,26 @@ static void* nn_type_mlp_train_create_codegen(void* infer_ctx, const NNCodegenTr
     return nn_mlp_train_create(infer_ctx, &train_config);
 }
 
+static int nn_type_mlp_train_step_with_output_gradient_codegen(
+    void* context,
+    const void* input,
+    const void* output_gradient,
+    void* input_gradient
+) {
+    return nn_mlp_train_step_with_output_gradient(
+        (MlpTrainContext*)context,
+        (const float*)input,
+        (const float*)output_gradient,
+        (float*)input_gradient
+    );
+}
+
 const NNTrainRegistryEntry nn_type_mlp_train_entry = {
     "mlp",
     nn_mlp_train_step,
     nn_type_mlp_train_create_codegen,
     (void (*)(void*))nn_mlp_train_destroy,
     (NNTrainStepWithDataFn)nn_mlp_train_step_with_data,
+    nn_type_mlp_train_step_with_output_gradient_codegen,
     (NNTrainGetStatsFn)nn_mlp_train_get_stats
 };

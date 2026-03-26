@@ -4,6 +4,7 @@ add_library(profiler_core STATIC
     prof_error.c
     prof_path.c
     network_def.c
+    prof_flatten.c
     prof_hash.c
     prof_validate.c
     prof_codegen.c

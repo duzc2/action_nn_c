@@ -17,6 +17,10 @@ static void* nn_type_transformer_infer_create_codegen(const NNCodegenInferConfig
     }
 
     model_config = *(const TransformerModelConfig*)config->type_config;
+    if (config->input_size > model_config.model_dim ||
+        config->output_size > model_config.model_dim) {
+        return 0;
+    }
     context = (TransformerInferContext*)calloc(1U, sizeof(TransformerInferContext));
     if (context == 0) {
         return 0;
@@ -28,6 +32,8 @@ static void* nn_type_transformer_infer_create_codegen(const NNCodegenInferConfig
 
     context->expected_network_hash = config->network_hash;
     context->expected_layout_hash = config->layout_hash;
+    context->graph_input_size = config->input_size;
+    context->graph_output_size = config->output_size;
     return context;
 }
 
@@ -54,6 +60,7 @@ const NNInferRegistryEntry nn_type_transformer_infer_entry = {
     .create = nn_type_transformer_infer_create_codegen,
     .destroy = nn_type_transformer_infer_destroy_codegen,
     .auto_run = nn_type_transformer_infer_auto_run_codegen,
+    .graph_run = nn_transformer_graph_run,
     .load_weights = nn_transformer_load_weights,
     .save_weights = nn_transformer_save_weights
 };

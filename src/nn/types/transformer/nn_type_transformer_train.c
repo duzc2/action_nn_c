@@ -52,6 +52,20 @@ static int nn_type_transformer_train_step_with_data_codegen(
     return nn_transformer_train_step(train_ctx);
 }
 
+static int nn_type_transformer_train_step_with_output_gradient_codegen(
+    void* context,
+    const void* input,
+    const void* output_gradient,
+    void* input_gradient
+) {
+    return nn_transformer_train_step_with_output_gradient(
+        (TransformerTrainContext*)context,
+        (const float*)input,
+        (const float*)output_gradient,
+        (float*)input_gradient
+    );
+}
+
 static void nn_type_transformer_train_get_stats_codegen(
     void* context,
     size_t* out_epochs,
@@ -80,5 +94,6 @@ const NNTrainRegistryEntry nn_type_transformer_train_entry = {
     nn_type_transformer_train_create_codegen,
     nn_type_transformer_train_destroy_codegen,
     nn_type_transformer_train_step_with_data_codegen,
+    nn_type_transformer_train_step_with_output_gradient_codegen,
     nn_type_transformer_train_get_stats_codegen
 };

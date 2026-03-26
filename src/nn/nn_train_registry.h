@@ -13,6 +13,7 @@ typedef struct {
     NNTrainCreateFn create;
     NNTrainDestroyFn destroy;
     NNTrainStepWithDataFn step_with_data;
+    NNTrainStepWithOutputGradientFn step_with_output_gradient;
     NNTrainGetStatsFn get_stats;
 } NNTrainRegistryEntry;
 

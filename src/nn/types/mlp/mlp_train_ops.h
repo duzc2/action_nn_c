@@ -128,6 +128,26 @@ void nn_mlp_train_destroy(MlpTrainContext* ctx);
 int nn_mlp_train_step_with_data(MlpTrainContext* ctx, const float* input, const float* target);
 
 /**
+ * @brief Run one graph-training step with an externally supplied output gradient
+ *
+ * This entry point is used by profiler-generated composite graphs.
+ * The caller supplies gradient dL/dY at this leaf output, and receives
+ * the propagated gradient dL/dX for this leaf input.
+ *
+ * @param ctx Training context
+ * @param input Input tensor for this leaf
+ * @param output_gradient Gradient on leaf output
+ * @param input_gradient Optional output buffer for gradient on leaf input
+ * @return 0 on success, negative on failure
+ */
+int nn_mlp_train_step_with_output_gradient(
+    MlpTrainContext* ctx,
+    const float* input,
+    const float* output_gradient,
+    float* input_gradient
+);
+
+/**
  * @brief Run training step with structured input/output
  *
  * @param ctx Training context

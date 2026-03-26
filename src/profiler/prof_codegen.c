@@ -5,18 +5,24 @@
 
 #include "prof_codegen.h"
 #include "prof_error.h"
+#include "prof_flatten.h"
 #include "prof_path.h"
 
-#include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
 #include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #define ABI_VERSION 1
+#define CODE_BUFFER_CAPACITY 524288U
 
-/**
- * @brief Write content to file at given path
- */
+typedef struct {
+    ProfSubnetList leaf_subnets;
+    size_t* topology_order;
+    size_t* incoming_counts;
+    size_t* outgoing_counts;
+} ProfLeafGraph;
+
 static ProfStatus write_file(const char* path, const char* content) {
     FILE* fp;
 
@@ -29,9 +35,8 @@ static ProfStatus write_file(const char* path, const char* content) {
         return PROF_STATUS_IO_FAILED;
     }
 
-    fprintf(fp, "%s", content);
-    fclose(fp);
-
+    (void)fprintf(fp, "%s", content);
+    (void)fclose(fp);
     return PROF_STATUS_OK;
 }
 
@@ -89,6 +94,13 @@ static int append_type_config_blob(
         return -1;
     }
 
+    if (data == NULL || data_size == 0U) {
+        if (append_format(buffer, buffer_capacity, position, "    0x00\n};\n\n") != 0) {
+            return -1;
+        }
+        return 0;
+    }
+
     for (index = 0U; index < data_size; ++index) {
         if ((index % 12U) == 0U) {
             if (append_format(buffer, buffer_capacity, position, "    ") != 0) {
@@ -118,6 +130,318 @@ static int append_type_config_blob(
     return 0;
 }
 
+static void prof_leaf_graph_cleanup(ProfLeafGraph* graph) {
+    if (graph == NULL) {
+        return;
+    }
+
+    prof_flatten_free_list(&graph->leaf_subnets);
+    free(graph->topology_order);
+    free(graph->incoming_counts);
+    free(graph->outgoing_counts);
+    graph->topology_order = NULL;
+    graph->incoming_counts = NULL;
+    graph->outgoing_counts = NULL;
+}
+
+static ProfStatus prof_leaf_graph_init(
+    const NN_NetworkDef* network,
+    ProfLeafGraph* graph
+) {
+    ProfStatus st;
+
+    if (network == NULL || graph == NULL) {
+        return PROF_STATUS_INVALID_ARGUMENT;
+    }
+
+    (void)memset(graph, 0, sizeof(*graph));
+
+    st = prof_flatten_collect_leaf_subnets(network, &graph->leaf_subnets);
+    if (st != PROF_STATUS_OK) {
+        return st;
+    }
+
+    st = prof_flatten_build_leaf_topology(
+        network,
+        &graph->leaf_subnets,
+        &graph->topology_order,
+        &graph->incoming_counts,
+        &graph->outgoing_counts
+    );
+    if (st != PROF_STATUS_OK) {
+        prof_leaf_graph_cleanup(graph);
+        return st;
+    }
+
+    return PROF_STATUS_OK;
+}
+
+static size_t prof_codegen_network_input_size(const ProfLeafGraph* graph) {
+    size_t input_size = 0U;
+    size_t leaf_index;
+
+    if (graph == NULL) {
+        return 0U;
+    }
+
+    for (leaf_index = 0U; leaf_index < graph->leaf_subnets.count; ++leaf_index) {
+        if (graph->incoming_counts[leaf_index] == 0U) {
+            NNSubnetDef* subnet = graph->leaf_subnets.items[leaf_index];
+            if (subnet != NULL && subnet->input_layer_size > input_size) {
+                input_size = subnet->input_layer_size;
+            }
+        }
+    }
+
+    return input_size;
+}
+
+static size_t prof_codegen_network_output_size(const ProfLeafGraph* graph) {
+    size_t output_size = 0U;
+    size_t leaf_index;
+
+    if (graph == NULL) {
+        return 0U;
+    }
+
+    for (leaf_index = 0U; leaf_index < graph->leaf_subnets.count; ++leaf_index) {
+        if (graph->outgoing_counts[leaf_index] == 0U) {
+            NNSubnetDef* subnet = graph->leaf_subnets.items[leaf_index];
+            if (subnet != NULL) {
+                output_size += subnet->output_layer_size;
+            }
+        }
+    }
+
+    return output_size;
+}
+
+static size_t prof_codegen_sink_offset(const ProfLeafGraph* graph, size_t target_leaf_index) {
+    size_t offset = 0U;
+    size_t leaf_index;
+
+    if (graph == NULL) {
+        return 0U;
+    }
+
+    for (leaf_index = 0U; leaf_index < graph->leaf_subnets.count; ++leaf_index) {
+        NNSubnetDef* subnet = graph->leaf_subnets.items[leaf_index];
+        if (graph->outgoing_counts[leaf_index] != 0U || subnet == NULL) {
+            continue;
+        }
+        if (leaf_index == target_leaf_index) {
+            break;
+        }
+        offset += subnet->output_layer_size;
+    }
+
+    return offset;
+}
+
+static int append_leaf_graph_constants(
+    char* buffer,
+    size_t buffer_capacity,
+    size_t* position,
+    const NN_NetworkDef* network,
+    const ProfLeafGraph* graph
+) {
+    size_t leaf_index;
+
+    if (append_format(
+            buffer,
+            buffer_capacity,
+            position,
+            "#define GENERATED_LEAF_COUNT %zuU\n"
+            "#define GENERATED_CONNECTION_COUNT %zuU\n"
+            "#define GENERATED_NETWORK_INPUT_SIZE %zuU\n"
+            "#define GENERATED_NETWORK_OUTPUT_SIZE %zuU\n\n",
+            graph->leaf_subnets.count,
+            network != NULL ? network->connection_count : (size_t)0U,
+            prof_codegen_network_input_size(graph),
+            prof_codegen_network_output_size(graph)) != 0) {
+        return -1;
+    }
+
+    if (append_format(buffer, buffer_capacity, position,
+            "static const size_t g_topology_order[GENERATED_LEAF_COUNT] = {") != 0) {
+        return -1;
+    }
+    for (leaf_index = 0U; leaf_index < graph->leaf_subnets.count; ++leaf_index) {
+        if (append_format(buffer, buffer_capacity, position, "%s%zuU",
+                leaf_index == 0U ? "" : ", ", graph->topology_order[leaf_index]) != 0) {
+            return -1;
+        }
+    }
+    if (append_format(buffer, buffer_capacity, position, "};\n") != 0) {
+        return -1;
+    }
+
+    if (append_format(buffer, buffer_capacity, position,
+            "static const size_t g_incoming_counts[GENERATED_LEAF_COUNT] = {") != 0) {
+        return -1;
+    }
+    for (leaf_index = 0U; leaf_index < graph->leaf_subnets.count; ++leaf_index) {
+        if (append_format(buffer, buffer_capacity, position, "%s%zuU",
+                leaf_index == 0U ? "" : ", ", graph->incoming_counts[leaf_index]) != 0) {
+            return -1;
+        }
+    }
+    if (append_format(buffer, buffer_capacity, position, "};\n") != 0) {
+        return -1;
+    }
+
+    if (append_format(buffer, buffer_capacity, position,
+            "static const size_t g_outgoing_counts[GENERATED_LEAF_COUNT] = {") != 0) {
+        return -1;
+    }
+    for (leaf_index = 0U; leaf_index < graph->leaf_subnets.count; ++leaf_index) {
+        if (append_format(buffer, buffer_capacity, position, "%s%zuU",
+                leaf_index == 0U ? "" : ", ", graph->outgoing_counts[leaf_index]) != 0) {
+            return -1;
+        }
+    }
+    if (append_format(buffer, buffer_capacity, position, "};\n") != 0) {
+        return -1;
+    }
+
+    if (append_format(buffer, buffer_capacity, position,
+            "static const size_t g_sink_output_offsets[GENERATED_LEAF_COUNT] = {") != 0) {
+        return -1;
+    }
+    for (leaf_index = 0U; leaf_index < graph->leaf_subnets.count; ++leaf_index) {
+        if (append_format(buffer, buffer_capacity, position, "%s%zuU",
+                leaf_index == 0U ? "" : ", ",
+                graph->outgoing_counts[leaf_index] == 0U ?
+                    prof_codegen_sink_offset(graph, leaf_index) : 0U) != 0) {
+            return -1;
+        }
+    }
+    if (append_format(buffer, buffer_capacity, position, "};\n\n") != 0) {
+        return -1;
+    }
+
+    return 0;
+}
+
+static int append_connection_table(
+    char* buffer,
+    size_t buffer_capacity,
+    size_t* position,
+    const NN_NetworkDef* network,
+    const ProfLeafGraph* graph
+) {
+    size_t connection_index;
+
+    if (append_format(
+            buffer,
+            buffer_capacity,
+            position,
+            "typedef struct {\n"
+            "    size_t source_leaf_index;\n"
+            "    size_t target_leaf_index;\n"
+            "    size_t source_node_index;\n"
+            "    size_t target_node_index;\n"
+            "    int merge_strategy;\n"
+            "} GeneratedConnection;\n\n"
+            "static const GeneratedConnection g_connections[(GENERATED_CONNECTION_COUNT == 0U) ? 1U : GENERATED_CONNECTION_COUNT] = {\n") != 0) {
+        return -1;
+    }
+
+    for (connection_index = 0U; connection_index < network->connection_count; ++connection_index) {
+        NNConnectionDef* connection = network->connections[connection_index];
+        int source_index;
+        int target_index;
+
+        if (connection == NULL) {
+            if (append_format(buffer, buffer_capacity, position,
+                    "    { 0U, 0U, 0U, 0U, %d },\n", (int)NN_MERGE_SUM) != 0) {
+                return -1;
+            }
+            continue;
+        }
+
+        source_index = prof_flatten_find_subnet_index(&graph->leaf_subnets, connection->source_subnet_id);
+        target_index = prof_flatten_find_subnet_index(&graph->leaf_subnets, connection->target_subnet_id);
+        if (append_format(buffer, buffer_capacity, position,
+                "    { %zuU, %zuU, %zuU, %zuU, %d },\n",
+                source_index >= 0 ? (size_t)source_index : 0U,
+                target_index >= 0 ? (size_t)target_index : 0U,
+                connection->source_node_index,
+                connection->target_node_index,
+                (int)connection->merge_strategy) != 0) {
+            return -1;
+        }
+    }
+
+    if (append_format(buffer, buffer_capacity, position, "};\n\n") != 0) {
+        return -1;
+    }
+
+    return 0;
+}
+
+static int append_infer_type_blobs(
+    char* buffer,
+    size_t buffer_capacity,
+    size_t* position,
+    const ProfLeafGraph* graph
+) {
+    size_t leaf_index;
+    char symbol_name[64];
+
+    for (leaf_index = 0U; leaf_index < graph->leaf_subnets.count; ++leaf_index) {
+        NNSubnetDef* subnet = graph->leaf_subnets.items[leaf_index];
+        if (subnet == NULL) {
+            continue;
+        }
+        (void)snprintf(symbol_name, sizeof(symbol_name), "g_infer_type_config_bytes_%zu", leaf_index);
+        if (append_type_config_blob(buffer, buffer_capacity, position, symbol_name,
+                subnet->infer_type_config_data, subnet->infer_type_config_size) != 0) {
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+static int append_train_type_blobs(
+    char* buffer,
+    size_t buffer_capacity,
+    size_t* position,
+    const ProfLeafGraph* graph
+) {
+    size_t leaf_index;
+    char symbol_name[64];
+
+    for (leaf_index = 0U; leaf_index < graph->leaf_subnets.count; ++leaf_index) {
+        NNSubnetDef* subnet = graph->leaf_subnets.items[leaf_index];
+        if (subnet == NULL) {
+            continue;
+        }
+        (void)snprintf(symbol_name, sizeof(symbol_name), "g_train_type_config_bytes_%zu", leaf_index);
+        if (append_type_config_blob(buffer, buffer_capacity, position, symbol_name,
+                subnet->train_type_config_data, subnet->train_type_config_size) != 0) {
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+static ProfStatus write_optional_header(const char* path, const char* content) {
+    ProfStatus st;
+
+    if (path == NULL) {
+        return PROF_STATUS_OK;
+    }
+
+    st = prof_path_ensure_parent_directory(path);
+    if (st != PROF_STATUS_OK) {
+        return st;
+    }
+    return write_file(path, content);
+}
+
 void prof_codegen_init(
     ProfCodegenContext* ctx,
     const NN_NetworkDef* network,
@@ -133,111 +457,92 @@ void prof_codegen_init(
     ctx->error = error;
 }
 
-ProfStatus prof_codegen_metadata(
-    ProfCodegenContext* ctx,
-    const char* metadata_path
-) {
+ProfStatus prof_codegen_metadata(ProfCodegenContext* ctx, const char* metadata_path) {
     FILE* fp;
     ProfStatus st;
-    const NN_NetworkDef* network;
+    ProfLeafGraph graph;
 
     if (ctx == NULL || metadata_path == NULL) {
         return PROF_STATUS_INVALID_ARGUMENT;
     }
 
-    network = ctx->network;
-    if (network == NULL) {
-        return PROF_STATUS_INVALID_ARGUMENT;
+    st = prof_leaf_graph_init(ctx->network, &graph);
+    if (st != PROF_STATUS_OK) {
+        return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
+            "Failed to flatten leaf graph for metadata generation");
     }
 
     st = prof_path_ensure_parent_directory(metadata_path);
     if (st != PROF_STATUS_OK) {
+        prof_leaf_graph_cleanup(&graph);
         return prof_error_set(ctx->error, st,
             "Failed to create directory for metadata output");
     }
 
     fp = fopen(metadata_path, "w");
     if (fp == NULL) {
+        prof_leaf_graph_cleanup(&graph);
         return PROF_STATUS_IO_FAILED;
     }
 
-    fprintf(fp, "/* Network metadata */\n");
-    fprintf(fp, "/* This file is auto-generated by profiler */\n\n");
-    fprintf(fp, "#ifndef NETWORK_METADATA_H\n");
-    fprintf(fp, "#define NETWORK_METADATA_H\n\n");
-    fprintf(fp, "#define NETWORK_HASH 0x%016llxULL\n",
-        (unsigned long long)ctx->network_hash);
-    fprintf(fp, "#define LAYOUT_HASH 0x%016llxULL\n",
-        (unsigned long long)ctx->layout_hash);
-    fprintf(fp, "#define ABI_VERSION %d\n", ABI_VERSION);
-    fprintf(fp, "#define NETWORK_NAME \"%s\"\n", network->network_name);
-    fprintf(fp, "#define SUBNET_COUNT %zu\n", network->subnet_count);
-    fprintf(fp, "\n#endif\n");
-
-    fclose(fp);
-
+    (void)fprintf(fp, "/* Network metadata */\n\n");
+    (void)fprintf(fp, "#ifndef NETWORK_METADATA_H\n#define NETWORK_METADATA_H\n\n");
+    (void)fprintf(fp, "#define NETWORK_HASH 0x%016llxULL\n", (unsigned long long)ctx->network_hash);
+    (void)fprintf(fp, "#define LAYOUT_HASH 0x%016llxULL\n", (unsigned long long)ctx->layout_hash);
+    (void)fprintf(fp, "#define ABI_VERSION %d\n", ABI_VERSION);
+    (void)fprintf(fp, "#define NETWORK_NAME \"%s\"\n",
+        ctx->network != NULL ? ctx->network->network_name : "unknown");
+    (void)fprintf(fp, "#define SUBNET_COUNT %zu\n", graph.leaf_subnets.count);
+    (void)fprintf(fp, "\n#endif\n");
+    (void)fclose(fp);
+    prof_leaf_graph_cleanup(&graph);
     return PROF_STATUS_OK;
 }
 
 ProfStatus prof_codegen_tokenizer(ProfCodegenContext* ctx) {
-    ProfStatus st;
     const ProfOutputLayout* layout;
+    ProfLeafGraph graph;
+    ProfStatus st;
     char content[4096];
-    const NN_NetworkDef* network;
-    size_t i;
-    size_t total_inputs = 0;
-    size_t total_outputs = 0;
+    size_t total_inputs = 0U;
+    size_t total_outputs = 0U;
+    size_t leaf_index;
 
     if (ctx == NULL) {
         return PROF_STATUS_INVALID_ARGUMENT;
     }
 
     layout = ctx->output_layout;
-    network = ctx->network;
-
     if (layout == NULL || layout->tokenizer.c_path == NULL) {
         return PROF_STATUS_PATH_INVALID;
     }
 
-    if (network != NULL) {
-        for (i = 0; i < network->subnet_count; i++) {
-            NNSubnetDef* subnet = network->subnets[i];
-            if (subnet != NULL) {
-                total_inputs += subnet->input_layer_size;
-                total_outputs += subnet->output_layer_size;
-            }
+    st = prof_leaf_graph_init(ctx->network, &graph);
+    if (st != PROF_STATUS_OK) {
+        return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
+            "Failed to flatten leaf graph for tokenizer generation");
+    }
+
+    for (leaf_index = 0U; leaf_index < graph.leaf_subnets.count; ++leaf_index) {
+        NNSubnetDef* subnet = graph.leaf_subnets.items[leaf_index];
+        if (subnet != NULL) {
+            total_inputs += subnet->input_layer_size;
+            total_outputs += subnet->output_layer_size;
         }
     }
 
-    snprintf(content, sizeof(content),
+    (void)snprintf(content, sizeof(content),
         "/* tokenizer.c - Tokenizer module */\n"
-        "/* Auto-generated by profiler */\n\n"
-        "#include \"tokenizer.h\"\n"
-        "#include <stdlib.h>\n"
-        "#include <string.h>\n\n"
-        "/* Tokenizer context */\n"
-        "typedef struct {\n"
-        "    size_t input_count;\n"
-        "    size_t output_count;\n"
-        "    float* input_buffer;\n"
-        "    float* output_buffer;\n"
-        "} TokenizerContext;\n\n"
+        "/* Auto-generated by profiler */\n"
+        "/* Flattened leaf inputs: %zu, flattened leaf outputs: %zu */\n\n"
+        "#include \"tokenizer.h\"\n\n"
         "void* tokenizer_create(size_t input_count, size_t output_count) {\n"
-        "    TokenizerContext* ctx = (TokenizerContext*)malloc(sizeof(TokenizerContext));\n"
-        "    if (ctx == NULL) return NULL;\n"
-        "    ctx->input_count = input_count;\n"
-        "    ctx->output_count = output_count;\n"
-        "    ctx->input_buffer = NULL;\n"
-        "    ctx->output_buffer = NULL;\n"
-        "    return ctx;\n"
+        "    (void)input_count;\n"
+        "    (void)output_count;\n"
+        "    return 0;\n"
         "}\n\n"
         "void tokenizer_destroy(void* ctx) {\n"
-        "    if (ctx != NULL) {\n"
-        "        TokenizerContext* tc = (TokenizerContext*)ctx;\n"
-        "        if (tc->input_buffer != NULL) free(tc->input_buffer);\n"
-        "        if (tc->output_buffer != NULL) free(tc->output_buffer);\n"
-        "        free(tc);\n"
-        "    }\n"
+        "    (void)ctx;\n"
         "}\n\n"
         "int tokenizer_encode(void* ctx, const float* raw_input, size_t raw_count) {\n"
         "    (void)ctx;\n"
@@ -250,859 +555,1286 @@ ProfStatus prof_codegen_tokenizer(ProfCodegenContext* ctx) {
         "    (void)encoded;\n"
         "    (void)encoded_count;\n"
         "    return 0;\n"
-        "}\n");
+        "}\n",
+        total_inputs,
+        total_outputs);
 
     st = prof_path_ensure_parent_directory(layout->tokenizer.c_path);
     if (st != PROF_STATUS_OK) {
+        prof_leaf_graph_cleanup(&graph);
         return prof_error_set(ctx->error, st,
             "Failed to create directory for tokenizer.c");
     }
 
     st = write_file(layout->tokenizer.c_path, content);
     if (st != PROF_STATUS_OK) {
+        prof_leaf_graph_cleanup(&graph);
         return prof_error_set(ctx->error, st,
             "Failed to write tokenizer.c");
     }
 
-    if (layout->tokenizer.h_path != NULL) {
-        const char* header_content =
-            "/* tokenizer.h - Tokenizer interface */\n"
-            "/* Auto-generated by profiler */\n\n"
-            "#ifndef TOKENIZER_H\n"
-            "#define TOKENIZER_H\n\n"
-            "#include <stddef.h>\n\n"
-            "void* tokenizer_create(size_t input_count, size_t output_count);\n"
-            "void tokenizer_destroy(void* ctx);\n"
-            "int tokenizer_encode(void* ctx, const float* raw_input, size_t raw_count);\n"
-            "int tokenizer_decode(void* ctx, const float* encoded, size_t encoded_count);\n\n"
-            "#endif\n";
+    st = write_optional_header(
+        layout->tokenizer.h_path,
+        "/* tokenizer.h - Tokenizer interface */\n"
+        "#ifndef TOKENIZER_H\n"
+        "#define TOKENIZER_H\n\n"
+        "#include <stddef.h>\n\n"
+        "void* tokenizer_create(size_t input_count, size_t output_count);\n"
+        "void tokenizer_destroy(void* ctx);\n"
+        "int tokenizer_encode(void* ctx, const float* raw_input, size_t raw_count);\n"
+        "int tokenizer_decode(void* ctx, const float* encoded, size_t encoded_count);\n\n"
+        "#endif\n"
+    );
+    prof_leaf_graph_cleanup(&graph);
 
-        st = prof_path_ensure_parent_directory(layout->tokenizer.h_path);
-        if (st == PROF_STATUS_OK) {
-            write_file(layout->tokenizer.h_path, header_content);
-        }
+    if (st != PROF_STATUS_OK) {
+        return prof_error_set(ctx->error, st,
+            "Failed to write tokenizer.h");
     }
 
     return PROF_STATUS_OK;
 }
 
 ProfStatus prof_codegen_network_init(ProfCodegenContext* ctx) {
-    ProfStatus st;
     const ProfOutputLayout* layout;
-    const NN_NetworkDef* network;
+    ProfLeafGraph graph;
+    ProfStatus st;
     char content[8192];
-    size_t i;
-    size_t pos = 0;
-    size_t remaining = sizeof(content);
-    int written;
+    size_t pos = 0U;
+    size_t leaf_index;
 
     if (ctx == NULL) {
         return PROF_STATUS_INVALID_ARGUMENT;
     }
 
     layout = ctx->output_layout;
-    network = ctx->network;
-
     if (layout == NULL || layout->network_init.c_path == NULL) {
         return PROF_STATUS_PATH_INVALID;
     }
 
-    written = snprintf(content + pos, remaining,
-        "/* network_init.c - Network initialization module */\n"
-        "/* Auto-generated by profiler */\n\n"
-        "#include \"network_init.h\"\n"
-        "#include <stdlib.h>\n"
-        "#include <string.h>\n\n");
-    pos += written;
-    remaining -= written;
+    st = prof_leaf_graph_init(ctx->network, &graph);
+    if (st != PROF_STATUS_OK) {
+        return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
+            "Failed to flatten leaf graph for network_init generation");
+    }
 
-    if (network != NULL) {
-        for (i = 0; i < network->subnet_count && remaining > 100; i++) {
-            NNSubnetDef* subnet = network->subnets[i];
-            if (subnet == NULL) continue;
+    if (append_format(content, sizeof(content), &pos,
+            "/* network_init.c - Network initialization module */\n"
+            "#include \"network_init.h\"\n\n") != 0) {
+        prof_leaf_graph_cleanup(&graph);
+        return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
+            "Failed to assemble network_init.c");
+    }
 
-            written = snprintf(content + pos, remaining,
-                "/* Subnet: %s, Type: %s */\n"
-                "/* Input: %zu, Hidden layers: %zu, Output: %zu */\n",
+    for (leaf_index = 0U; leaf_index < graph.leaf_subnets.count; ++leaf_index) {
+        NNSubnetDef* subnet = graph.leaf_subnets.items[leaf_index];
+        if (subnet != NULL && append_format(content, sizeof(content), &pos,
+                "/* Leaf %zu: %s (%s), input=%zu, output=%zu */\n",
+                leaf_index,
                 subnet->subnet_id,
                 subnet->subnet_type,
-                (size_t)subnet->input_layer_size,
-                (size_t)subnet->hidden_layer_count,
-                (size_t)subnet->output_layer_size);
-            pos += written;
-            remaining -= written;
-
-            if (subnet->hidden_layer_count > 0 && subnet->hidden_layer_sizes != NULL) {
-                size_t j;
-                for (j = 0; j < subnet->hidden_layer_count && remaining > 100; j++) {
-                    written = snprintf(content + pos, remaining,
-                        "/* Hidden layer %zu: %zu nodes */\n",
-                        (size_t)j, (size_t)subnet->hidden_layer_sizes[j]);
-                    pos += written;
-                    remaining -= written;
-                }
-            }
+                subnet->input_layer_size,
+                subnet->output_layer_size) != 0) {
+            prof_leaf_graph_cleanup(&graph);
+            return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
+                "Failed to append network_init comments");
         }
     }
 
-    written = snprintf(content + pos, remaining,
-        "\nvoid* network_init_create(void) {\n"
-        "    return NULL;\n"
-        "}\n\n"
-        "void network_init_destroy(void* ctx) {\n"
-        "    (void)ctx;\n"
-        "}\n\n"
-        "int network_init_weights(void* ctx, void* network_ctx) {\n"
-        "    (void)ctx;\n"
-        "    (void)network_ctx;\n"
-        "    return 0;\n"
-        "}\n");
+    if (append_format(content, sizeof(content), &pos,
+            "\nvoid* network_init_create(void) { return 0; }\n"
+            "void network_init_destroy(void* ctx) { (void)ctx; }\n"
+            "int network_init_weights(void* ctx, void* network_ctx) {\n"
+            "    (void)ctx;\n"
+            "    (void)network_ctx;\n"
+            "    return 0;\n"
+            "}\n") != 0) {
+        prof_leaf_graph_cleanup(&graph);
+        return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
+            "Failed to finalize network_init.c");
+    }
 
     st = prof_path_ensure_parent_directory(layout->network_init.c_path);
     if (st != PROF_STATUS_OK) {
+        prof_leaf_graph_cleanup(&graph);
         return prof_error_set(ctx->error, st,
             "Failed to create directory for network_init.c");
     }
 
     st = write_file(layout->network_init.c_path, content);
     if (st != PROF_STATUS_OK) {
+        prof_leaf_graph_cleanup(&graph);
         return prof_error_set(ctx->error, st,
             "Failed to write network_init.c");
     }
 
-    if (layout->network_init.h_path != NULL) {
-        const char* header_content =
-            "/* network_init.h - Network initialization interface */\n"
-            "/* Auto-generated by profiler */\n\n"
-            "#ifndef NETWORK_INIT_H\n"
-            "#define NETWORK_INIT_H\n\n"
-            "#include <stddef.h>\n\n"
-            "void* network_init_create(void);\n"
-            "void network_init_destroy(void* ctx);\n"
-            "int network_init_weights(void* ctx, void* network_ctx);\n\n"
-            "#endif\n";
+    st = write_optional_header(
+        layout->network_init.h_path,
+        "/* network_init.h - Network initialization interface */\n"
+        "#ifndef NETWORK_INIT_H\n"
+        "#define NETWORK_INIT_H\n\n"
+        "void* network_init_create(void);\n"
+        "void network_init_destroy(void* ctx);\n"
+        "int network_init_weights(void* ctx, void* network_ctx);\n\n"
+        "#endif\n"
+    );
+    prof_leaf_graph_cleanup(&graph);
 
-        st = prof_path_ensure_parent_directory(layout->network_init.h_path);
-        if (st == PROF_STATUS_OK) {
-            write_file(layout->network_init.h_path, header_content);
+    if (st != PROF_STATUS_OK) {
+        return prof_error_set(ctx->error, st,
+            "Failed to write network_init.h");
+    }
+
+    return PROF_STATUS_OK;
+}
+
+static int append_generated_infer_structs(
+    char* buffer,
+    size_t buffer_capacity,
+    size_t* position
+) {
+    return append_format(
+        buffer,
+        buffer_capacity,
+        position,
+        "typedef struct {\n"
+        "    const char* subnet_id;\n"
+        "    const char* subnet_type;\n"
+        "    size_t input_size;\n"
+        "    size_t output_size;\n"
+        "    const NNGraphInferContract* contract;\n"
+        "    void* network_ctx;\n"
+        "    NNCodegenInferConfig config;\n"
+        "    float* input_buffer;\n"
+        "    float* output_buffer;\n"
+        "    size_t* average_counts;\n"
+        "} GeneratedInferLeaf;\n\n"
+        "typedef struct {\n"
+        "    size_t leaf_count;\n"
+        "    GeneratedInferLeaf leaves[GENERATED_LEAF_COUNT];\n"
+        "} InferContext;\n\n"
+    );
+}
+
+static int append_generated_infer_helpers(
+    char* buffer,
+    size_t buffer_capacity,
+    size_t* position
+) {
+    return append_format(
+        buffer,
+        buffer_capacity,
+        position,
+        "static void generated_infer_destroy_leaf(GeneratedInferLeaf* leaf) {\n"
+        "    if (leaf == 0) return;\n"
+        "    if (leaf->contract != 0 && leaf->contract->destroy != 0 && leaf->network_ctx != 0) {\n"
+        "        leaf->contract->destroy(leaf->network_ctx);\n"
+        "    }\n"
+        "    free(leaf->input_buffer);\n"
+        "    free(leaf->output_buffer);\n"
+        "    free(leaf->average_counts);\n"
+        "    leaf->network_ctx = 0;\n"
+        "}\n\n"
+        "static void generated_infer_prepare_inputs(InferContext* ctx, const float* input) {\n"
+        "    size_t leaf_index;\n"
+        "    if (ctx == 0) return;\n"
+        "    for (leaf_index = 0U; leaf_index < GENERATED_LEAF_COUNT; ++leaf_index) {\n"
+        "        GeneratedInferLeaf* leaf = &ctx->leaves[leaf_index];\n"
+        "        if (leaf->input_buffer != 0) memset(leaf->input_buffer, 0, leaf->input_size * sizeof(float));\n"
+        "        if (leaf->output_buffer != 0) memset(leaf->output_buffer, 0, leaf->output_size * sizeof(float));\n"
+        "        if (leaf->average_counts != 0) memset(leaf->average_counts, 0, leaf->input_size * sizeof(size_t));\n"
+        "        if (g_incoming_counts[leaf_index] == 0U && input != 0 && leaf->input_buffer != 0) {\n"
+        "            size_t input_index;\n"
+        "            size_t copy_count = leaf->input_size < GENERATED_NETWORK_INPUT_SIZE ? leaf->input_size : GENERATED_NETWORK_INPUT_SIZE;\n"
+        "            for (input_index = 0U; input_index < copy_count; ++input_index) {\n"
+        "                leaf->input_buffer[input_index] = input[input_index];\n"
+        "            }\n"
+        "        }\n"
+        "    }\n"
+        "}\n\n"
+        "static void generated_infer_finalize_average(GeneratedInferLeaf* leaf) {\n"
+        "    size_t node_index;\n"
+        "    if (leaf == 0 || leaf->input_buffer == 0 || leaf->average_counts == 0) return;\n"
+        "    for (node_index = 0U; node_index < leaf->input_size; ++node_index) {\n"
+        "        if (leaf->average_counts[node_index] > 1U) {\n"
+        "            leaf->input_buffer[node_index] /= (float)leaf->average_counts[node_index];\n"
+        "        }\n"
+        "    }\n"
+        "}\n\n"
+        "static void generated_infer_route_outputs(InferContext* ctx, size_t source_leaf_index) {\n"
+        "    size_t connection_index;\n"
+        "    if (ctx == 0) return;\n"
+        "    for (connection_index = 0U; connection_index < GENERATED_CONNECTION_COUNT; ++connection_index) {\n"
+        "        const GeneratedConnection* connection = &g_connections[connection_index];\n"
+        "        GeneratedInferLeaf* target_leaf;\n"
+        "        const GeneratedInferLeaf* source_leaf;\n"
+        "        float value;\n"
+        "        if (connection->source_leaf_index != source_leaf_index) continue;\n"
+        "        source_leaf = &ctx->leaves[connection->source_leaf_index];\n"
+        "        target_leaf = &ctx->leaves[connection->target_leaf_index];\n"
+        "        if (source_leaf->output_buffer == 0 || target_leaf->input_buffer == 0) continue;\n"
+        "        value = source_leaf->output_buffer[connection->source_node_index];\n"
+        "        target_leaf->input_buffer[connection->target_node_index] += value;\n"
+        "        if (connection->merge_strategy == 2 && target_leaf->average_counts != 0) {\n"
+        "            target_leaf->average_counts[connection->target_node_index] += 1U;\n"
+        "        } else if (target_leaf->average_counts != 0 && target_leaf->average_counts[connection->target_node_index] == 0U) {\n"
+        "            target_leaf->average_counts[connection->target_node_index] = 1U;\n"
+        "        }\n"
+        "    }\n"
+        "}\n\n"
+        "static int generated_infer_execute_graph(InferContext* ctx, const float* input) {\n"
+        "    size_t order_index;\n"
+        "    if (ctx == 0) return -1;\n"
+        "    generated_infer_prepare_inputs(ctx, input);\n"
+        "    for (order_index = 0U; order_index < GENERATED_LEAF_COUNT; ++order_index) {\n"
+        "        size_t leaf_index = g_topology_order[order_index];\n"
+        "        GeneratedInferLeaf* leaf = &ctx->leaves[leaf_index];\n"
+        "        if (g_incoming_counts[leaf_index] > 0U) generated_infer_finalize_average(leaf);\n"
+        "        if (leaf->contract == 0 || leaf->contract->graph_run == 0 || leaf->network_ctx == 0) return -1;\n"
+        "        if (leaf->contract->graph_run(leaf->network_ctx, leaf->input_buffer, leaf->output_buffer) != 0) return -1;\n"
+        "        generated_infer_route_outputs(ctx, leaf_index);\n"
+        "    }\n"
+        "    return 0;\n"
+        "}\n\n"
+        "static void generated_infer_collect_outputs(const InferContext* ctx, float* output) {\n"
+        "    size_t leaf_index;\n"
+        "    size_t output_offset = 0U;\n"
+        "    if (ctx == 0 || output == 0) return;\n"
+        "    for (leaf_index = 0U; leaf_index < GENERATED_LEAF_COUNT; ++leaf_index) {\n"
+        "        const GeneratedInferLeaf* leaf = &ctx->leaves[leaf_index];\n"
+        "        size_t node_index;\n"
+        "        if (g_outgoing_counts[leaf_index] != 0U) continue;\n"
+        "        for (node_index = 0U; node_index < leaf->output_size; ++node_index) {\n"
+        "            output[output_offset + node_index] = leaf->output_buffer[node_index];\n"
+        "        }\n"
+        "        output_offset += leaf->output_size;\n"
+        "    }\n"
+        "}\n\n"
+    );
+}
+
+ProfStatus prof_codegen_infer(ProfCodegenContext* ctx) {
+    const ProfOutputLayout* layout;
+    const NN_NetworkDef* network;
+    ProfLeafGraph graph;
+    ProfStatus st;
+    char* content;
+    size_t pos = 0U;
+    size_t leaf_index;
+
+    if (ctx == NULL) {
+        return PROF_STATUS_INVALID_ARGUMENT;
+    }
+
+    layout = ctx->output_layout;
+    network = ctx->network;
+    if (layout == NULL || layout->infer.c_path == NULL) {
+        return PROF_STATUS_PATH_INVALID;
+    }
+
+    st = prof_leaf_graph_init(network, &graph);
+    if (st != PROF_STATUS_OK) {
+        return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
+            "Failed to flatten leaf graph for infer generation");
+    }
+
+    content = (char*)calloc(CODE_BUFFER_CAPACITY, sizeof(char));
+    if (content == NULL) {
+        prof_leaf_graph_cleanup(&graph);
+        return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
+            "Failed to allocate infer code buffer");
+    }
+
+    if (append_format(content, CODE_BUFFER_CAPACITY, &pos,
+            "/* infer.c - Inference module */\n"
+            "/* Auto-generated by profiler */\n"
+            "/* Network: %s */\n"
+            "/* Flattened leaf count: %zu */\n\n"
+            "#include \"infer.h\"\n"
+            "#include \"nn/nn_codegen_hooks.h\"\n"
+            "#include \"nn/nn_graph_contract.h\"\n"
+            "#include <stdlib.h>\n"
+            "#include <string.h>\n\n",
+            network != NULL ? network->network_name : "unknown",
+            graph.leaf_subnets.count) != 0) {
+        free(content);
+        prof_leaf_graph_cleanup(&graph);
+        return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
+            "Failed to assemble infer prologue");
+    }
+
+    for (leaf_index = 0U; leaf_index < graph.leaf_subnets.count; ++leaf_index) {
+        NNSubnetDef* subnet = graph.leaf_subnets.items[leaf_index];
+        if (subnet != NULL && subnet->infer_config_header_path != NULL &&
+            append_format(content, CODE_BUFFER_CAPACITY, &pos,
+                "#include \"%s\"\n", subnet->infer_config_header_path) != 0) {
+            free(content);
+            prof_leaf_graph_cleanup(&graph);
+            return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
+                "Failed to append infer type include");
         }
+    }
+
+    if (append_format(content, CODE_BUFFER_CAPACITY, &pos, "\n") != 0 ||
+        append_leaf_graph_constants(content, CODE_BUFFER_CAPACITY, &pos, network, &graph) != 0 ||
+        append_connection_table(content, CODE_BUFFER_CAPACITY, &pos, network, &graph) != 0 ||
+        append_infer_type_blobs(content, CODE_BUFFER_CAPACITY, &pos, &graph) != 0 ||
+        append_generated_infer_structs(content, CODE_BUFFER_CAPACITY, &pos) != 0 ||
+        append_generated_infer_helpers(content, CODE_BUFFER_CAPACITY, &pos) != 0 ||
+        append_format(content, CODE_BUFFER_CAPACITY, &pos,
+            "void* infer_create(void) {\n"
+            "    InferContext* ctx;\n"
+            "    ctx = (InferContext*)calloc(1U, sizeof(InferContext));\n"
+            "    if (ctx == 0) return 0;\n"
+            "    ctx->leaf_count = GENERATED_LEAF_COUNT;\n") != 0) {
+        free(content);
+        prof_leaf_graph_cleanup(&graph);
+        return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
+            "Failed to assemble infer helper code");
+    }
+
+    for (leaf_index = 0U; leaf_index < graph.leaf_subnets.count; ++leaf_index) {
+        NNSubnetDef* subnet = graph.leaf_subnets.items[leaf_index];
+        size_t hidden_index;
+        if (subnet == NULL) {
+            continue;
+        }
+
+        if (append_format(content, CODE_BUFFER_CAPACITY, &pos,
+                "    ctx->leaves[%zuU].subnet_id = \"%s\";\n"
+                "    ctx->leaves[%zuU].subnet_type = \"%s\";\n"
+                "    ctx->leaves[%zuU].input_size = %zuU;\n"
+                "    ctx->leaves[%zuU].output_size = %zuU;\n"
+                "    ctx->leaves[%zuU].contract = nn_graph_infer_contract_find(\"%s\");\n",
+                leaf_index, subnet->subnet_id,
+                leaf_index, subnet->subnet_type,
+                leaf_index, subnet->input_layer_size,
+                leaf_index, subnet->output_layer_size,
+                leaf_index, subnet->subnet_type) != 0 ||
+            append_format(content, CODE_BUFFER_CAPACITY, &pos,
+                "    if (ctx->leaves[%zuU].contract == 0 ||\n"
+                "        ctx->leaves[%zuU].contract->create == 0 ||\n"
+                "        ctx->leaves[%zuU].contract->destroy == 0 ||\n"
+                "        ((GENERATED_LEAF_COUNT == 1U) ?\n"
+                "            (ctx->leaves[%zuU].contract->auto_run == 0) :\n"
+                "            (ctx->leaves[%zuU].contract->graph_run == 0))) {\n"
+                "        infer_destroy(ctx);\n"
+                "        return 0;\n"
+                "    }\n",
+                leaf_index,
+                leaf_index,
+                leaf_index,
+                leaf_index,
+                leaf_index) != 0 ||
+            append_format(content, CODE_BUFFER_CAPACITY, &pos,
+                "    ctx->leaves[%zuU].config.network_type = \"%s\";\n"
+                "    ctx->leaves[%zuU].config.input_size = %zuU;\n"
+                "    ctx->leaves[%zuU].config.hidden_layer_count = %zuU;\n"
+                "    ctx->leaves[%zuU].config.output_size = %zuU;\n"
+                "    ctx->leaves[%zuU].config.network_hash = 0x%016llxULL;\n"
+                "    ctx->leaves[%zuU].config.layout_hash = 0x%016llxULL;\n"
+                "    ctx->leaves[%zuU].config.seed = 0U;\n"
+                "    ctx->leaves[%zuU].config.type_config = 0;\n"
+                "    ctx->leaves[%zuU].config.type_config_size = 0U;\n"
+                "    ctx->leaves[%zuU].config.type_config_type_name = 0;\n",
+                leaf_index, subnet->subnet_type,
+                leaf_index, subnet->input_layer_size,
+                leaf_index, subnet->hidden_layer_count,
+                leaf_index, subnet->output_layer_size,
+                leaf_index, (unsigned long long)ctx->network_hash,
+                leaf_index, (unsigned long long)ctx->layout_hash,
+                leaf_index,
+                leaf_index,
+                leaf_index,
+                leaf_index) != 0) {
+            free(content);
+            prof_leaf_graph_cleanup(&graph);
+            return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
+                "Failed to append infer leaf configuration");
+        }
+
+        for (hidden_index = 0U; hidden_index < 4U; ++hidden_index) {
+            size_t hidden_size = hidden_index < subnet->hidden_layer_count ?
+                subnet->hidden_layer_sizes[hidden_index] : 0U;
+            if (append_format(content, CODE_BUFFER_CAPACITY, &pos,
+                    "    ctx->leaves[%zuU].config.hidden_sizes[%zuU] = %zuU;\n",
+                    leaf_index, hidden_index, hidden_size) != 0) {
+                free(content);
+                prof_leaf_graph_cleanup(&graph);
+                return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
+                    "Failed to append infer hidden layer configuration");
+            }
+        }
+
+        if (graph.leaf_subnets.count > 1U &&
+            append_format(content, CODE_BUFFER_CAPACITY, &pos,
+                "    ctx->leaves[%zuU].input_buffer = (float*)calloc(%zuU, sizeof(float));\n"
+                "    ctx->leaves[%zuU].output_buffer = (float*)calloc(%zuU, sizeof(float));\n"
+                "    ctx->leaves[%zuU].average_counts = (size_t*)calloc(%zuU, sizeof(size_t));\n"
+                "    if (ctx->leaves[%zuU].input_buffer == 0 ||\n"
+                "        ctx->leaves[%zuU].output_buffer == 0 ||\n"
+                "        ctx->leaves[%zuU].average_counts == 0) {\n"
+                "        infer_destroy(ctx);\n"
+                "        return 0;\n"
+                "    }\n",
+                leaf_index, subnet->input_layer_size,
+                leaf_index, subnet->output_layer_size,
+                leaf_index, subnet->input_layer_size,
+                leaf_index,
+                leaf_index,
+                leaf_index) != 0) {
+            free(content);
+            prof_leaf_graph_cleanup(&graph);
+            return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
+                "Failed to append infer buffer allocation");
+        }
+
+        if (append_format(content, CODE_BUFFER_CAPACITY, &pos,
+                "    {\n"
+                "        %s typed_config;\n"
+                "        (void)memcpy(&typed_config, g_infer_type_config_bytes_%zu, sizeof(typed_config));\n"
+                "        ctx->leaves[%zuU].config.type_config = &typed_config;\n"
+                "        ctx->leaves[%zuU].config.type_config_size = sizeof(typed_config);\n"
+                "        ctx->leaves[%zuU].config.type_config_type_name = \"%s\";\n"
+                "        ctx->leaves[%zuU].network_ctx = ctx->leaves[%zuU].contract->create(&ctx->leaves[%zuU].config);\n"
+                "    }\n",
+                subnet->infer_config_type_name,
+                leaf_index,
+                leaf_index,
+                leaf_index,
+                leaf_index,
+                subnet->infer_config_type_name,
+                leaf_index,
+                leaf_index,
+                leaf_index) != 0 ||
+            append_format(content, CODE_BUFFER_CAPACITY, &pos,
+                "    if (ctx->leaves[%zuU].network_ctx == 0) {\n"
+                "        infer_destroy(ctx);\n"
+                "        return 0;\n"
+                "    }\n",
+                leaf_index) != 0) {
+            free(content);
+            prof_leaf_graph_cleanup(&graph);
+            return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
+                "Failed to append infer typed configuration");
+        }
+    }
+
+    if (append_format(content, CODE_BUFFER_CAPACITY, &pos,
+            "    return ctx;\n"
+            "}\n\n"
+            "void infer_destroy(void* context) {\n"
+            "    InferContext* ctx = (InferContext*)context;\n"
+            "    size_t leaf_index;\n"
+            "    if (ctx == 0) return;\n"
+            "    for (leaf_index = 0U; leaf_index < GENERATED_LEAF_COUNT; ++leaf_index) {\n"
+            "        generated_infer_destroy_leaf(&ctx->leaves[leaf_index]);\n"
+            "    }\n"
+            "    free(ctx);\n"
+            "}\n\n"
+            "void* infer_get_native_context(void* context) {\n"
+            "    InferContext* ctx = (InferContext*)context;\n"
+            "    if (ctx == 0 || GENERATED_LEAF_COUNT != 1U) return 0;\n"
+            "    return ctx->leaves[0U].network_ctx;\n"
+            "}\n\n"
+            "size_t infer_get_leaf_count(void* context) {\n"
+            "    InferContext* ctx = (InferContext*)context;\n"
+            "    return ctx == 0 ? 0U : ctx->leaf_count;\n"
+            "}\n\n"
+            "void* infer_get_leaf_native_context(void* context, size_t leaf_index) {\n"
+            "    InferContext* ctx = (InferContext*)context;\n"
+            "    if (ctx == 0 || leaf_index >= GENERATED_LEAF_COUNT) return 0;\n"
+            "    return ctx->leaves[leaf_index].network_ctx;\n"
+            "}\n\n"
+            "const char* infer_get_leaf_id(void* context, size_t leaf_index) {\n"
+            "    InferContext* ctx = (InferContext*)context;\n"
+            "    if (ctx == 0 || leaf_index >= GENERATED_LEAF_COUNT) return 0;\n"
+            "    return ctx->leaves[leaf_index].subnet_id;\n"
+            "}\n\n"
+            "const char* infer_get_leaf_type(void* context, size_t leaf_index) {\n"
+            "    InferContext* ctx = (InferContext*)context;\n"
+            "    if (ctx == 0 || leaf_index >= GENERATED_LEAF_COUNT) return 0;\n"
+            "    return ctx->leaves[leaf_index].subnet_type;\n"
+            "}\n\n"
+            "int infer_step(void* context, const void* input, void* output) {\n"
+            "    return infer_auto_run(context, input, output);\n"
+            "}\n\n"
+            "int infer_auto_run(void* context, const void* input, void* output) {\n"
+            "    InferContext* ctx = (InferContext*)context;\n"
+            "    if (ctx == 0) return -1;\n"
+            "    if (GENERATED_LEAF_COUNT == 1U) {\n"
+            "        GeneratedInferLeaf* leaf = &ctx->leaves[0U];\n"
+            "        if (leaf->contract == 0 || leaf->contract->auto_run == 0 || leaf->network_ctx == 0) return -1;\n"
+            "        return leaf->contract->auto_run(leaf->network_ctx, input, output);\n"
+            "    }\n"
+            "    if (generated_infer_execute_graph(ctx, (const float*)input) != 0) return -1;\n"
+            "    generated_infer_collect_outputs(ctx, (float*)output);\n"
+            "    return 0;\n"
+            "}\n") != 0) {
+        free(content);
+        prof_leaf_graph_cleanup(&graph);
+        return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
+            "Failed to finalize infer.c");
+    }
+
+    st = prof_path_ensure_parent_directory(layout->infer.c_path);
+    if (st != PROF_STATUS_OK) {
+        free(content);
+        prof_leaf_graph_cleanup(&graph);
+        return prof_error_set(ctx->error, st,
+            "Failed to create directory for infer.c");
+    }
+
+    st = write_file(layout->infer.c_path, content);
+    free(content);
+    prof_leaf_graph_cleanup(&graph);
+    if (st != PROF_STATUS_OK) {
+        return prof_error_set(ctx->error, st,
+            "Failed to write infer.c");
+    }
+
+    st = write_optional_header(
+        layout->infer.h_path,
+        "/* infer.h - Inference interface */\n"
+        "#ifndef INFER_H\n"
+        "#define INFER_H\n\n"
+        "#include <stddef.h>\n\n"
+        "void* infer_create(void);\n"
+        "void infer_destroy(void* ctx);\n"
+        "void* infer_get_native_context(void* ctx);\n"
+        "size_t infer_get_leaf_count(void* ctx);\n"
+        "void* infer_get_leaf_native_context(void* ctx, size_t leaf_index);\n"
+        "const char* infer_get_leaf_id(void* ctx, size_t leaf_index);\n"
+        "const char* infer_get_leaf_type(void* ctx, size_t leaf_index);\n"
+        "int infer_step(void* ctx, const void* input, void* output);\n"
+        "int infer_auto_run(void* ctx, const void* input, void* output);\n\n"
+        "#endif\n"
+    );
+    if (st != PROF_STATUS_OK) {
+        return prof_error_set(ctx->error, st,
+            "Failed to write infer.h");
+    }
+
+    return PROF_STATUS_OK;
+}
+
+static int append_generated_train_infer_mirror(char* buffer, size_t buffer_capacity, size_t* position) {
+    return append_format(
+        buffer,
+        buffer_capacity,
+        position,
+        "typedef struct {\n"
+        "    const char* subnet_id;\n"
+        "    const char* subnet_type;\n"
+        "    size_t input_size;\n"
+        "    size_t output_size;\n"
+        "    const NNGraphInferContract* contract;\n"
+        "    void* network_ctx;\n"
+        "    NNCodegenInferConfig config;\n"
+        "    float* input_buffer;\n"
+        "    float* output_buffer;\n"
+        "    size_t* average_counts;\n"
+        "} GeneratedInferLeaf;\n\n"
+        "typedef struct {\n"
+        "    size_t leaf_count;\n"
+        "    GeneratedInferLeaf leaves[GENERATED_LEAF_COUNT];\n"
+        "} InferContext;\n\n"
+        "typedef struct {\n"
+        "    const NNGraphTrainContract* contract;\n"
+        "    void* train_ctx;\n"
+        "    NNCodegenTrainConfig config;\n"
+        "    float* output_grad_buffer;\n"
+        "    float* input_grad_buffer;\n"
+        "} GeneratedTrainLeaf;\n\n"
+        "typedef struct {\n"
+        "    size_t leaf_count;\n"
+        "    size_t epoch_count;\n"
+        "    size_t step_count;\n"
+        "    float last_loss;\n"
+        "    void* infer_owner;\n"
+        "    GeneratedTrainLeaf leaves[GENERATED_LEAF_COUNT];\n"
+        "    float last_output[GENERATED_NETWORK_OUTPUT_SIZE == 0U ? 1U : GENERATED_NETWORK_OUTPUT_SIZE];\n"
+        "} TrainContext;\n\n"
+    );
+}
+
+static int append_generated_train_helpers(char* buffer, size_t buffer_capacity, size_t* position) {
+    return append_format(
+        buffer,
+        buffer_capacity,
+        position,
+        "static float generated_train_compute_mse(const float* output, const float* target, size_t count) {\n"
+        "    float loss = 0.0f;\n"
+        "    size_t index;\n"
+        "    if (output == 0 || target == 0 || count == 0U) return 0.0f;\n"
+        "    for (index = 0U; index < count; ++index) {\n"
+        "        float diff = output[index] - target[index];\n"
+        "        loss += diff * diff;\n"
+        "    }\n"
+        "    return loss / (float)count;\n"
+        "}\n\n"
+        "static void generated_train_prepare_inputs(InferContext* infer_ctx, const float* input) {\n"
+        "    size_t leaf_index;\n"
+        "    if (infer_ctx == 0) return;\n"
+        "    for (leaf_index = 0U; leaf_index < GENERATED_LEAF_COUNT; ++leaf_index) {\n"
+        "        GeneratedInferLeaf* leaf = &infer_ctx->leaves[leaf_index];\n"
+        "        if (leaf->input_buffer != 0) memset(leaf->input_buffer, 0, leaf->input_size * sizeof(float));\n"
+        "        if (leaf->output_buffer != 0) memset(leaf->output_buffer, 0, leaf->output_size * sizeof(float));\n"
+        "        if (leaf->average_counts != 0) memset(leaf->average_counts, 0, leaf->input_size * sizeof(size_t));\n"
+        "        if (g_incoming_counts[leaf_index] == 0U && input != 0 && leaf->input_buffer != 0) {\n"
+        "            size_t input_index;\n"
+        "            size_t copy_count = leaf->input_size < GENERATED_NETWORK_INPUT_SIZE ? leaf->input_size : GENERATED_NETWORK_INPUT_SIZE;\n"
+        "            for (input_index = 0U; input_index < copy_count; ++input_index) {\n"
+        "                leaf->input_buffer[input_index] = input[input_index];\n"
+        "            }\n"
+        "        }\n"
+        "    }\n"
+        "}\n\n"
+        "static void generated_train_finalize_average(GeneratedInferLeaf* leaf) {\n"
+        "    size_t node_index;\n"
+        "    if (leaf == 0 || leaf->input_buffer == 0 || leaf->average_counts == 0) return;\n"
+        "    for (node_index = 0U; node_index < leaf->input_size; ++node_index) {\n"
+        "        if (leaf->average_counts[node_index] > 1U) {\n"
+        "            leaf->input_buffer[node_index] /= (float)leaf->average_counts[node_index];\n"
+        "        }\n"
+        "    }\n"
+        "}\n\n"
+        "static void generated_train_route_outputs(InferContext* infer_ctx, size_t source_leaf_index) {\n"
+        "    size_t connection_index;\n"
+        "    if (infer_ctx == 0) return;\n"
+        "    for (connection_index = 0U; connection_index < GENERATED_CONNECTION_COUNT; ++connection_index) {\n"
+        "        const GeneratedConnection* connection = &g_connections[connection_index];\n"
+        "        GeneratedInferLeaf* target_leaf;\n"
+        "        const GeneratedInferLeaf* source_leaf;\n"
+        "        float value;\n"
+        "        if (connection->source_leaf_index != source_leaf_index) continue;\n"
+        "        source_leaf = &infer_ctx->leaves[connection->source_leaf_index];\n"
+        "        target_leaf = &infer_ctx->leaves[connection->target_leaf_index];\n"
+        "        if (source_leaf->output_buffer == 0 || target_leaf->input_buffer == 0) continue;\n"
+        "        value = source_leaf->output_buffer[connection->source_node_index];\n"
+        "        target_leaf->input_buffer[connection->target_node_index] += value;\n"
+        "        if (connection->merge_strategy == 2 && target_leaf->average_counts != 0) {\n"
+        "            target_leaf->average_counts[connection->target_node_index] += 1U;\n"
+        "        } else if (target_leaf->average_counts != 0 && target_leaf->average_counts[connection->target_node_index] == 0U) {\n"
+        "            target_leaf->average_counts[connection->target_node_index] = 1U;\n"
+        "        }\n"
+        "    }\n"
+        "}\n\n"
+        "static void generated_train_clear_gradients(TrainContext* ctx) {\n"
+        "    size_t leaf_index;\n"
+        "    if (ctx == 0) return;\n"
+        "    for (leaf_index = 0U; leaf_index < GENERATED_LEAF_COUNT; ++leaf_index) {\n"
+        "        GeneratedTrainLeaf* leaf = &ctx->leaves[leaf_index];\n"
+        "        GeneratedInferLeaf* infer_leaf = &((InferContext*)ctx->infer_owner)->leaves[leaf_index];\n"
+        "        if (leaf->output_grad_buffer != 0) memset(leaf->output_grad_buffer, 0, infer_leaf->output_size * sizeof(float));\n"
+        "        if (leaf->input_grad_buffer != 0) memset(leaf->input_grad_buffer, 0, infer_leaf->input_size * sizeof(float));\n"
+        "    }\n"
+        "}\n\n"
+        "static void generated_train_collect_outputs(const InferContext* infer_ctx, float* output) {\n"
+        "    size_t leaf_index;\n"
+        "    size_t output_offset = 0U;\n"
+        "    if (infer_ctx == 0 || output == 0) return;\n"
+        "    for (leaf_index = 0U; leaf_index < GENERATED_LEAF_COUNT; ++leaf_index) {\n"
+        "        const GeneratedInferLeaf* leaf = &infer_ctx->leaves[leaf_index];\n"
+        "        size_t node_index;\n"
+        "        if (g_outgoing_counts[leaf_index] != 0U) continue;\n"
+        "        for (node_index = 0U; node_index < leaf->output_size; ++node_index) {\n"
+        "            output[output_offset + node_index] = leaf->output_buffer[node_index];\n"
+        "        }\n"
+        "        output_offset += leaf->output_size;\n"
+        "    }\n"
+        "}\n\n"
+        "static void generated_train_seed_output_gradients(TrainContext* ctx, const InferContext* infer_ctx, const float* target) {\n"
+        "    size_t leaf_index;\n"
+        "    size_t output_offset = 0U;\n"
+        "    if (ctx == 0 || infer_ctx == 0 || target == 0) return;\n"
+        "    for (leaf_index = 0U; leaf_index < GENERATED_LEAF_COUNT; ++leaf_index) {\n"
+        "        const GeneratedInferLeaf* infer_leaf = &infer_ctx->leaves[leaf_index];\n"
+        "        GeneratedTrainLeaf* train_leaf = &ctx->leaves[leaf_index];\n"
+        "        size_t node_index;\n"
+        "        if (g_outgoing_counts[leaf_index] != 0U || train_leaf->output_grad_buffer == 0 || infer_leaf->output_buffer == 0) continue;\n"
+        "        for (node_index = 0U; node_index < infer_leaf->output_size; ++node_index) {\n"
+        "            float diff = infer_leaf->output_buffer[node_index] - target[output_offset + node_index];\n"
+        "            train_leaf->output_grad_buffer[node_index] = (2.0f * diff) / (float)GENERATED_NETWORK_OUTPUT_SIZE;\n"
+        "        }\n"
+        "        output_offset += infer_leaf->output_size;\n"
+        "    }\n"
+        "}\n\n"
+        "static void generated_train_route_input_gradients(TrainContext* ctx, const InferContext* infer_ctx, size_t target_leaf_index) {\n"
+        "    size_t connection_index;\n"
+        "    if (ctx == 0 || infer_ctx == 0) return;\n"
+        "    for (connection_index = 0U; connection_index < GENERATED_CONNECTION_COUNT; ++connection_index) {\n"
+        "        const GeneratedConnection* connection = &g_connections[connection_index];\n"
+        "        const GeneratedInferLeaf* target_infer_leaf;\n"
+        "        const GeneratedTrainLeaf* target_train_leaf;\n"
+        "        GeneratedTrainLeaf* source_train_leaf;\n"
+        "        float grad_value;\n"
+        "        size_t avg_count = 1U;\n"
+        "        if (connection->target_leaf_index != target_leaf_index) continue;\n"
+        "        target_infer_leaf = &infer_ctx->leaves[target_leaf_index];\n"
+        "        target_train_leaf = &ctx->leaves[target_leaf_index];\n"
+        "        source_train_leaf = &ctx->leaves[connection->source_leaf_index];\n"
+        "        if (target_train_leaf->input_grad_buffer == 0 || source_train_leaf->output_grad_buffer == 0) continue;\n"
+        "        grad_value = target_train_leaf->input_grad_buffer[connection->target_node_index];\n"
+        "        if (connection->merge_strategy == 2 && target_infer_leaf->average_counts != 0) {\n"
+        "            avg_count = target_infer_leaf->average_counts[connection->target_node_index];\n"
+        "            if (avg_count == 0U) avg_count = 1U;\n"
+        "            grad_value /= (float)avg_count;\n"
+        "        }\n"
+        "        source_train_leaf->output_grad_buffer[connection->source_node_index] += grad_value;\n"
+        "    }\n"
+        "}\n\n"
+    );
+}
+
+ProfStatus prof_codegen_train(ProfCodegenContext* ctx) {
+    const ProfOutputLayout* layout;
+    const NN_NetworkDef* network;
+    ProfLeafGraph graph;
+    ProfStatus st;
+    char* content;
+    size_t pos = 0U;
+    size_t leaf_index;
+
+    if (ctx == NULL) return PROF_STATUS_INVALID_ARGUMENT;
+    layout = ctx->output_layout;
+    network = ctx->network;
+    if (layout == NULL || layout->train.c_path == NULL) return PROF_STATUS_PATH_INVALID;
+
+    st = prof_leaf_graph_init(network, &graph);
+    if (st != PROF_STATUS_OK) {
+        return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
+            "Failed to flatten leaf graph for train generation");
+    }
+
+    content = (char*)calloc(CODE_BUFFER_CAPACITY, sizeof(char));
+    if (content == NULL) {
+        prof_leaf_graph_cleanup(&graph);
+        return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
+            "Failed to allocate train code buffer");
+    }
+
+    if (append_format(content, CODE_BUFFER_CAPACITY, &pos,
+            "/* train.c - Training module */\n"
+            "#include \"train.h\"\n"
+            "#include \"infer.h\"\n"
+            "#include \"nn/nn_codegen_hooks.h\"\n"
+            "#include \"nn/nn_graph_contract.h\"\n"
+            "#include <stdlib.h>\n"
+            "#include <string.h>\n\n") != 0) {
+        free(content);
+        prof_leaf_graph_cleanup(&graph);
+        return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
+            "Failed to assemble train prologue");
+    }
+
+    for (leaf_index = 0U; leaf_index < graph.leaf_subnets.count; ++leaf_index) {
+        NNSubnetDef* subnet = graph.leaf_subnets.items[leaf_index];
+        if (subnet != NULL && subnet->train_config_header_path != NULL &&
+            append_format(content, CODE_BUFFER_CAPACITY, &pos,
+                "#include \"%s\"\n", subnet->train_config_header_path) != 0) {
+            free(content);
+            prof_leaf_graph_cleanup(&graph);
+            return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
+                "Failed to append train type include");
+        }
+    }
+
+    if (append_format(content, CODE_BUFFER_CAPACITY, &pos, "\n") != 0 ||
+        append_leaf_graph_constants(content, CODE_BUFFER_CAPACITY, &pos, network, &graph) != 0 ||
+        append_connection_table(content, CODE_BUFFER_CAPACITY, &pos, network, &graph) != 0 ||
+        append_train_type_blobs(content, CODE_BUFFER_CAPACITY, &pos, &graph) != 0 ||
+        append_generated_train_infer_mirror(content, CODE_BUFFER_CAPACITY, &pos) != 0 ||
+        append_generated_train_helpers(content, CODE_BUFFER_CAPACITY, &pos) != 0 ||
+        append_format(content, CODE_BUFFER_CAPACITY, &pos,
+            "void* train_create(void* infer_ctx) {\n"
+            "    TrainContext* ctx;\n"
+            "    if (infer_ctx == 0) return 0;\n"
+            "    ctx = (TrainContext*)calloc(1U, sizeof(TrainContext));\n"
+            "    if (ctx == 0) return 0;\n"
+            "    ctx->leaf_count = GENERATED_LEAF_COUNT;\n"
+            "    ctx->infer_owner = infer_ctx;\n") != 0) {
+        free(content);
+        prof_leaf_graph_cleanup(&graph);
+        return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
+            "Failed to assemble train helper code");
+    }
+
+    for (leaf_index = 0U; leaf_index < graph.leaf_subnets.count; ++leaf_index) {
+        NNSubnetDef* subnet = graph.leaf_subnets.items[leaf_index];
+        if (subnet == NULL) {
+            continue;
+        }
+        if (append_format(content, CODE_BUFFER_CAPACITY, &pos,
+                "    ctx->leaves[%zuU].contract = nn_graph_train_contract_find(\"%s\");\n"
+                "    if (ctx->leaves[%zuU].contract == 0 ||\n"
+                "        ctx->leaves[%zuU].contract->create == 0 ||\n"
+                "        ctx->leaves[%zuU].contract->destroy == 0 ||\n"
+                "        ((GENERATED_LEAF_COUNT == 1U) ?\n"
+                "            (ctx->leaves[%zuU].contract->step_with_data == 0) :\n"
+                "            (ctx->leaves[%zuU].contract->step_with_output_gradient == 0))) {\n"
+                "        train_destroy(ctx);\n"
+                "        return 0;\n"
+                "    }\n",
+                leaf_index, subnet->subnet_type,
+                leaf_index,
+                leaf_index,
+                leaf_index,
+                leaf_index,
+                leaf_index) != 0 ||
+            append_format(content, CODE_BUFFER_CAPACITY, &pos,
+                "    ctx->leaves[%zuU].output_grad_buffer = (float*)calloc(%zuU, sizeof(float));\n"
+                "    ctx->leaves[%zuU].input_grad_buffer = (float*)calloc(%zuU, sizeof(float));\n"
+                "    if (ctx->leaves[%zuU].output_grad_buffer == 0 ||\n"
+                "        ctx->leaves[%zuU].input_grad_buffer == 0) {\n"
+                "        train_destroy(ctx);\n"
+                "        return 0;\n"
+                "    }\n",
+                leaf_index, subnet->output_layer_size,
+                leaf_index, subnet->input_layer_size,
+                leaf_index,
+                leaf_index) != 0 ||
+            append_format(content, CODE_BUFFER_CAPACITY, &pos,
+                "    ctx->leaves[%zuU].config.learning_rate = 0.0f;\n"
+                "    ctx->leaves[%zuU].config.momentum = 0.0f;\n"
+                "    ctx->leaves[%zuU].config.weight_decay = 0.0f;\n"
+                "    ctx->leaves[%zuU].config.batch_size = 1U;\n"
+                "    ctx->leaves[%zuU].config.seed = 0U;\n"
+                "    ctx->leaves[%zuU].config.type_config = 0;\n"
+                "    ctx->leaves[%zuU].config.type_config_size = 0U;\n"
+                "    ctx->leaves[%zuU].config.type_config_type_name = 0;\n",
+                leaf_index,
+                leaf_index,
+                leaf_index,
+                leaf_index,
+                leaf_index,
+                leaf_index,
+                leaf_index,
+                leaf_index) != 0 ||
+            append_format(content, CODE_BUFFER_CAPACITY, &pos,
+                "    {\n"
+                "        %s typed_config;\n"
+                "        (void)memcpy(&typed_config, g_train_type_config_bytes_%zu, sizeof(typed_config));\n"
+                "        ctx->leaves[%zuU].config.type_config = &typed_config;\n"
+                "        ctx->leaves[%zuU].config.type_config_size = sizeof(typed_config);\n"
+                "        ctx->leaves[%zuU].config.type_config_type_name = \"%s\";\n"
+                "        ctx->leaves[%zuU].train_ctx = ctx->leaves[%zuU].contract->create(\n"
+                "            infer_get_leaf_native_context(infer_ctx, %zuU),\n"
+                "            &ctx->leaves[%zuU].config);\n"
+                "    }\n"
+                "    if (ctx->leaves[%zuU].train_ctx == 0) {\n"
+                "        train_destroy(ctx);\n"
+                "        return 0;\n"
+                "    }\n",
+                subnet->train_config_type_name,
+                leaf_index,
+                leaf_index,
+                leaf_index,
+                leaf_index,
+                subnet->train_config_type_name,
+                leaf_index,
+                leaf_index,
+                leaf_index,
+                leaf_index,
+                leaf_index) != 0) {
+            free(content);
+            prof_leaf_graph_cleanup(&graph);
+            return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
+                "Failed to append train leaf configuration");
+        }
+    }
+
+    if (append_format(content, CODE_BUFFER_CAPACITY, &pos,
+            "    return ctx;\n}\n\n"
+            "void train_destroy(void* context) {\n"
+            "    TrainContext* ctx = (TrainContext*)context;\n"
+            "    size_t leaf_index;\n"
+            "    if (ctx == 0) return;\n"
+            "    for (leaf_index = 0U; leaf_index < GENERATED_LEAF_COUNT; ++leaf_index) {\n"
+            "        if (ctx->leaves[leaf_index].contract != 0 && ctx->leaves[leaf_index].contract->destroy != 0 && ctx->leaves[leaf_index].train_ctx != 0) {\n"
+            "            ctx->leaves[leaf_index].contract->destroy(ctx->leaves[leaf_index].train_ctx);\n"
+            "        }\n"
+            "        free(ctx->leaves[leaf_index].output_grad_buffer);\n"
+            "        free(ctx->leaves[leaf_index].input_grad_buffer);\n"
+            "    }\n"
+            "    free(ctx);\n}\n\n"
+            "int train_step(void* context, const void* input, const void* target) {\n"
+            "    TrainContext* ctx = (TrainContext*)context;\n"
+            "    if (ctx == 0) return -1;\n"
+            "    if (GENERATED_LEAF_COUNT == 1U) {\n"
+            "        if (ctx->leaves[0U].contract == 0 || ctx->leaves[0U].contract->step_with_data == 0 || ctx->leaves[0U].train_ctx == 0) return -1;\n"
+            "        if (ctx->leaves[0U].contract->step_with_data(ctx->leaves[0U].train_ctx, input, target) != 0) return -1;\n"
+            "    } else {\n"
+            "        InferContext* infer_ctx = (InferContext*)ctx->infer_owner;\n"
+            "        const float* input_values = (const float*)input;\n"
+            "        const float* target_values = (const float*)target;\n"
+            "        size_t order_index;\n"
+            "        if (infer_ctx == 0 || target_values == 0) return -1;\n"
+            "        generated_train_prepare_inputs(infer_ctx, input_values);\n"
+            "        for (order_index = 0U; order_index < GENERATED_LEAF_COUNT; ++order_index) {\n"
+            "            size_t idx = g_topology_order[order_index];\n"
+            "            GeneratedInferLeaf* infer_leaf = &infer_ctx->leaves[idx];\n"
+            "            if (g_incoming_counts[idx] > 0U) generated_train_finalize_average(infer_leaf);\n"
+            "            if (infer_leaf->contract == 0 || infer_leaf->contract->graph_run == 0 || infer_leaf->network_ctx == 0) return -1;\n"
+            "            if (infer_leaf->contract->graph_run(infer_leaf->network_ctx, infer_leaf->input_buffer, infer_leaf->output_buffer) != 0) return -1;\n"
+            "            generated_train_route_outputs(infer_ctx, idx);\n"
+            "        }\n"
+            "        generated_train_collect_outputs(infer_ctx, ctx->last_output);\n"
+            "        ctx->last_loss = generated_train_compute_mse(ctx->last_output, target_values, GENERATED_NETWORK_OUTPUT_SIZE);\n"
+            "        generated_train_clear_gradients(ctx);\n"
+            "        generated_train_seed_output_gradients(ctx, infer_ctx, target_values);\n"
+            "        for (order_index = GENERATED_LEAF_COUNT; order_index > 0U; --order_index) {\n"
+            "            size_t idx = g_topology_order[order_index - 1U];\n"
+            "            GeneratedInferLeaf* infer_leaf = &infer_ctx->leaves[idx];\n"
+            "            GeneratedTrainLeaf* train_leaf = &ctx->leaves[idx];\n"
+            "            if (train_leaf->contract == 0 || train_leaf->contract->step_with_output_gradient == 0 || train_leaf->train_ctx == 0) return -1;\n"
+            "            if (train_leaf->contract->step_with_output_gradient(\n"
+            "                    train_leaf->train_ctx,\n"
+            "                    infer_leaf->input_buffer,\n"
+            "                    train_leaf->output_grad_buffer,\n"
+            "                    train_leaf->input_grad_buffer) != 0) {\n"
+            "                return -1;\n"
+            "            }\n"
+            "            generated_train_route_input_gradients(ctx, infer_ctx, idx);\n"
+            "        }\n"
+            "    }\n"
+            "    ctx->step_count += 1U;\n"
+            "    return 0;\n}\n\n"
+            "int train_epoch(void* context, int epoch) {\n"
+            "    TrainContext* ctx = (TrainContext*)context;\n"
+            "    (void)epoch;\n"
+            "    if (ctx == 0) return -1;\n"
+            "    ctx->epoch_count += 1U;\n"
+            "    return 0;\n}\n\n"
+            "int train_auto_run(void* context, int epochs) {\n"
+            "    TrainContext* ctx = (TrainContext*)context;\n"
+            "    int index;\n"
+            "    if (ctx == 0) return -1;\n"
+            "    for (index = 0; index < epochs; ++index) {\n"
+            "        if (train_epoch(ctx, index) != 0) return -1;\n"
+            "    }\n"
+            "    return 0;\n}\n\n"
+            "float train_get_loss(void* context) {\n"
+            "    TrainContext* ctx = (TrainContext*)context;\n"
+            "    if (ctx == 0) return 0.0f;\n"
+            "    if (GENERATED_LEAF_COUNT == 1U) {\n"
+            "        size_t epochs = 0U;\n"
+            "        size_t steps = 0U;\n"
+            "        float avg_loss = 0.0f;\n"
+            "        if (ctx->leaves[0U].contract != 0 && ctx->leaves[0U].contract->get_stats != 0) {\n"
+            "            ctx->leaves[0U].contract->get_stats(ctx->leaves[0U].train_ctx, &epochs, &steps, &avg_loss);\n"
+            "        }\n"
+            "        return avg_loss;\n"
+            "    }\n"
+            "    return ctx->last_loss;\n}\n") != 0) {
+        free(content);
+        prof_leaf_graph_cleanup(&graph);
+        return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
+            "Failed to finalize train.c");
+    }
+
+    st = prof_path_ensure_parent_directory(layout->train.c_path);
+    if (st != PROF_STATUS_OK) {
+        free(content);
+        prof_leaf_graph_cleanup(&graph);
+        return prof_error_set(ctx->error, st,
+            "Failed to create directory for train.c");
+    }
+
+    st = write_file(layout->train.c_path, content);
+    free(content);
+    prof_leaf_graph_cleanup(&graph);
+    if (st != PROF_STATUS_OK) {
+        return prof_error_set(ctx->error, st,
+            "Failed to write train.c");
+    }
+
+    st = write_optional_header(
+        layout->train.h_path,
+        "/* train.h - Training interface */\n"
+        "#ifndef TRAIN_H\n"
+        "#define TRAIN_H\n\n"
+        "void* train_create(void* infer_ctx);\n"
+        "void train_destroy(void* ctx);\n"
+        "int train_step(void* ctx, const void* input, const void* target);\n"
+        "int train_epoch(void* ctx, int epoch);\n"
+        "int train_auto_run(void* ctx, int epochs);\n"
+        "float train_get_loss(void* ctx);\n\n"
+        "#endif\n"
+    );
+    if (st != PROF_STATUS_OK) {
+        return prof_error_set(ctx->error, st,
+            "Failed to write train.h");
+    }
+
+    return PROF_STATUS_OK;
+}
+
+static int append_weight_runtime_arrays(
+    char* buffer,
+    size_t buffer_capacity,
+    size_t* position,
+    const NN_NetworkDef* network,
+    const ProfLeafGraph* graph
+) {
+    size_t order_index;
+
+    if (append_leaf_graph_constants(buffer, buffer_capacity, position, network, graph) != 0) {
+        return -1;
+    }
+    if (append_format(buffer, buffer_capacity, position,
+            "static const char* g_expected_leaf_ids[GENERATED_LEAF_COUNT] = {") != 0) {
+        return -1;
+    }
+    for (order_index = 0U; order_index < graph->leaf_subnets.count; ++order_index) {
+        NNSubnetDef* subnet = graph->leaf_subnets.items[order_index];
+        if (append_format(buffer, buffer_capacity, position, "%s\"%s\"",
+                order_index == 0U ? "" : ", ", subnet != NULL ? subnet->subnet_id : "") != 0) {
+            return -1;
+        }
+    }
+    if (append_format(buffer, buffer_capacity, position, "};\n") != 0) {
+        return -1;
+    }
+    if (append_format(buffer, buffer_capacity, position,
+            "static const char* g_expected_leaf_types[GENERATED_LEAF_COUNT] = {") != 0) {
+        return -1;
+    }
+    for (order_index = 0U; order_index < graph->leaf_subnets.count; ++order_index) {
+        NNSubnetDef* subnet = graph->leaf_subnets.items[order_index];
+        if (append_format(buffer, buffer_capacity, position, "%s\"%s\"",
+                order_index == 0U ? "" : ", ", subnet != NULL ? subnet->subnet_type : "") != 0) {
+            return -1;
+        }
+    }
+    if (append_format(buffer, buffer_capacity, position, "};\n\n") != 0) {
+        return -1;
+    }
+    return 0;
+}
+
+ProfStatus prof_codegen_weights_save(ProfCodegenContext* ctx) {
+    const ProfOutputLayout* layout;
+    ProfLeafGraph graph;
+    ProfStatus st;
+    char* content;
+    size_t pos = 0U;
+
+    if (ctx == NULL) return PROF_STATUS_INVALID_ARGUMENT;
+    layout = ctx->output_layout;
+    if (layout == NULL || layout->weights_save.c_path == NULL) return PROF_STATUS_PATH_INVALID;
+
+    st = prof_leaf_graph_init(ctx->network, &graph);
+    if (st != PROF_STATUS_OK) {
+        return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
+            "Failed to flatten leaf graph for weights_save generation");
+    }
+
+    content = (char*)calloc(CODE_BUFFER_CAPACITY, sizeof(char));
+    if (content == NULL) {
+        prof_leaf_graph_cleanup(&graph);
+        return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
+            "Failed to allocate weights_save code buffer");
+    }
+
+    if (append_format(content, CODE_BUFFER_CAPACITY, &pos,
+            "/* weights_save.c - Weights saving module */\n"
+            "#include \"weights_save.h\"\n"
+            "#include \"infer.h\"\n"
+            "#include \"nn/nn_graph_contract.h\"\n"
+            "#include <stdint.h>\n"
+            "#include <stdio.h>\n"
+            "#include <string.h>\n\n"
+            "typedef struct { uint64_t network_hash; uint64_t layout_hash; uint32_t abi_version; uint32_t leaf_count; } GeneratedWeightsHeader;\n"
+            "typedef struct { uint32_t id_length; uint32_t type_length; } GeneratedLeafHeader;\n\n") != 0 ||
+        append_weight_runtime_arrays(content, CODE_BUFFER_CAPACITY, &pos, ctx->network, &graph) != 0 ||
+        append_format(content, CODE_BUFFER_CAPACITY, &pos,
+            "int weights_save_to_file(void* infer_ctx, const char* file_path) {\n"
+            "    FILE* fp;\n"
+            "    GeneratedWeightsHeader header;\n"
+            "    size_t order_index;\n"
+            "    if (infer_ctx == 0 || file_path == 0) return -1;\n"
+            "    fp = fopen(file_path, \"wb\");\n"
+            "    if (fp == 0) return -3;\n"
+            "    header.network_hash = 0x%016llxULL;\n"
+            "    header.layout_hash = 0x%016llxULL;\n"
+            "    header.abi_version = 1U;\n"
+            "    header.leaf_count = (uint32_t)GENERATED_LEAF_COUNT;\n"
+            "    if (fwrite(&header, sizeof(header), 1, fp) != 1) { fclose(fp); return -4; }\n"
+            "    for (order_index = 0U; order_index < GENERATED_LEAF_COUNT; ++order_index) {\n"
+            "        size_t leaf_index = g_topology_order[order_index];\n"
+            "        const char* leaf_id = infer_get_leaf_id(infer_ctx, leaf_index);\n"
+            "        const char* leaf_type = infer_get_leaf_type(infer_ctx, leaf_index);\n"
+            "        void* native_ctx = infer_get_leaf_native_context(infer_ctx, leaf_index);\n"
+            "        const NNGraphInferContract* contract;\n"
+            "        GeneratedLeafHeader leaf_header;\n"
+            "        if (leaf_id == 0 || leaf_type == 0 || native_ctx == 0) { fclose(fp); return -5; }\n"
+            "        contract = nn_graph_infer_contract_find(leaf_type);\n"
+            "        if (contract == 0 || contract->save_weights == 0) { fclose(fp); return -6; }\n"
+            "        leaf_header.id_length = (uint32_t)strlen(leaf_id);\n"
+            "        leaf_header.type_length = (uint32_t)strlen(leaf_type);\n"
+            "        if (fwrite(&leaf_header, sizeof(leaf_header), 1, fp) != 1 ||\n"
+            "            fwrite(leaf_id, 1, leaf_header.id_length, fp) != leaf_header.id_length ||\n"
+            "            fwrite(leaf_type, 1, leaf_header.type_length, fp) != leaf_header.type_length) {\n"
+            "            fclose(fp); return -7;\n"
+            "        }\n"
+            "        if (contract->save_weights(native_ctx, fp) == 0) { fclose(fp); return -8; }\n"
+            "    }\n"
+            "    fclose(fp);\n"
+            "    return 0;\n"
+            "}\n",
+            (unsigned long long)ctx->network_hash,
+            (unsigned long long)ctx->layout_hash) != 0) {
+        free(content);
+        prof_leaf_graph_cleanup(&graph);
+        return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
+            "Failed to assemble weights_save.c");
+    }
+
+    st = prof_path_ensure_parent_directory(layout->weights_save.c_path);
+    if (st != PROF_STATUS_OK) {
+        free(content);
+        prof_leaf_graph_cleanup(&graph);
+        return prof_error_set(ctx->error, st,
+            "Failed to create directory for weights_save.c");
+    }
+
+    st = write_file(layout->weights_save.c_path, content);
+    free(content);
+    prof_leaf_graph_cleanup(&graph);
+    if (st != PROF_STATUS_OK) {
+        return prof_error_set(ctx->error, st,
+            "Failed to write weights_save.c");
+    }
+
+    st = write_optional_header(
+        layout->weights_save.h_path,
+        "/* weights_save.h - Weights saving interface */\n"
+        "#ifndef WEIGHTS_SAVE_H\n"
+        "#define WEIGHTS_SAVE_H\n\n"
+        "int weights_save_to_file(void* infer_ctx, const char* file_path);\n\n"
+        "#endif\n"
+    );
+    if (st != PROF_STATUS_OK) {
+        return prof_error_set(ctx->error, st,
+            "Failed to write weights_save.h");
     }
 
     return PROF_STATUS_OK;
 }
 
 ProfStatus prof_codegen_weights_load(ProfCodegenContext* ctx) {
-    ProfStatus st;
     const ProfOutputLayout* layout;
-    const NN_NetworkDef* network;
-    NNSubnetDef* subnet;
-    char content[4096];
+    ProfLeafGraph graph;
+    ProfStatus st;
+    char* content;
+    size_t pos = 0U;
 
-    if (ctx == NULL) {
-        return PROF_STATUS_INVALID_ARGUMENT;
-    }
-
+    if (ctx == NULL) return PROF_STATUS_INVALID_ARGUMENT;
     layout = ctx->output_layout;
-    network = ctx->network;
-    subnet = (network != NULL && network->subnet_count > 0U) ? network->subnets[0] : NULL;
+    if (layout == NULL || layout->weights_load.c_path == NULL) return PROF_STATUS_PATH_INVALID;
 
-    if (layout == NULL || layout->weights_load.c_path == NULL) {
-        return PROF_STATUS_PATH_INVALID;
+    st = prof_leaf_graph_init(ctx->network, &graph);
+    if (st != PROF_STATUS_OK) {
+        return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
+            "Failed to flatten leaf graph for weights_load generation");
     }
 
-    snprintf(content, sizeof(content),
-        "/* weights_load.c - Weights loading module */\n"
-        "/* Auto-generated by profiler */\n\n"
-        "#include \"weights_load.h\"\n"
-        "#include \"infer.h\"\n"
-        "#include \"network_metadata.h\"\n"
-        "#include \"nn/nn_infer_registry.h\"\n"
-        "#include <stdio.h>\n"
-        "#include <stdint.h>\n"
-        "#include <string.h>\n\n"
-        "/* Expected network hash - generated from network definition */\n"
-        "static const uint64_t EXPECTED_HASH = 0x%016llxULL;\n"
-        "static const uint64_t EXPECTED_LAYOUT_HASH = 0x%016llxULL;\n\n"
-        "typedef struct {\n"
-        "    uint64_t network_hash;\n"
-        "    uint64_t layout_hash;\n"
-        "    uint32_t abi_version;\n"
-        "} WeightFileHeader;\n\n"
-        "static int weights_validate_header(FILE* fp) {\n"
-        "    WeightFileHeader header;\n\n"
-        "    if (fp == NULL) return -3;\n\n"
-        "    if (fread(&header, sizeof(header), 1, fp) != 1) {\n"
-        "        return -3;\n"
-        "    }\n\n"
-        "    if (header.network_hash != EXPECTED_HASH) {\n"
-        "        return -4;\n"
-        "    }\n\n"
-        "    if (header.layout_hash != EXPECTED_LAYOUT_HASH) {\n"
-        "        return -5;\n"
-        "    }\n\n"
-        "    if (header.abi_version != ABI_VERSION) {\n"
-        "        return -6;\n"
-        "    }\n\n"
-        "    return 0;\n"
-        "}\n\n"
-        "int weights_load_from_file(void* infer_ctx, const char* file_path) {\n"
-        "    FILE* fp;\n"
-        "    const NNInferRegistryEntry* entry;\n"
-        "    void* native_infer_ctx;\n"
-        "    int rc;\n\n"
-        "    if (file_path == NULL) return -1;\n\n"
-        "    fp = fopen(file_path, \"rb\");\n"
-        "    if (fp == NULL) return -2;\n\n"
-        "    rc = weights_validate_header(fp);\n"
-        "    if (rc != 0) {\n"
-        "        fclose(fp);\n"
-        "        return rc;\n"
-        "    }\n\n"
-        "    if (infer_ctx == NULL) {\n"
-        "        fclose(fp);\n"
-        "        return 0;\n"
-        "    }\n\n"
-        "    if (fseek(fp, 0L, SEEK_SET) != 0) {\n"
-        "        fclose(fp);\n"
-        "        return -7;\n"
-        "    }\n\n"
-        "    native_infer_ctx = infer_get_native_context(infer_ctx);\n"
-        "    if (native_infer_ctx == NULL) {\n"
-        "        fclose(fp);\n"
-        "        return -8;\n"
-        "    }\n\n"
-        "    if (nn_infer_registry_bootstrap() != 0) {\n"
-        "        fclose(fp);\n"
-        "        return -9;\n"
-        "    }\n\n"
-        "    entry = nn_infer_registry_find_entry(\"%s\");\n"
-        "    if (entry == NULL || entry->load_weights == NULL) {\n"
-        "        fclose(fp);\n"
-        "        return -10;\n"
-        "    }\n\n"
-        "    if (entry->load_weights(native_infer_ctx, fp) == 0) {\n"
-        "        fclose(fp);\n"
-        "        return -11;\n"
-        "    }\n\n"
-        "    fclose(fp);\n"
-        "    return 0;\n"
-        "}\n\n"
-        "int weights_load_validate(const char* file_path) {\n"
-        "    return weights_load_from_file(NULL, file_path);\n"
-        "}\n",
-        (unsigned long long)ctx->network_hash,
-        (unsigned long long)ctx->layout_hash,
-        subnet != NULL ? subnet->subnet_type : "unknown");
+    content = (char*)calloc(CODE_BUFFER_CAPACITY, sizeof(char));
+    if (content == NULL) {
+        prof_leaf_graph_cleanup(&graph);
+        return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
+            "Failed to allocate weights_load code buffer");
+    }
+
+    if (append_format(content, CODE_BUFFER_CAPACITY, &pos,
+            "/* weights_load.c - Weights loading module */\n"
+            "#include \"weights_load.h\"\n"
+            "#include \"infer.h\"\n"
+            "#include \"nn/nn_graph_contract.h\"\n"
+            "#include <stdint.h>\n"
+            "#include <stdio.h>\n"
+            "#include <string.h>\n\n"
+            "typedef struct { uint64_t network_hash; uint64_t layout_hash; uint32_t abi_version; uint32_t leaf_count; } GeneratedWeightsHeader;\n"
+            "typedef struct { uint32_t id_length; uint32_t type_length; } GeneratedLeafHeader;\n\n") != 0 ||
+        append_weight_runtime_arrays(content, CODE_BUFFER_CAPACITY, &pos, ctx->network, &graph) != 0 ||
+        append_format(content, CODE_BUFFER_CAPACITY, &pos,
+            "static int generated_weights_load_internal(void* infer_ctx, const char* file_path, int validate_only) {\n"
+            "    FILE* fp;\n"
+            "    GeneratedWeightsHeader header;\n"
+            "    size_t order_index;\n"
+            "    if (file_path == 0) return -1;\n"
+            "    fp = fopen(file_path, \"rb\");\n"
+            "    if (fp == 0) return -3;\n"
+            "    if (fread(&header, sizeof(header), 1, fp) != 1) { fclose(fp); return -4; }\n"
+            "    if (header.network_hash != 0x%016llxULL) { fclose(fp); return -5; }\n"
+            "    if (header.layout_hash != 0x%016llxULL) { fclose(fp); return -6; }\n"
+            "    if (header.abi_version != 1U || header.leaf_count != GENERATED_LEAF_COUNT) { fclose(fp); return -7; }\n"
+            "    for (order_index = 0U; order_index < GENERATED_LEAF_COUNT; ++order_index) {\n"
+            "        size_t leaf_index = g_topology_order[order_index];\n"
+            "        GeneratedLeafHeader leaf_header;\n"
+            "        char id_buffer[128];\n"
+            "        char type_buffer[128];\n"
+            "        const NNGraphInferContract* contract;\n"
+            "        void* native_ctx = validate_only ? 0 : infer_get_leaf_native_context(infer_ctx, leaf_index);\n"
+            "        if (fread(&leaf_header, sizeof(leaf_header), 1, fp) != 1) { fclose(fp); return -8; }\n"
+            "        if (leaf_header.id_length >= sizeof(id_buffer) || leaf_header.type_length >= sizeof(type_buffer)) { fclose(fp); return -9; }\n"
+            "        if (fread(id_buffer, 1, leaf_header.id_length, fp) != leaf_header.id_length ||\n"
+            "            fread(type_buffer, 1, leaf_header.type_length, fp) != leaf_header.type_length) { fclose(fp); return -10; }\n"
+            "        id_buffer[leaf_header.id_length] = '\\0';\n"
+            "        type_buffer[leaf_header.type_length] = '\\0';\n"
+            "        if (strcmp(id_buffer, g_expected_leaf_ids[leaf_index]) != 0 ||\n"
+            "            strcmp(type_buffer, g_expected_leaf_types[leaf_index]) != 0) { fclose(fp); return -11; }\n"
+            "        contract = nn_graph_infer_contract_find(type_buffer);\n"
+            "        if (contract == 0 || contract->load_weights == 0) { fclose(fp); return -12; }\n"
+            "        if (!validate_only && native_ctx == 0) { fclose(fp); return -13; }\n"
+            "        if (contract->load_weights(native_ctx, fp) == 0) { fclose(fp); return -14; }\n"
+            "    }\n"
+            "    fclose(fp);\n"
+            "    return 0;\n"
+            "}\n\n"
+            "int weights_load_from_file(void* infer_ctx, const char* file_path) {\n"
+            "    return generated_weights_load_internal(infer_ctx, file_path, 0);\n"
+            "}\n\n"
+            "int weights_load_validate(const char* file_path) {\n"
+            "    return generated_weights_load_internal(0, file_path, 1);\n"
+            "}\n",
+            (unsigned long long)ctx->network_hash,
+            (unsigned long long)ctx->layout_hash) != 0) {
+        free(content);
+        prof_leaf_graph_cleanup(&graph);
+        return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
+            "Failed to assemble weights_load.c");
+    }
 
     st = prof_path_ensure_parent_directory(layout->weights_load.c_path);
     if (st != PROF_STATUS_OK) {
+        free(content);
+        prof_leaf_graph_cleanup(&graph);
         return prof_error_set(ctx->error, st,
             "Failed to create directory for weights_load.c");
     }
 
     st = write_file(layout->weights_load.c_path, content);
+    free(content);
+    prof_leaf_graph_cleanup(&graph);
     if (st != PROF_STATUS_OK) {
         return prof_error_set(ctx->error, st,
             "Failed to write weights_load.c");
     }
 
-    if (layout->weights_load.h_path != NULL) {
-        const char* header_content =
-            "/* weights_load.h - Weights loading interface */\n"
-            "/* Auto-generated by profiler */\n\n"
-            "#ifndef WEIGHTS_LOAD_H\n"
-            "#define WEIGHTS_LOAD_H\n\n"
-            "#include <stddef.h>\n"
-            "#include <stdint.h>\n\n"
-            "int weights_load_from_file(void* ctx, const char* file_path);\n"
-            "int weights_load_validate(const char* file_path);\n\n"
-            "#endif\n";
-
-        st = prof_path_ensure_parent_directory(layout->weights_load.h_path);
-        if (st == PROF_STATUS_OK) {
-            write_file(layout->weights_load.h_path, header_content);
-        }
-    }
-
-    return PROF_STATUS_OK;
-}
-
-/**
- * @brief Get the type-specific train include path
- */
-ProfStatus prof_codegen_train(ProfCodegenContext* ctx) {
-    ProfStatus st;
-    const ProfOutputLayout* layout;
-    const NN_NetworkDef* network;
-    NNSubnetDef* subnet;
-    char content[16384];
-    size_t pos = 0U;
-
-    if (ctx == NULL) {
-        return PROF_STATUS_INVALID_ARGUMENT;
-    }
-
-    layout = ctx->output_layout;
-    network = ctx->network;
-
-    if (layout == NULL || layout->train.c_path == NULL) {
-        return PROF_STATUS_PATH_INVALID;
-    }
-
-    subnet = (network != NULL && network->subnet_count > 0U) ? network->subnets[0] : NULL;
-
-    if (append_format(
-            content,
-            sizeof(content),
-            &pos,
-            "/* train.c - Training module */\n"
-            "/* Auto-generated by profiler */\n"
-            "/* Network: %s */\n"
-            "/* Network type: %s */\n\n"
-            "#include \"train.h\"\n"
-            "#include \"infer.h\"\n"
-            "#include \"nn/nn_codegen_hooks.h\"\n"
-            "#include \"nn/nn_train_registry.h\"\n"
-            "#include <stdlib.h>\n"
-            "#include <string.h>\n",
-            network != NULL ? network->network_name : "unknown",
-            subnet != NULL ? subnet->subnet_type : "unknown") != 0) {
-        return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
-            "Failed to assemble generated train module");
-    }
-
-    if (subnet != NULL &&
-        subnet->train_config_header_path != NULL &&
-        append_format(
-            content,
-            sizeof(content),
-            &pos,
-            "#include \"%s\"\n",
-            subnet->train_config_header_path) != 0) {
-        return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
-            "Failed to assemble generated train module include");
-    }
-
-    if (append_format(content, sizeof(content), &pos, "\n") != 0) {
-        return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
-            "Failed to assemble generated train module spacing");
-    }
-
-    if (subnet != NULL &&
-        subnet->train_type_config_data != NULL &&
-        subnet->train_type_config_size > 0U &&
-        append_type_config_blob(
-            content,
-            sizeof(content),
-            &pos,
-            "g_train_type_config_bytes",
-            subnet->train_type_config_data,
-            subnet->train_type_config_size) != 0) {
-        return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
-            "Failed to assemble generated train module config blob");
-    }
-
-    if (append_format(
-            content,
-            sizeof(content),
-            &pos,
-            "typedef struct {\n"
-            "    const NNTrainRegistryEntry* registry_entry;\n"
-            "    void* infer_ctx;\n"
-            "    void* train_ctx;\n"
-            "    NNCodegenTrainConfig config;\n"
-            "    int epoch_count;\n"
-            "} TrainContext;\n\n") != 0) {
-        return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
-            "Failed to assemble generated train module context");
-    }
-
-    if (append_format(
-            content,
-            sizeof(content),
-            &pos,
-            "void* train_create(void* infer_ctx) {\n"
-            "    TrainContext* ctx;\n"
-            "    void* native_infer_ctx;\n"
-            "    if (infer_ctx == NULL) return NULL;\n"
-            "    native_infer_ctx = infer_get_native_context(infer_ctx);\n"
-            "    if (native_infer_ctx == NULL) return NULL;\n"
-            "    if (nn_train_registry_bootstrap() != 0) return NULL;\n"
-            "    ctx = (TrainContext*)malloc(sizeof(TrainContext));\n"
-            "    if (ctx == NULL) return NULL;\n"
-            "    memset(ctx, 0, sizeof(TrainContext));\n"
-            "    ctx->registry_entry = nn_train_registry_find_entry(\"%s\");\n"
-            "    if (ctx->registry_entry == NULL || ctx->registry_entry->create == NULL ||\n"
-            "        ctx->registry_entry->destroy == NULL || ctx->registry_entry->step_with_data == NULL) {\n"
-            "        free(ctx);\n"
-            "        return NULL;\n"
-            "    }\n"
-            "    ctx->infer_ctx = native_infer_ctx;\n"
-            "    ctx->config.learning_rate = 0.0f;\n"
-            "    ctx->config.momentum = 0.0f;\n"
-            "    ctx->config.weight_decay = 0.0f;\n"
-            "    ctx->config.batch_size = 0U;\n"
-            "    ctx->config.seed = 0U;\n"
-            "    ctx->config.type_config = NULL;\n"
-            "    ctx->config.type_config_size = 0U;\n"
-            "    ctx->config.type_config_type_name = NULL;\n",
-            subnet != NULL ? subnet->subnet_type : "unknown") != 0) {
-        return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
-            "Failed to assemble generated train module create");
-    }
-
-    if (subnet != NULL &&
-        subnet->train_config_type_name != NULL &&
-        subnet->train_type_config_data != NULL &&
-        subnet->train_type_config_size > 0U) {
-        if (append_format(
-                content,
-                sizeof(content),
-                &pos,
-                "    {\n"
-                "        %s typed_config;\n"
-                "        (void)memcpy(&typed_config, g_train_type_config_bytes, sizeof(typed_config));\n"
-                "        ctx->config.type_config = &typed_config;\n"
-                "        ctx->config.type_config_size = sizeof(typed_config);\n"
-                "        ctx->config.type_config_type_name = \"%s\";\n"
-                "        ctx->train_ctx = ctx->registry_entry->create(native_infer_ctx, &ctx->config);\n"
-                "    }\n",
-                subnet->train_config_type_name,
-                subnet->train_config_type_name) != 0) {
-            return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
-                "Failed to assemble generated train typed config");
-        }
-    } else if (append_format(
-                   content,
-                   sizeof(content),
-                   &pos,
-                   "    ctx->train_ctx = ctx->registry_entry->create(native_infer_ctx, &ctx->config);\n") != 0) {
-        return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
-            "Failed to assemble generated train generic config");
-    }
-
-    if (append_format(
-            content,
-            sizeof(content),
-            &pos,
-            "    if (ctx->train_ctx == NULL) {\n"
-            "        free(ctx);\n"
-            "        return NULL;\n"
-            "    }\n"
-            "    return ctx;\n"
-            "}\n\n"
-            "void train_destroy(void* ctx) {\n"
-            "    TrainContext* tc = (TrainContext*)ctx;\n"
-            "    if (tc == NULL) return;\n"
-            "    if (tc->registry_entry != NULL && tc->registry_entry->destroy != NULL && tc->train_ctx != NULL) {\n"
-            "        tc->registry_entry->destroy(tc->train_ctx);\n"
-            "    }\n"
-            "    free(tc);\n"
-            "}\n\n"
-            "int train_step(void* ctx, const void* input, const void* target) {\n"
-            "    TrainContext* tc = (TrainContext*)ctx;\n"
-            "    if (tc == NULL || tc->registry_entry == NULL || tc->registry_entry->step_with_data == NULL || tc->train_ctx == NULL) return -1;\n"
-            "    return tc->registry_entry->step_with_data(tc->train_ctx, input, target);\n"
-            "}\n\n"
-            "int train_epoch(void* ctx, int epoch) {\n"
-            "    TrainContext* tc = (TrainContext*)ctx;\n"
-            "    (void)epoch;\n"
-            "    if (tc == NULL) return -1;\n"
-            "    tc->epoch_count += 1;\n"
-            "    return 0;\n"
-            "}\n\n"
-            "int train_auto_run(void* ctx, int epochs) {\n"
-            "    TrainContext* tc = (TrainContext*)ctx;\n"
-            "    int e;\n"
-            "    if (tc == NULL) return -1;\n"
-            "    for (e = 0; e < epochs; ++e) {\n"
-            "        if (train_epoch(ctx, e) != 0) return -1;\n"
-            "    }\n"
-            "    return 0;\n"
-            "}\n\n"
-            "float train_get_loss(void* ctx) {\n"
-            "    size_t epochs = 0U;\n"
-            "    size_t steps = 0U;\n"
-            "    float avg_loss = 0.0f;\n"
-            "    TrainContext* tc = (TrainContext*)ctx;\n"
-            "    if (tc == NULL || tc->registry_entry == NULL || tc->train_ctx == NULL) return 0.0f;\n"
-            "    if (tc->registry_entry->get_stats != NULL) {\n"
-            "        tc->registry_entry->get_stats(tc->train_ctx, &epochs, &steps, &avg_loss);\n"
-            "    }\n"
-            "    return avg_loss;\n"
-            "}\n") != 0) {
-        return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
-            "Failed to assemble generated train trailing code");
-    }
-
-    st = prof_path_ensure_parent_directory(layout->train.c_path);
+    st = write_optional_header(
+        layout->weights_load.h_path,
+        "/* weights_load.h - Weights loading interface */\n"
+        "#ifndef WEIGHTS_LOAD_H\n"
+        "#define WEIGHTS_LOAD_H\n\n"
+        "int weights_load_from_file(void* infer_ctx, const char* file_path);\n"
+        "int weights_load_validate(const char* file_path);\n\n"
+        "#endif\n"
+    );
     if (st != PROF_STATUS_OK) {
         return prof_error_set(ctx->error, st,
-            "Failed to create directory for train.c");
-    }
-
-    st = write_file(layout->train.c_path, content);
-    if (st != PROF_STATUS_OK) {
-        return prof_error_set(ctx->error, st,
-            "Failed to write train.c");
-    }
-
-    if (layout->train.h_path != NULL) {
-        const char* header_content =
-            "/* train.h - Training interface */\n"
-            "/* Auto-generated by profiler */\n"
-            "#ifndef TRAIN_H\n"
-            "#define TRAIN_H\n\n"
-            "void* train_create(void* infer_ctx);\n"
-            "void train_destroy(void* ctx);\n"
-            "int train_step(void* ctx, const void* input, const void* target);\n"
-            "int train_epoch(void* ctx, int epoch);\n"
-            "int train_auto_run(void* ctx, int epochs);\n"
-            "float train_get_loss(void* ctx);\n\n"
-            "#endif\n";
-
-        st = prof_path_ensure_parent_directory(layout->train.h_path);
-        if (st == PROF_STATUS_OK) {
-            write_file(layout->train.h_path, header_content);
-        }
-    }
-
-    return PROF_STATUS_OK;
-}
-
-ProfStatus prof_codegen_weights_save(ProfCodegenContext* ctx) {
-    ProfStatus st;
-    const ProfOutputLayout* layout;
-    const NN_NetworkDef* network;
-    NNSubnetDef* subnet;
-    char content[4096];
-
-    if (ctx == NULL) {
-        return PROF_STATUS_INVALID_ARGUMENT;
-    }
-
-    layout = ctx->output_layout;
-    network = ctx->network;
-    subnet = (network != NULL && network->subnet_count > 0U) ? network->subnets[0] : NULL;
-
-    if (layout == NULL || layout->weights_save.c_path == NULL) {
-        return PROF_STATUS_PATH_INVALID;
-    }
-
-    snprintf(content, sizeof(content),
-        "/* weights_save.c - Weights saving module */\n"
-        "/* Auto-generated by profiler */\n\n"
-        "#include \"weights_save.h\"\n"
-        "#include \"infer.h\"\n"
-        "#include \"nn/nn_infer_registry.h\"\n"
-        "#include <stdio.h>\n"
-        "int weights_save_to_file(void* infer_ctx, const char* file_path) {\n"
-        "    FILE* fp;\n"
-        "    const NNInferRegistryEntry* entry;\n"
-        "    void* native_infer_ctx;\n\n"
-        "    if (infer_ctx == NULL || file_path == NULL) return -1;\n\n"
-        "    native_infer_ctx = infer_get_native_context(infer_ctx);\n"
-        "    if (native_infer_ctx == NULL) return -2;\n\n"
-        "    if (nn_infer_registry_bootstrap() != 0) return -3;\n\n"
-        "    entry = nn_infer_registry_find_entry(\"%s\");\n"
-        "    if (entry == NULL || entry->save_weights == NULL) return -4;\n\n"
-        "    fp = fopen(file_path, \"wb\");\n"
-        "    if (fp == NULL) return -5;\n\n"
-        "    if (entry->save_weights(native_infer_ctx, fp) == 0) {\n"
-        "        fclose(fp);\n"
-        "        return -6;\n"
-        "    }\n\n"
-        "    fclose(fp);\n"
-        "    return 0;\n"
-        "}\n",
-        subnet != NULL ? subnet->subnet_type : "unknown");
-
-    st = prof_path_ensure_parent_directory(layout->weights_save.c_path);
-    if (st != PROF_STATUS_OK) {
-        return prof_error_set(ctx->error, st,
-            "Failed to create directory for weights_save.c");
-    }
-
-    st = write_file(layout->weights_save.c_path, content);
-    if (st != PROF_STATUS_OK) {
-        return prof_error_set(ctx->error, st,
-            "Failed to write weights_save.c");
-    }
-
-    if (layout->weights_save.h_path != NULL) {
-        const char* header_content =
-            "/* weights_save.h - Weights saving interface */\n"
-            "/* Auto-generated by profiler */\n\n"
-            "#ifndef WEIGHTS_SAVE_H\n"
-            "#define WEIGHTS_SAVE_H\n\n"
-            "int weights_save_to_file(void* infer_ctx, const char* file_path);\n\n"
-            "#endif\n";
-
-        st = prof_path_ensure_parent_directory(layout->weights_save.h_path);
-        if (st == PROF_STATUS_OK) {
-            write_file(layout->weights_save.h_path, header_content);
-        }
-    }
-
-    return PROF_STATUS_OK;
-}
-
-/**
- * @brief Get the type-specific include path for network operations
- *
- * Maps network type (mlp, transformer, cnn, rnn) to the corresponding
- * header file path in src/nn/types/.
- */
-ProfStatus prof_codegen_infer(ProfCodegenContext* ctx) {
-    ProfStatus st;
-    const ProfOutputLayout* layout;
-    const NN_NetworkDef* network;
-    NNSubnetDef* subnet;
-    char content[16384];
-    size_t pos = 0U;
-    size_t i = 0U;
-
-    if (ctx == NULL) {
-        return PROF_STATUS_INVALID_ARGUMENT;
-    }
-
-    layout = ctx->output_layout;
-    network = ctx->network;
-
-    if (layout == NULL || layout->infer.c_path == NULL) {
-        return PROF_STATUS_PATH_INVALID;
-    }
-
-    subnet = (network != NULL && network->subnet_count > 0U) ? network->subnets[0] : NULL;
-
-    if (append_format(
-            content,
-            sizeof(content),
-            &pos,
-            "/* infer.c - Inference module */\n"
-            "/* Auto-generated by profiler */\n"
-            "/* Network: %s */\n"
-            "/* Network type: %s */\n\n"
-            "#include \"infer.h\"\n"
-            "#include \"nn/nn_codegen_hooks.h\"\n"
-            "#include \"nn/nn_infer_registry.h\"\n"
-            "#include <stdlib.h>\n"
-            "#include <string.h>\n",
-            network != NULL ? network->network_name : "unknown",
-            subnet != NULL ? subnet->subnet_type : "unknown") != 0) {
-        return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
-            "Failed to assemble generated infer module");
-    }
-
-    if (subnet != NULL &&
-        subnet->infer_config_header_path != NULL &&
-        append_format(
-            content,
-            sizeof(content),
-            &pos,
-            "#include \"%s\"\n",
-            subnet->infer_config_header_path) != 0) {
-        return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
-            "Failed to assemble generated infer module include");
-    }
-
-    if (append_format(content, sizeof(content), &pos, "\n") != 0) {
-        return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
-            "Failed to assemble generated infer module spacing");
-    }
-
-    if (subnet != NULL &&
-        subnet->infer_type_config_data != NULL &&
-        subnet->infer_type_config_size > 0U &&
-        append_type_config_blob(
-            content,
-            sizeof(content),
-            &pos,
-            "g_infer_type_config_bytes",
-            subnet->infer_type_config_data,
-            subnet->infer_type_config_size) != 0) {
-        return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
-            "Failed to assemble generated infer module config blob");
-    }
-
-    if (append_format(
-            content,
-            sizeof(content),
-            &pos,
-            "typedef struct {\n"
-            "    const NNInferRegistryEntry* registry_entry;\n"
-            "    void* network_ctx;\n"
-            "    NNCodegenInferConfig config;\n"
-            "} InferContext;\n\n") != 0) {
-        return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
-            "Failed to assemble generated infer module context");
-    }
-
-    if (append_format(
-            content,
-            sizeof(content),
-            &pos,
-            "void* infer_create(void) {\n"
-            "    InferContext* ctx;\n"
-            "    if (nn_infer_registry_bootstrap() != 0) return NULL;\n"
-            "    ctx = (InferContext*)malloc(sizeof(InferContext));\n"
-            "    if (ctx == NULL) return NULL;\n"
-            "    memset(ctx, 0, sizeof(InferContext));\n"
-            "    ctx->registry_entry = nn_infer_registry_find_entry(\"%s\");\n"
-            "    if (ctx->registry_entry == NULL || ctx->registry_entry->create == NULL ||\n"
-            "        ctx->registry_entry->destroy == NULL || ctx->registry_entry->auto_run == NULL) {\n"
-            "        free(ctx);\n"
-            "        return NULL;\n"
-            "    }\n"
-            "    ctx->config.network_type = \"%s\";\n"
-            "    ctx->config.input_size = %zu;\n"
-            "    ctx->config.hidden_layer_count = %zu;\n"
-            "    ctx->config.output_size = %zu;\n"
-            "    ctx->config.network_hash = 0x%016llxULL;\n"
-            "    ctx->config.layout_hash = 0x%016llxULL;\n"
-            "    ctx->config.seed = 0U;\n"
-            "    ctx->config.type_config = NULL;\n"
-            "    ctx->config.type_config_size = 0U;\n"
-            "    ctx->config.type_config_type_name = NULL;\n",
-            subnet != NULL ? subnet->subnet_type : "unknown",
-            subnet != NULL ? subnet->subnet_type : "unknown",
-            subnet != NULL ? (size_t)subnet->input_layer_size : (size_t)0U,
-            subnet != NULL ? (size_t)subnet->hidden_layer_count : (size_t)0U,
-            subnet != NULL ? (size_t)subnet->output_layer_size : (size_t)0U,
-            (unsigned long long)ctx->network_hash,
-            (unsigned long long)ctx->layout_hash) != 0) {
-        return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
-            "Failed to assemble generated infer create");
-    }
-
-    if (subnet != NULL && subnet->hidden_layer_sizes != NULL) {
-        size_t hidden_count = subnet->hidden_layer_count;
-        if (hidden_count > 4U) {
-            hidden_count = 4U;
-        }
-        for (i = 0U; i < hidden_count; ++i) {
-            if (append_format(
-                    content,
-                    sizeof(content),
-                    &pos,
-                    "    ctx->config.hidden_sizes[%zu] = %zu;\n",
-                    i,
-                    (size_t)subnet->hidden_layer_sizes[i]) != 0) {
-                return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
-                    "Failed to assemble generated infer hidden layer config");
-            }
-        }
-    }
-    for (; i < 4U; ++i) {
-        if (append_format(
-                content,
-                sizeof(content),
-                &pos,
-                "    ctx->config.hidden_sizes[%zu] = 0U;\n",
-                i) != 0) {
-            return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
-                "Failed to assemble generated infer hidden layer padding");
-        }
-    }
-
-    if (subnet != NULL &&
-        subnet->infer_config_type_name != NULL &&
-        subnet->infer_type_config_data != NULL &&
-        subnet->infer_type_config_size > 0U) {
-        if (append_format(
-                content,
-                sizeof(content),
-                &pos,
-                "    {\n"
-                "        %s typed_config;\n"
-                "        (void)memcpy(&typed_config, g_infer_type_config_bytes, sizeof(typed_config));\n"
-                "        ctx->config.type_config = &typed_config;\n"
-                "        ctx->config.type_config_size = sizeof(typed_config);\n"
-                "        ctx->config.type_config_type_name = \"%s\";\n"
-                "        ctx->network_ctx = ctx->registry_entry->create(&ctx->config);\n"
-                "    }\n",
-                subnet->infer_config_type_name,
-                subnet->infer_config_type_name) != 0) {
-            return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
-                "Failed to assemble generated infer typed config");
-        }
-    } else if (append_format(
-                   content,
-                   sizeof(content),
-                   &pos,
-                   "    ctx->network_ctx = ctx->registry_entry->create(&ctx->config);\n") != 0) {
-        return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
-            "Failed to assemble generated infer generic config");
-    }
-
-    if (append_format(
-            content,
-            sizeof(content),
-            &pos,
-            "    if (ctx->network_ctx == NULL) {\n"
-            "        free(ctx);\n"
-            "        return NULL;\n"
-            "    }\n"
-            "    return ctx;\n"
-            "}\n\n"
-            "void infer_destroy(void* ctx) {\n"
-            "    InferContext* ic = (InferContext*)ctx;\n"
-            "    if (ic == NULL) return;\n"
-            "    if (ic->registry_entry != NULL && ic->registry_entry->destroy != NULL && ic->network_ctx != NULL) {\n"
-            "        ic->registry_entry->destroy(ic->network_ctx);\n"
-            "    }\n"
-            "    free(ic);\n"
-            "}\n\n"
-            "void* infer_get_native_context(void* ctx) {\n"
-            "    InferContext* ic = (InferContext*)ctx;\n"
-            "    if (ic == NULL) return NULL;\n"
-            "    return ic->network_ctx;\n"
-            "}\n\n"
-            "int infer_step(void* ctx, const void* input, void* output) {\n"
-            "    InferContext* ic = (InferContext*)ctx;\n"
-            "    (void)input;\n"
-            "    (void)output;\n"
-            "    if (ic == NULL || ic->registry_entry == NULL || ic->registry_entry->infer_step == NULL || ic->network_ctx == NULL) return -1;\n"
-            "    return ic->registry_entry->infer_step(ic->network_ctx);\n"
-            "}\n\n"
-            "int infer_auto_run(void* ctx, const void* input, void* output) {\n"
-            "    InferContext* ic = (InferContext*)ctx;\n"
-            "    if (ic == NULL || ic->registry_entry == NULL || ic->registry_entry->auto_run == NULL || ic->network_ctx == NULL) return -1;\n"
-            "    return ic->registry_entry->auto_run(ic->network_ctx, input, output);\n"
-            "}\n") != 0) {
-        return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
-            "Failed to assemble generated infer trailing code");
-    }
-
-    st = prof_path_ensure_parent_directory(layout->infer.c_path);
-    if (st != PROF_STATUS_OK) {
-        return prof_error_set(ctx->error, st,
-            "Failed to create directory for infer.c");
-    }
-
-    st = write_file(layout->infer.c_path, content);
-    if (st != PROF_STATUS_OK) {
-        return prof_error_set(ctx->error, st,
-            "Failed to write infer.c");
-    }
-
-    if (layout->infer.h_path != NULL) {
-        const char* header_content =
-            "/* infer.h - Inference interface */\n"
-            "/* Auto-generated by profiler */\n"
-            "#ifndef INFER_H\n"
-            "#define INFER_H\n\n"
-            "void* infer_create(void);\n"
-            "void infer_destroy(void* ctx);\n"
-            "void* infer_get_native_context(void* ctx);\n"
-            "int infer_step(void* ctx, const void* input, void* output);\n"
-            "int infer_auto_run(void* ctx, const void* input, void* output);\n\n"
-            "#endif\n";
-
-        st = prof_path_ensure_parent_directory(layout->infer.h_path);
-        if (st == PROF_STATUS_OK) {
-            write_file(layout->infer.h_path, header_content);
-        }
+            "Failed to write weights_load.h");
     }
 
     return PROF_STATUS_OK;
@@ -1111,30 +1843,23 @@ ProfStatus prof_codegen_infer(ProfCodegenContext* ctx) {
 ProfStatus prof_codegen_generate_all(ProfCodegenContext* ctx) {
     ProfStatus st;
 
-    if (ctx == NULL || ctx->network == NULL) {
+    if (ctx == NULL || ctx->network == NULL || ctx->output_layout == NULL) {
         return PROF_STATUS_INVALID_ARGUMENT;
     }
 
     st = prof_codegen_metadata(ctx, ctx->output_layout->metadata_path);
     if (st != PROF_STATUS_OK) return st;
-
     st = prof_codegen_tokenizer(ctx);
     if (st != PROF_STATUS_OK) return st;
-
     st = prof_codegen_network_init(ctx);
     if (st != PROF_STATUS_OK) return st;
-
-    st = prof_codegen_weights_load(ctx);
-    if (st != PROF_STATUS_OK) return st;
-
-    st = prof_codegen_train(ctx);
-    if (st != PROF_STATUS_OK) return st;
-
-    st = prof_codegen_weights_save(ctx);
-    if (st != PROF_STATUS_OK) return st;
-
     st = prof_codegen_infer(ctx);
     if (st != PROF_STATUS_OK) return st;
-
+    st = prof_codegen_train(ctx);
+    if (st != PROF_STATUS_OK) return st;
+    st = prof_codegen_weights_save(ctx);
+    if (st != PROF_STATUS_OK) return st;
+    st = prof_codegen_weights_load(ctx);
+    if (st != PROF_STATUS_OK) return st;
     return PROF_STATUS_OK;
 }

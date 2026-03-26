@@ -19,5 +19,11 @@ typedef struct {
 } TransformerTrainContext;
 
 int nn_transformer_train_step(void* context);
+int nn_transformer_train_step_with_output_gradient(
+    TransformerTrainContext* context,
+    const float* input,
+    const float* output_gradient,
+    float* input_gradient
+);
 
 #endif

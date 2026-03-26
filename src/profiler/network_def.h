@@ -81,7 +81,7 @@ typedef struct {
  * Defines a subnet within the network.
  * Can be nested (subnet containing subnets).
  */
-typedef struct {
+typedef struct NNSubnetDef_tag {
     const char* subnet_id;
     const char* subnet_type;
     size_t input_layer_size;
@@ -211,6 +211,14 @@ void nn_subnet_def_set_hidden_layers(
     size_t layer_count,
     const size_t* layer_sizes
 );
+
+/**
+ * @brief Add a nested child subnet to a container subnet
+ *
+ * @param parent Parent subnet that owns child subnets
+ * @param child Child subnet to append
+ */
+void nn_subnet_def_add_subnet(NNSubnetDef* parent, NNSubnetDef* child);
 
 /**
  * @brief Free subnet definition

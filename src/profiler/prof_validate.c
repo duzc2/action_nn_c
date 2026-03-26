@@ -5,13 +5,11 @@
 
 #include "prof_validate.h"
 #include "prof_error.h"
-#include "nn_infer_registry.h"
-#include "nn_train_registry.h"
+#include "prof_flatten.h"
+#include "nn_graph_contract.h"
 
 #include <stdlib.h>
-#include <stdint.h>
 #include <string.h>
-#include <stdio.h>
 
 /**
  * @brief Check if string is empty or NULL
@@ -21,47 +19,39 @@ static int is_empty(const char* str) {
 }
 
 /**
- * @brief Find subnet index by ID
- *
- * @return Subnet index, or -1 if not found
+ * @brief Check whether subnet is a pure structural container
  */
-static int find_subnet_index(const NN_NetworkDef* network, const char* subnet_id) {
-    size_t i;
-    if (network == NULL || subnet_id == NULL) {
-        return -1;
-    }
-
-    for (i = 0; i < network->subnet_count; i++) {
-        if (network->subnets[i] != NULL &&
-            network->subnets[i]->subnet_id != NULL &&
-            strcmp(network->subnets[i]->subnet_id, subnet_id) == 0) {
-            return (int)i;
-        }
-    }
-    return -1;
+static int is_container_subnet(const NNSubnetDef* subnet) {
+    return subnet != NULL && subnet->subnet_count > 0U;
 }
 
 /**
- * @brief Check if subnet IDs are unique
+ * @brief Check if all subnet identifiers are globally unique
  */
-static int are_subnet_ids_unique(const NN_NetworkDef* network) {
-    size_t i, j;
-    if (network == NULL || network->subnets == NULL) {
+static int are_subnet_ids_unique(const ProfSubnetList* subnet_list) {
+    size_t left_index;
+    size_t right_index;
+
+    if (subnet_list == NULL) {
         return 1;
     }
 
-    for (i = 0; i < network->subnet_count; i++) {
-        if (network->subnets[i] == NULL || network->subnets[i]->subnet_id == NULL) {
+    for (left_index = 0U; left_index < subnet_list->count; ++left_index) {
+        NNSubnetDef* left = subnet_list->items[left_index];
+        if (left == NULL || left->subnet_id == NULL) {
             continue;
         }
-        for (j = i + 1; j < network->subnet_count; j++) {
-            if (network->subnets[j] != NULL &&
-                network->subnets[j]->subnet_id != NULL &&
-                strcmp(network->subnets[i]->subnet_id, network->subnets[j]->subnet_id) == 0) {
+
+        for (right_index = left_index + 1U; right_index < subnet_list->count; ++right_index) {
+            NNSubnetDef* right = subnet_list->items[right_index];
+            if (right != NULL &&
+                right->subnet_id != NULL &&
+                strcmp(left->subnet_id, right->subnet_id) == 0) {
                 return 0;
             }
         }
     }
+
     return 1;
 }
 
@@ -82,53 +72,12 @@ ProfStatus prof_validate_request(
     return PROF_STATUS_OK;
 }
 
-ProfStatus prof_validate_network_def(
-    const NN_NetworkDef* network,
-    ProfErrorBuffer* error
-) {
-    size_t i;
-
-    if (network == NULL) {
-        return prof_error_set(error, PROF_STATUS_INVALID_ARGUMENT,
-            "Network definition pointer is NULL");
-    }
-
-    if (is_empty(network->network_name)) {
-        return prof_error_set(error, PROF_STATUS_VALIDATION_FAILED,
-            "Network name is empty");
-    }
-
-    if (network->subnet_count == 0 || network->subnets == NULL) {
-        return prof_error_set(error, PROF_STATUS_VALIDATION_FAILED,
-            "Network must contain at least one subnet");
-    }
-
-    if (!are_subnet_ids_unique(network)) {
-        return prof_error_set(error, PROF_STATUS_VALIDATION_FAILED,
-            "Subnet IDs must be unique, duplicate ID found");
-    }
-
-    nn_infer_registry_bootstrap();
-    nn_train_registry_bootstrap();
-
-    for (i = 0; i < network->subnet_count; i++) {
-        NNSubnetDef* subnet = network->subnets[i];
-        ProfStatus st;
-
-        st = prof_validate_subnet(subnet, error);
-        if (st != PROF_STATUS_OK) {
-            return st;
-        }
-    }
-
-    return PROF_STATUS_OK;
-}
-
 ProfStatus prof_validate_subnet(
     const NNSubnetDef* subnet,
     ProfErrorBuffer* error
 ) {
-    size_t i;
+    size_t hidden_index;
+    size_t child_index;
 
     if (subnet == NULL) {
         return prof_error_set(error, PROF_STATUS_INVALID_ARGUMENT,
@@ -140,36 +89,76 @@ ProfStatus prof_validate_subnet(
             "Subnet ID is empty");
     }
 
-    if (is_empty(subnet->subnet_type)) {
-        return prof_error_set(error, PROF_STATUS_VALIDATION_FAILED,
-            "Subnet '%s' has empty type", subnet->subnet_id);
+    if (is_container_subnet(subnet)) {
+        if (!is_empty(subnet->subnet_type)) {
+            return prof_error_set(error, PROF_STATUS_VALIDATION_FAILED,
+                "Container subnet '%s' must not declare executable type metadata",
+                subnet->subnet_id);
+        }
+        if (subnet->input_layer_size != 0U || subnet->output_layer_size != 0U ||
+            subnet->hidden_layer_count != 0U) {
+            return prof_error_set(error, PROF_STATUS_VALIDATION_FAILED,
+                "Container subnet '%s' must not declare layer sizes",
+                subnet->subnet_id);
+        }
+        if (subnet->infer_type_config_data != NULL ||
+            subnet->infer_type_config_size != 0U ||
+            subnet->infer_config_header_path != NULL ||
+            subnet->infer_config_type_name != NULL ||
+            subnet->train_type_config_data != NULL ||
+            subnet->train_type_config_size != 0U ||
+            subnet->train_config_header_path != NULL ||
+            subnet->train_config_type_name != NULL) {
+            return prof_error_set(error, PROF_STATUS_VALIDATION_FAILED,
+                "Container subnet '%s' must not declare type configuration blobs",
+                subnet->subnet_id);
+        }
+
+        for (child_index = 0U; child_index < subnet->subnet_count; ++child_index) {
+            ProfStatus child_status = prof_validate_subnet(subnet->subnets[child_index], error);
+            if (child_status != PROF_STATUS_OK) {
+                return child_status;
+            }
+        }
+        return PROF_STATUS_OK;
     }
 
-    if (!nn_infer_registry_is_registered(subnet->subnet_type)) {
+    if (is_empty(subnet->subnet_type)) {
         return prof_error_set(error, PROF_STATUS_VALIDATION_FAILED,
-            "Subnet '%s' has unregistered type '%s'",
+            "Leaf subnet '%s' has empty type",
+            subnet->subnet_id);
+    }
+
+    if (nn_graph_infer_contract_find(subnet->subnet_type) == NULL ||
+        nn_graph_train_contract_find(subnet->subnet_type) == NULL) {
+        return prof_error_set(error, PROF_STATUS_VALIDATION_FAILED,
+            "Leaf subnet '%s' has unregistered type '%s'",
             subnet->subnet_id, subnet->subnet_type);
     }
 
-    if (subnet->input_layer_size == 0) {
+    if (subnet->input_layer_size == 0U) {
         return prof_error_set(error, PROF_STATUS_VALIDATION_FAILED,
-            "Subnet '%s' has invalid input layer size (0)",
+            "Leaf subnet '%s' has invalid input layer size (0)",
             subnet->subnet_id);
     }
 
-    if (subnet->output_layer_size == 0) {
+    if (subnet->output_layer_size == 0U) {
         return prof_error_set(error, PROF_STATUS_VALIDATION_FAILED,
-            "Subnet '%s' has invalid output layer size (0)",
+            "Leaf subnet '%s' has invalid output layer size (0)",
             subnet->subnet_id);
     }
 
-    if (subnet->hidden_layer_count > 0 && subnet->hidden_layer_sizes != NULL) {
-        for (i = 0; i < subnet->hidden_layer_count; i++) {
-            if (subnet->hidden_layer_sizes[i] == 0) {
-                return prof_error_set(error, PROF_STATUS_VALIDATION_FAILED,
-                    "Subnet '%s' has invalid hidden layer size at index %zu",
-                    subnet->subnet_id, i);
-            }
+    if (subnet->hidden_layer_count > 0U && subnet->hidden_layer_sizes == NULL) {
+        return prof_error_set(error, PROF_STATUS_VALIDATION_FAILED,
+            "Leaf subnet '%s' is missing hidden layer size array",
+            subnet->subnet_id);
+    }
+
+    for (hidden_index = 0U; hidden_index < subnet->hidden_layer_count; ++hidden_index) {
+        if (subnet->hidden_layer_sizes[hidden_index] == 0U) {
+            return prof_error_set(error, PROF_STATUS_VALIDATION_FAILED,
+                "Leaf subnet '%s' has invalid hidden layer size at index %zu",
+                subnet->subnet_id, hidden_index);
         }
     }
 
@@ -178,7 +167,7 @@ ProfStatus prof_validate_subnet(
         is_empty(subnet->infer_config_header_path) ||
         is_empty(subnet->infer_config_type_name)) {
         return prof_error_set(error, PROF_STATUS_VALIDATION_FAILED,
-            "Subnet '%s' is missing infer type configuration metadata",
+            "Leaf subnet '%s' is missing infer type configuration metadata",
             subnet->subnet_id);
     }
 
@@ -187,10 +176,103 @@ ProfStatus prof_validate_subnet(
         is_empty(subnet->train_config_header_path) ||
         is_empty(subnet->train_config_type_name)) {
         return prof_error_set(error, PROF_STATUS_VALIDATION_FAILED,
-            "Subnet '%s' is missing train type configuration metadata",
+            "Leaf subnet '%s' is missing train type configuration metadata",
             subnet->subnet_id);
     }
 
+    return PROF_STATUS_OK;
+}
+
+ProfStatus prof_validate_network_def(
+    const NN_NetworkDef* network,
+    ProfErrorBuffer* error
+) {
+    ProfSubnetList all_subnets;
+    ProfSubnetList leaf_subnets;
+    ProfStatus status;
+    size_t leaf_index;
+
+    if (network == NULL) {
+        return prof_error_set(error, PROF_STATUS_INVALID_ARGUMENT,
+            "Network definition pointer is NULL");
+    }
+
+    if (is_empty(network->network_name)) {
+        return prof_error_set(error, PROF_STATUS_VALIDATION_FAILED,
+            "Network name is empty");
+    }
+
+    if (network->subnet_count == 0U || network->subnets == NULL) {
+        return prof_error_set(error, PROF_STATUS_VALIDATION_FAILED,
+            "Network must contain at least one subnet");
+    }
+
+    status = prof_flatten_collect_all_subnets(network, &all_subnets);
+    if (status != PROF_STATUS_OK) {
+        return prof_error_set(error, PROF_STATUS_INTERNAL_ERROR,
+            "Failed to flatten subnet tree for validation");
+    }
+
+    status = prof_flatten_collect_leaf_subnets(network, &leaf_subnets);
+    if (status != PROF_STATUS_OK) {
+        prof_flatten_free_list(&all_subnets);
+        return prof_error_set(error, PROF_STATUS_INTERNAL_ERROR,
+            "Failed to collect executable leaf subnets");
+    }
+
+    if (leaf_subnets.count == 0U) {
+        prof_flatten_free_list(&leaf_subnets);
+        prof_flatten_free_list(&all_subnets);
+        return prof_error_set(error, PROF_STATUS_VALIDATION_FAILED,
+            "Network must contain at least one executable leaf subnet");
+    }
+
+    if (!are_subnet_ids_unique(&all_subnets)) {
+        prof_flatten_free_list(&leaf_subnets);
+        prof_flatten_free_list(&all_subnets);
+        return prof_error_set(error, PROF_STATUS_VALIDATION_FAILED,
+            "Subnet IDs must be unique across the full nested graph");
+    }
+
+    for (leaf_index = 0U; leaf_index < network->subnet_count; ++leaf_index) {
+        status = prof_validate_subnet(network->subnets[leaf_index], error);
+        if (status != PROF_STATUS_OK) {
+            prof_flatten_free_list(&leaf_subnets);
+            prof_flatten_free_list(&all_subnets);
+            return status;
+        }
+    }
+
+    if (leaf_subnets.count > 1U) {
+        for (leaf_index = 0U; leaf_index < leaf_subnets.count; ++leaf_index) {
+            NNSubnetDef* leaf = leaf_subnets.items[leaf_index];
+            if (leaf == NULL) {
+                prof_flatten_free_list(&leaf_subnets);
+                prof_flatten_free_list(&all_subnets);
+                return prof_error_set(error, PROF_STATUS_VALIDATION_FAILED,
+                    "Flattened leaf subnet list contains NULL entry");
+            }
+            if (!nn_graph_infer_contract_supports_graph_mode(leaf->subnet_type)) {
+                prof_flatten_free_list(&leaf_subnets);
+                prof_flatten_free_list(&all_subnets);
+                return prof_error_set(error, PROF_STATUS_VALIDATION_FAILED,
+                    "Leaf subnet '%s' type '%s' does not support graph forward execution",
+                    leaf->subnet_id,
+                    leaf->subnet_type);
+            }
+            if (!nn_graph_train_contract_supports_backprop(leaf->subnet_type)) {
+                prof_flatten_free_list(&leaf_subnets);
+                prof_flatten_free_list(&all_subnets);
+                return prof_error_set(error, PROF_STATUS_VALIDATION_FAILED,
+                    "Leaf subnet '%s' type '%s' does not support graph backpropagation",
+                    leaf->subnet_id,
+                    leaf->subnet_type);
+            }
+        }
+    }
+
+    prof_flatten_free_list(&leaf_subnets);
+    prof_flatten_free_list(&all_subnets);
     return PROF_STATUS_OK;
 }
 
@@ -198,111 +280,86 @@ ProfStatus prof_validate_connections(
     const NN_NetworkDef* network,
     ProfErrorBuffer* error
 ) {
-    size_t i;
+    ProfSubnetList leaf_subnets;
+    ProfStatus status;
+    size_t connection_index;
 
     if (network == NULL) {
         return PROF_STATUS_OK;
     }
 
-    for (i = 0; i < network->connection_count; i++) {
-        NNConnectionDef* conn = network->connections[i];
-        int src_idx, tgt_idx;
-        NNSubnetDef* src_subnet;
-        NNSubnetDef* tgt_subnet;
+    status = prof_flatten_collect_leaf_subnets(network, &leaf_subnets);
+    if (status != PROF_STATUS_OK) {
+        return prof_error_set(error, PROF_STATUS_INTERNAL_ERROR,
+            "Failed to flatten leaf subnets for connection validation");
+    }
 
-        if (conn == NULL) {
+    for (connection_index = 0U; connection_index < network->connection_count; ++connection_index) {
+        NNConnectionDef* connection = network->connections[connection_index];
+        int source_index;
+        int target_index;
+        NNSubnetDef* source_subnet;
+        NNSubnetDef* target_subnet;
+
+        if (connection == NULL) {
             continue;
         }
 
-        if (is_empty(conn->source_subnet_id)) {
+        if (is_empty(connection->source_subnet_id)) {
+            prof_flatten_free_list(&leaf_subnets);
             return prof_error_set(error, PROF_STATUS_VALIDATION_FAILED,
-                "Connection %zu has empty source subnet ID", i);
+                "Connection %zu has empty source subnet ID", connection_index);
+        }
+        if (is_empty(connection->target_subnet_id)) {
+            prof_flatten_free_list(&leaf_subnets);
+            return prof_error_set(error, PROF_STATUS_VALIDATION_FAILED,
+                "Connection %zu has empty target subnet ID", connection_index);
         }
 
-        if (is_empty(conn->target_subnet_id)) {
+        source_index = prof_flatten_find_subnet_index(&leaf_subnets, connection->source_subnet_id);
+        if (source_index < 0) {
+            prof_flatten_free_list(&leaf_subnets);
             return prof_error_set(error, PROF_STATUS_VALIDATION_FAILED,
-                "Connection %zu has empty target subnet ID", i);
+                "Connection references non-existent source leaf subnet '%s'",
+                connection->source_subnet_id);
         }
 
-        src_idx = find_subnet_index(network, conn->source_subnet_id);
-        if (src_idx < 0) {
+        target_index = prof_flatten_find_subnet_index(&leaf_subnets, connection->target_subnet_id);
+        if (target_index < 0) {
+            prof_flatten_free_list(&leaf_subnets);
             return prof_error_set(error, PROF_STATUS_VALIDATION_FAILED,
-                "Connection references non-existent source subnet '%s'",
-                conn->source_subnet_id);
+                "Connection references non-existent target leaf subnet '%s'",
+                connection->target_subnet_id);
         }
 
-        tgt_idx = find_subnet_index(network, conn->target_subnet_id);
-        if (tgt_idx < 0) {
-            return prof_error_set(error, PROF_STATUS_VALIDATION_FAILED,
-                "Connection references non-existent target subnet '%s'",
-                conn->target_subnet_id);
+        source_subnet = leaf_subnets.items[(size_t)source_index];
+        target_subnet = leaf_subnets.items[(size_t)target_index];
+        if (source_subnet == NULL || target_subnet == NULL) {
+            prof_flatten_free_list(&leaf_subnets);
+            return prof_error_set(error, PROF_STATUS_INTERNAL_ERROR,
+                "Connection flattening produced NULL subnet pointer");
         }
 
-        src_subnet = network->subnets[src_idx];
-        tgt_subnet = network->subnets[tgt_idx];
-
-        if (conn->source_node_index >= src_subnet->output_layer_size) {
+        if (connection->source_node_index >= source_subnet->output_layer_size) {
+            prof_flatten_free_list(&leaf_subnets);
             return prof_error_set(error, PROF_STATUS_VALIDATION_FAILED,
                 "Connection from '%s' node %zu exceeds output layer size %zu",
-                conn->source_subnet_id, conn->source_node_index,
-                src_subnet->output_layer_size);
+                connection->source_subnet_id,
+                connection->source_node_index,
+                source_subnet->output_layer_size);
         }
 
-        if (conn->target_node_index >= tgt_subnet->input_layer_size) {
+        if (connection->target_node_index >= target_subnet->input_layer_size) {
+            prof_flatten_free_list(&leaf_subnets);
             return prof_error_set(error, PROF_STATUS_VALIDATION_FAILED,
                 "Connection to '%s' node %zu exceeds input layer size %zu",
-                conn->target_subnet_id, conn->target_node_index,
-                tgt_subnet->input_layer_size);
+                connection->target_subnet_id,
+                connection->target_node_index,
+                target_subnet->input_layer_size);
         }
     }
 
-    return PROF_STATUS_OK;
-}
-
-static ProfStatus dfs_visit(
-    const NN_NetworkDef* network,
-    int* visited,
-    int* in_progress,
-    size_t node,
-    int* has_cycle
-) {
-    size_t i;
-    visited[node] = 1;
-    in_progress[node] = 1;
-
-    for (i = 0; i < network->connection_count; i++) {
-        NNConnectionDef* conn = network->connections[i];
-        int tgt_idx;
-        const char* src_id;
-
-        if (conn == NULL) {
-            continue;
-        }
-
-        src_id = network->subnets[node]->subnet_id;
-        if (src_id == NULL || strcmp(src_id, conn->source_subnet_id) != 0) {
-            continue;
-        }
-
-        tgt_idx = find_subnet_index(network, conn->target_subnet_id);
-        if (tgt_idx < 0) {
-            continue;
-        }
-
-        if (in_progress[tgt_idx]) {
-            *has_cycle = 1;
-            return PROF_STATUS_CYCLE_DETECTED;
-        }
-
-        if (!visited[tgt_idx]) {
-            ProfStatus st = dfs_visit(network, visited, in_progress, tgt_idx, has_cycle);
-            if (st != PROF_STATUS_OK) {
-                return st;
-            }
-        }
-    }
-
-    in_progress[node] = 0;
+    prof_flatten_free_list(&leaf_subnets);
     return PROF_STATUS_OK;
 }
 
@@ -310,48 +367,45 @@ ProfStatus prof_validate_dag(
     const NN_NetworkDef* network,
     ProfErrorBuffer* error
 ) {
-    char* visited_raw;
-    char* in_progress_raw;
-    size_t alloc_size;
-    size_t i;
-    int has_cycle = 0;
-    ProfStatus st;
+    ProfSubnetList leaf_subnets;
+    size_t* topo_order;
+    size_t* incoming_counts;
+    size_t* outgoing_counts;
+    ProfStatus status;
 
-    if (network == NULL || network->subnet_count == 0) {
+    if (network == NULL) {
         return PROF_STATUS_OK;
     }
 
-    alloc_size = network->subnet_count * sizeof(int);
-    visited_raw = (char*)(uintptr_t)calloc(alloc_size, 1);
-    in_progress_raw = (char*)(uintptr_t)calloc(alloc_size, 1);
-
-    if (visited_raw == NULL || in_progress_raw == NULL) {
-        free(visited_raw);
-        free(in_progress_raw);
+    status = prof_flatten_collect_leaf_subnets(network, &leaf_subnets);
+    if (status != PROF_STATUS_OK) {
         return prof_error_set(error, PROF_STATUS_INTERNAL_ERROR,
-            "Failed to allocate memory for DAG validation");
+            "Failed to flatten leaf subnets for DAG validation");
     }
 
-    for (i = 0; i < network->subnet_count && !has_cycle; i++) {
-        int* visited = (int*)visited_raw;
-        int* in_progress = (int*)in_progress_raw;
-        if (!visited[i]) {
-            st = dfs_visit(network, visited, in_progress, i, &has_cycle);
-            if (st != PROF_STATUS_OK) {
-                free(visited_raw);
-                free(in_progress_raw);
-                if (st == PROF_STATUS_CYCLE_DETECTED) {
-                    return prof_error_set(error, PROF_STATUS_CYCLE_DETECTED,
-                        "Cycle detected in network topology involving subnet '%s'",
-                        network->subnets[i]->subnet_id);
-                }
-                return st;
-            }
-        }
-    }
+    topo_order = NULL;
+    incoming_counts = NULL;
+    outgoing_counts = NULL;
+    status = prof_flatten_build_leaf_topology(
+        network,
+        &leaf_subnets,
+        &topo_order,
+        &incoming_counts,
+        &outgoing_counts
+    );
+    free(topo_order);
+    free(incoming_counts);
+    free(outgoing_counts);
+    prof_flatten_free_list(&leaf_subnets);
 
-    free(visited_raw);
-    free(in_progress_raw);
+    if (status == PROF_STATUS_CYCLE_DETECTED) {
+        return prof_error_set(error, PROF_STATUS_CYCLE_DETECTED,
+            "Cycle detected in flattened leaf subnet topology");
+    }
+    if (status != PROF_STATUS_OK) {
+        return prof_error_set(error, PROF_STATUS_INTERNAL_ERROR,
+            "Failed to compute flattened leaf topology");
+    }
 
     return PROF_STATUS_OK;
 }
@@ -361,28 +415,28 @@ ProfStatus prof_validate_all(
     ProfErrorBuffer* error
 ) {
     NN_NetworkDef* network;
-    ProfStatus st;
+    ProfStatus status;
 
-    st = prof_validate_request(req, error);
-    if (st != PROF_STATUS_OK) {
-        return st;
+    status = prof_validate_request(req, error);
+    if (status != PROF_STATUS_OK) {
+        return status;
     }
 
     network = (NN_NetworkDef*)req->network_def;
 
-    st = prof_validate_network_def(network, error);
-    if (st != PROF_STATUS_OK) {
-        return st;
+    status = prof_validate_network_def(network, error);
+    if (status != PROF_STATUS_OK) {
+        return status;
     }
 
-    st = prof_validate_connections(network, error);
-    if (st != PROF_STATUS_OK) {
-        return st;
+    status = prof_validate_connections(network, error);
+    if (status != PROF_STATUS_OK) {
+        return status;
     }
 
-    st = prof_validate_dag(network, error);
-    if (st != PROF_STATUS_OK) {
-        return st;
+    status = prof_validate_dag(network, error);
+    if (status != PROF_STATUS_OK) {
+        return status;
     }
 
     return PROF_STATUS_OK;

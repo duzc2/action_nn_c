@@ -33,12 +33,19 @@ typedef struct {
 typedef void* (*NNInferCreateFn)(const NNCodegenInferConfig* config);
 typedef void (*NNInferDestroyFn)(void* context);
 typedef int (*NNInferAutoRunFn)(void* context, const void* input, void* output);
+typedef int (*NNInferGraphRunFn)(void* context, const void* input, void* output);
 typedef int (*NNInferLoadWeightsFn)(void* context, FILE* fp);
 typedef int (*NNInferSaveWeightsFn)(void* context, FILE* fp);
 
 typedef void* (*NNTrainCreateFn)(void* infer_ctx, const NNCodegenTrainConfig* config);
 typedef void (*NNTrainDestroyFn)(void* context);
 typedef int (*NNTrainStepWithDataFn)(void* context, const void* input, const void* target);
+typedef int (*NNTrainStepWithOutputGradientFn)(
+    void* context,
+    const void* input,
+    const void* output_gradient,
+    void* input_gradient
+);
 typedef void (*NNTrainGetStatsFn)(void* context, size_t* out_epochs, size_t* out_steps, float* out_avg_loss);
 
 #endif
