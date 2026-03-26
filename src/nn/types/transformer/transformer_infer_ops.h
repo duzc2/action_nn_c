@@ -19,6 +19,8 @@ typedef struct {
     size_t answer_capacity;
     uint64_t expected_network_hash;
     uint64_t expected_layout_hash;
+    size_t graph_input_size;
+    size_t graph_output_size;
     size_t vocab_size;
     size_t max_seq_length;
     size_t model_dim;
@@ -61,6 +63,7 @@ int nn_transformer_predict_class(
     size_t probability_capacity,
     float* out_loss_hint
 );
+int nn_transformer_graph_run(void* context, const void* input, void* output);
 int nn_transformer_infer_step(void* context);
 
 int nn_transformer_load_weights(void* context, FILE* fp);

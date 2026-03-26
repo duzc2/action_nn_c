@@ -428,6 +428,38 @@ int nn_transformer_predict_class(
     return (int)best_index;
 }
 
+int nn_transformer_graph_run(void* context, const void* input, void* output) {
+    TransformerInferContext* infer_ctx = (TransformerInferContext*)context;
+    const float* input_values = (const float*)input;
+    float* output_values = (float*)output;
+    size_t output_index;
+
+    if (infer_ctx == 0 || input_values == 0 || output_values == 0) {
+        return -1;
+    }
+    if (infer_ctx->graph_input_size == 0U ||
+        infer_ctx->graph_output_size == 0U ||
+        infer_ctx->graph_input_size > infer_ctx->model_dim ||
+        infer_ctx->graph_output_size > infer_ctx->model_dim) {
+        return -1;
+    }
+
+    for (output_index = 0U; output_index < infer_ctx->graph_output_size; ++output_index) {
+        float sum = infer_ctx->classifier_bias[output_index];
+        size_t input_index;
+
+        for (input_index = 0U; input_index < infer_ctx->graph_input_size; ++input_index) {
+            sum += input_values[input_index] * infer_ctx->output_weight[input_index][output_index];
+        }
+        if (output_index < infer_ctx->graph_input_size) {
+            sum += input_values[output_index];
+        }
+        output_values[output_index] = tanhf(sum);
+    }
+
+    return 0;
+}
+
 int nn_transformer_infer_step(void* context) {
     TransformerInferContext* infer_ctx = (TransformerInferContext*)context;
     int class_index;

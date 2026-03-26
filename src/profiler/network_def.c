@@ -234,6 +234,29 @@ void nn_subnet_def_set_hidden_layers(
     }
 }
 
+void nn_subnet_def_add_subnet(NNSubnetDef* parent, NNSubnetDef* child) {
+    NNSubnetDef** new_subnets;
+    size_t new_count;
+
+    if (parent == NULL || child == NULL) {
+        return;
+    }
+
+    new_count = parent->subnet_count + 1U;
+    new_subnets = (NNSubnetDef**)realloc(
+        parent->subnets,
+        new_count * sizeof(NNSubnetDef*)
+    );
+
+    if (new_subnets == NULL) {
+        return;
+    }
+
+    parent->subnets = new_subnets;
+    parent->subnets[parent->subnet_count] = child;
+    parent->subnet_count = new_count;
+}
+
 void nn_subnet_def_free(NNSubnetDef* subnet) {
     size_t i;
 

@@ -80,6 +80,7 @@ string(APPEND NN_TRAIN_AUTOGEN_CONTENT "}\n")
 file(WRITE "${NN_TRAIN_AUTOGEN_C}" "${NN_TRAIN_AUTOGEN_CONTENT}")
 
 add_library(nn_infer_core STATIC
+    nn_graph_infer_contract.c
     nn_infer_registry.c
     ${NN_INFER_AUTOGEN_C}
     ${NN_INFER_OP_SOURCES}
@@ -92,6 +93,7 @@ target_include_directories(nn_infer_core PUBLIC
 )
 
 add_library(nn_train_core STATIC
+    nn_graph_train_contract.c
     nn_train_registry.c
     ${NN_TRAIN_AUTOGEN_C}
     ${NN_TRAIN_OP_SOURCES}

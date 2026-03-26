@@ -35,6 +35,7 @@ const NNInferRegistryEntry nn_type_mlp_infer_entry = {
     .create = nn_type_mlp_infer_create_codegen,
     .destroy = nn_mlp_infer_destroy,
     .auto_run = nn_type_mlp_infer_auto_run_codegen,
+    .graph_run = nn_type_mlp_infer_auto_run_codegen,
     .load_weights = nn_mlp_load_weights,
     .save_weights = nn_mlp_save_weights
 };

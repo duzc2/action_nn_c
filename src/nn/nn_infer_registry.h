@@ -13,6 +13,7 @@ typedef struct {
     NNInferCreateFn create;
     NNInferDestroyFn destroy;
     NNInferAutoRunFn auto_run;
+    NNInferGraphRunFn graph_run;
     NNInferLoadWeightsFn load_weights;
     NNInferSaveWeightsFn save_weights;
 } NNInferRegistryEntry;

@@ -256,3 +256,63 @@ int nn_transformer_train_step(void* context) {
 
     return 0;
 }
+
+int nn_transformer_train_step_with_output_gradient(
+    TransformerTrainContext* train_ctx,
+    const float* input,
+    const float* output_gradient,
+    float* input_gradient
+) {
+    TransformerInferContext* infer_ctx;
+    float output_cache[TRANSFORMER_MAX_MODEL_DIM];
+    size_t output_index;
+
+    if (train_ctx == 0 || train_ctx->infer_ctx == 0 || input == 0 || output_gradient == 0) {
+        return -1;
+    }
+
+    infer_ctx = train_ctx->infer_ctx;
+    if (infer_ctx->graph_input_size == 0U ||
+        infer_ctx->graph_output_size == 0U ||
+        infer_ctx->graph_input_size > infer_ctx->model_dim ||
+        infer_ctx->graph_output_size > infer_ctx->model_dim) {
+        return -1;
+    }
+
+    if (nn_transformer_graph_run(infer_ctx, input, output_cache) != 0) {
+        return -1;
+    }
+
+    if (input_gradient != 0) {
+        (void)memset(input_gradient, 0, infer_ctx->graph_input_size * sizeof(float));
+    }
+
+    for (output_index = 0U; output_index < infer_ctx->graph_output_size; ++output_index) {
+        float dz = output_gradient[output_index] * (1.0f - output_cache[output_index] * output_cache[output_index]);
+        size_t input_index;
+
+        transformer_apply_gradient(
+            &infer_ctx->classifier_bias[output_index],
+            dz,
+            train_ctx->learning_rate
+        );
+
+        for (input_index = 0U; input_index < infer_ctx->graph_input_size; ++input_index) {
+            float old_weight = infer_ctx->output_weight[input_index][output_index];
+            if (input_gradient != 0) {
+                input_gradient[input_index] += dz * old_weight;
+                if (input_index == output_index) {
+                    input_gradient[input_index] += dz;
+                }
+            }
+            transformer_apply_gradient(
+                &infer_ctx->output_weight[input_index][output_index],
+                dz * input[input_index],
+                train_ctx->learning_rate
+            );
+        }
+    }
+
+    train_ctx->total_steps += 1U;
+    return 0;
+}

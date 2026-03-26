@@ -386,20 +386,13 @@ static void update_adam(float* weights, float* bias,
  * @return 0 on success, -1 on failure
  */
 static int train_forward_pass(MlpTrainContext* ctx,
-                              const float* input,
-                              const float* target,
-                              float* loss) {
+                              const float* input) {
     MlpInferContext* infer_ctx;
     MlpDenseLayer* layer;
     const float* current_input;
-    const float* prev_activation;
     size_t i;
-    size_t input_size;
-    size_t output_size;
-    float loss_grad[256];
-    float delta[256];
 
-    if (ctx == NULL || ctx->infer_ctx == NULL || input == NULL || target == NULL) {
+    if (ctx == NULL || ctx->infer_ctx == NULL || input == NULL) {
         return -1;
     }
 
@@ -410,12 +403,10 @@ static int train_forward_pass(MlpTrainContext* ctx,
     }
 
     memcpy(ctx->input_buffer, input, infer_ctx->config.input_size * sizeof(float));
-    memcpy(ctx->target_buffer, target, infer_ctx->config.output_size * sizeof(float));
 
     for (i = 0; i < infer_ctx->layer_count; i++) {
-        layer = infer_ctx->layers[i];
-        get_layer_sizes(infer_ctx, i, &input_size, &output_size);
         current_input = (i == 0U) ? ctx->input_buffer : ctx->activations[i - 1U];
+        layer = infer_ctx->layers[i];
         mlp_dense_forward(layer, ctx->activations[i], current_input);
     }
 
@@ -423,62 +414,70 @@ static int train_forward_pass(MlpTrainContext* ctx,
            ctx->activations[infer_ctx->layer_count - 1U],
            infer_ctx->config.output_size * sizeof(float));
 
-    if (ctx->config.loss_func == MLP_LOSS_MSE) {
-        *loss = mse_loss(infer_ctx->output_buffer, target, loss_grad,
-                        infer_ctx->config.output_size);
-    } else {
-        *loss = cross_entropy_loss(infer_ctx->output_buffer, target, loss_grad,
-                                   infer_ctx->config.output_size);
+    return 0;
+}
+
+static int train_backward_pass(
+    MlpTrainContext* ctx,
+    const float* output_gradient,
+    float* input_gradient
+) {
+    MlpInferContext* infer_ctx;
+    float* current_delta;
+    float* next_delta;
+    const float* prev_activation;
+    size_t max_size;
+    size_t layer_cursor;
+
+    if (ctx == NULL || ctx->infer_ctx == NULL || output_gradient == NULL) {
+        return -1;
     }
 
-    for (i = 0; i < infer_ctx->config.output_size && i < 256; i++) {
-        delta[i] = loss_grad[i];
+    infer_ctx = (MlpInferContext*)ctx->infer_ctx;
+    max_size = infer_ctx->max_buffer_size;
+    current_delta = (float*)calloc(max_size, sizeof(float));
+    next_delta = (float*)calloc(max_size, sizeof(float));
+    if (current_delta == NULL || next_delta == NULL) {
+        free(current_delta);
+        free(next_delta);
+        return -1;
     }
 
-    for (i = infer_ctx->layer_count; i > 0; i--) {
-        size_t layer_idx = i - 1;
-        MlpLayerGrad* grad;
-        size_t w_idx, b_idx, j, k;
+    memcpy(current_delta, output_gradient, infer_ctx->config.output_size * sizeof(float));
 
-        layer = infer_ctx->layers[layer_idx];
-        grad = &ctx->grads[layer_idx];
+    for (layer_cursor = infer_ctx->layer_count; layer_cursor > 0U; --layer_cursor) {
+        size_t layer_index = layer_cursor - 1U;
+        MlpDenseLayer* layer = infer_ctx->layers[layer_index];
+        MlpLayerGrad* grad = &ctx->grads[layer_index];
+        size_t input_size = layer->input_size;
+        size_t output_size = layer->output_size;
+        size_t output_index;
+        size_t input_index;
 
-        get_layer_sizes(infer_ctx, layer_idx, &input_size, &output_size);
+        memset(next_delta, 0, max_size * sizeof(float));
+        activation_derivative(layer->activation, ctx->activations[layer_index], current_delta, output_size);
 
-        if (i < infer_ctx->layer_count) {
-            activation_derivative(layer->activation, ctx->activations[layer_idx], delta, output_size);
-        }
+        prev_activation = (layer_index == 0U) ? ctx->input_buffer : ctx->activations[layer_index - 1U];
 
-        prev_activation = (layer_idx == 0U) ? ctx->input_buffer : ctx->activations[layer_idx - 1U];
-
-        for (j = 0; j < output_size; j++) {
-            grad->bias_grad[j] = delta[j];
-
-            for (k = 0; k < input_size; k++) {
-                grad->weight_grad[j * input_size + k] =
-                    delta[j] * prev_activation[k];
+        for (output_index = 0U; output_index < output_size; ++output_index) {
+            grad->bias_grad[output_index] = current_delta[output_index];
+            for (input_index = 0U; input_index < input_size; ++input_index) {
+                grad->weight_grad[output_index * input_size + input_index] =
+                    current_delta[output_index] * prev_activation[input_index];
+                next_delta[input_index] +=
+                    layer->weights[output_index * input_size + input_index] * current_delta[output_index];
             }
         }
 
-        if (i > 1) {
-            float new_delta[256];
-            size_t prev_size;
-
-            get_layer_sizes(infer_ctx, layer_idx - 1, &prev_size, NULL);
-
-            for (k = 0; k < input_size && k < 256; k++) {
-                new_delta[k] = 0.0f;
-                for (j = 0; j < output_size; j++) {
-                    new_delta[k] += layer->weights[j * input_size + k] * delta[j];
-                }
-            }
-
-            for (k = 0; k < prev_size && k < 256; k++) {
-                delta[k] = new_delta[k];
-            }
+        if (layer_index == 0U && input_gradient != NULL) {
+            memcpy(input_gradient, next_delta, input_size * sizeof(float));
         }
+
+        memcpy(current_delta, next_delta, input_size * sizeof(float));
     }
 
+    free(current_delta);
+    free(next_delta);
     return 0;
 }
 
@@ -688,7 +687,21 @@ int nn_mlp_train_step_with_data(MlpTrainContext* ctx, const float* input, const 
 
     infer_ctx = (MlpInferContext*)ctx->infer_ctx;
 
-    rc = train_forward_pass(ctx, input, target, &loss);
+    rc = train_forward_pass(ctx, input);
+    if (rc != 0) {
+        return rc;
+    }
+
+    memcpy(ctx->target_buffer, target, infer_ctx->config.output_size * sizeof(float));
+    if (ctx->config.loss_func == MLP_LOSS_MSE) {
+        loss = mse_loss(infer_ctx->output_buffer, target, ctx->loss_buffer,
+                        infer_ctx->config.output_size);
+    } else {
+        loss = cross_entropy_loss(infer_ctx->output_buffer, target, ctx->loss_buffer,
+                                  infer_ctx->config.output_size);
+    }
+
+    rc = train_backward_pass(ctx, ctx->loss_buffer, NULL);
     if (rc != 0) {
         return rc;
     }
@@ -728,7 +741,20 @@ int nn_mlp_train_step_ex(MlpTrainContext* ctx,
 
     infer_ctx = (MlpInferContext*)ctx->infer_ctx;
 
-    rc = train_forward_pass(ctx, step_in->input, step_in->target, &loss);
+    rc = train_forward_pass(ctx, step_in->input);
+    if (rc != 0) {
+        return rc;
+    }
+
+    if (ctx->config.loss_func == MLP_LOSS_MSE) {
+        loss = mse_loss(infer_ctx->output_buffer, step_in->target, ctx->loss_buffer,
+                        infer_ctx->config.output_size);
+    } else {
+        loss = cross_entropy_loss(infer_ctx->output_buffer, step_in->target, ctx->loss_buffer,
+                                  infer_ctx->config.output_size);
+    }
+
+    rc = train_backward_pass(ctx, ctx->loss_buffer, NULL);
     if (rc != 0) {
         return rc;
     }
@@ -749,6 +775,33 @@ int nn_mlp_train_step_ex(MlpTrainContext* ctx,
         ctx->loss_history_count++;
     }
 
+    return 0;
+}
+
+int nn_mlp_train_step_with_output_gradient(
+    MlpTrainContext* ctx,
+    const float* input,
+    const float* output_gradient,
+    float* input_gradient
+) {
+    int rc;
+
+    if (ctx == NULL || input == NULL || output_gradient == NULL) {
+        return -1;
+    }
+
+    rc = train_forward_pass(ctx, input);
+    if (rc != 0) {
+        return rc;
+    }
+
+    rc = train_backward_pass(ctx, output_gradient, input_gradient);
+    if (rc != 0) {
+        return rc;
+    }
+
+    ctx->total_steps++;
+    train_update(ctx, ctx->total_steps);
     return 0;
 }
 
