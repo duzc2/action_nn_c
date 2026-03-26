@@ -11,7 +11,19 @@
 #define ABI_VERSION 1
 
 /**
- * @brief FNV-1a hash for network structure
+ * @section mlp_infer_design MLP inference execution notes
+ *
+ * The handwritten MLP inference backend is intentionally small, but it still
+ * demonstrates the lifecycle expected by generated graph code: typed creation,
+ * deterministic layer allocation, buffer reuse during forward execution, and
+ * hash-guarded save/load support. The comments in this file therefore focus on
+ * the ownership and scheduling decisions that make the backend reusable.
+ */
+/**
+ * @brief Compute a compact structural hash from the active MLP config.
+ *
+ * The infer backend uses this lightweight hash to reject weight files whose
+ * parameter layout no longer matches the current network shape.
  */
 static uint64_t compute_layout_hash(const MlpConfig* config) {
     uint64_t hash = 0xcbf29ce484222325ULL;
@@ -44,10 +56,21 @@ static uint64_t compute_layout_hash(const MlpConfig* config) {
     return hash;
 }
 
+/**
+ * @brief Deliberately reject implicit construction without typed config data.
+ */
 MlpInferContext* nn_mlp_infer_create(void) {
     return NULL;
 }
 
+/**
+ * @brief Allocate and initialize a typed MLP inference context.
+ *
+ * The context owns layer objects, reusable work buffers, and the expected hash
+ * values used during weight-file compatibility checks. Creation is front-loaded
+ * on purpose: once the context exists, inference steps should run without any
+ * further heap allocation or topology-dependent branching.
+ */
 MlpInferContext* nn_mlp_infer_create_with_config(const MlpConfig* config, uint32_t seed) {
     MlpInferContext* ctx;
     size_t i;
@@ -79,6 +102,7 @@ MlpInferContext* nn_mlp_infer_create_with_config(const MlpConfig* config, uint32
 
     prev_size = config->input_size;
 
+    /* Materialize hidden layers in declared order so weight layout stays stable. */
     for (i = 0; i < config->hidden_layer_count; i++) {
         ctx->layers[i] = mlp_dense_create(
             prev_size,
@@ -97,6 +121,7 @@ MlpInferContext* nn_mlp_infer_create_with_config(const MlpConfig* config, uint32
         prev_size = config->hidden_sizes[i];
     }
 
+    /* The output layer is created last because it depends on the final hidden width. */
     ctx->layers[ctx->layer_count - 1] = mlp_dense_create(
         prev_size,
         config->output_size,
@@ -113,6 +138,7 @@ MlpInferContext* nn_mlp_infer_create_with_config(const MlpConfig* config, uint32
         return NULL;
     }
 
+    /* Reserve work buffers at the maximum layer width so hidden passes can reuse them. */
     max_buffer_size = config->input_size;
     if (config->output_size > max_buffer_size) {
         max_buffer_size = config->output_size;
@@ -123,6 +149,7 @@ MlpInferContext* nn_mlp_infer_create_with_config(const MlpConfig* config, uint32
         }
     }
 
+    /* Separate input/output storage avoids aliasing when auto_run uses caller buffers. */
     ctx->input_buffer = (float*)malloc(config->input_size * sizeof(float));
     ctx->output_buffer = (float*)malloc(config->output_size * sizeof(float));
     ctx->work_buffer_a = (float*)malloc(max_buffer_size * sizeof(float));
@@ -143,6 +170,7 @@ MlpInferContext* nn_mlp_infer_create_with_config(const MlpConfig* config, uint32
         return NULL;
     }
 
+    /* Zero-initialize every buffer so partially run contexts never expose garbage. */
     memset(ctx->input_buffer, 0, config->input_size * sizeof(float));
     memset(ctx->output_buffer, 0, config->output_size * sizeof(float));
     memset(ctx->work_buffer_a, 0, max_buffer_size * sizeof(float));
@@ -151,6 +179,9 @@ MlpInferContext* nn_mlp_infer_create_with_config(const MlpConfig* config, uint32
     return ctx;
 }
 
+/**
+ * @brief Release an inference context together with all owned layers and buffers.
+ */
 void nn_mlp_infer_destroy(void* context) {
     MlpInferContext* ctx = (MlpInferContext*)context;
     size_t i;
@@ -174,6 +205,9 @@ void nn_mlp_infer_destroy(void* context) {
     free(ctx);
 }
 
+/**
+ * @brief Copy caller input values into the context-owned input buffer.
+ */
 void nn_mlp_infer_set_input(void* context, const float* input, size_t size) {
     MlpInferContext* ctx = (MlpInferContext*)context;
     size_t i;
@@ -191,6 +225,9 @@ void nn_mlp_infer_set_input(void* context, const float* input, size_t size) {
     }
 }
 
+/**
+ * @brief Copy the latest inference output into caller-owned storage.
+ */
 void nn_mlp_infer_get_output(void* context, float* output, size_t size) {
     MlpInferContext* ctx = (MlpInferContext*)context;
     size_t i;
@@ -208,6 +245,12 @@ void nn_mlp_infer_get_output(void* context, float* output, size_t size) {
     }
 }
 
+/**
+ * @brief Run a full forward pass through every dense layer.
+ *
+ * Two reusable work buffers are alternated for hidden activations so the infer
+ * path avoids per-step heap traffic while still supporting arbitrary depth.
+ */
 int nn_mlp_infer_step(void* context) {
     MlpInferContext* ctx = (MlpInferContext*)context;
     float* current;
@@ -221,6 +264,7 @@ int nn_mlp_infer_step(void* context) {
     current = ctx->input_buffer;
     next = ctx->work_buffer_a;
 
+    /* Hidden layers ping-pong between two work buffers; only the final output persists. */
     for (i = 0; i < ctx->layer_count; i++) {
         MlpDenseLayer* layer = ctx->layers[i];
 
@@ -236,6 +280,9 @@ int nn_mlp_infer_step(void* context) {
     return 0;
 }
 
+/**
+ * @brief Convenience wrapper that performs set-input, step, and get-output.
+ */
 int nn_mlp_infer_auto_run(void* context, const float* input, float* output) {
     MlpInferContext* ctx = (MlpInferContext*)context;
 
@@ -254,6 +301,9 @@ int nn_mlp_infer_auto_run(void* context, const float* input, float* output) {
     return 0;
 }
 
+/**
+ * @brief Load weights after validating network hash, layout hash, and ABI tag.
+ */
 int nn_mlp_load_weights(void* context, FILE* fp) {
     MlpInferContext* ctx = (MlpInferContext*)context;
     uint64_t file_hash;
@@ -266,6 +316,7 @@ int nn_mlp_load_weights(void* context, FILE* fp) {
         return 0;
     }
 
+    /* Read and validate the compatibility header before touching layer tensors. */
     rc = (int)fread(&file_hash, sizeof(file_hash), 1, fp);
     if (rc != 1) return 0;
 
@@ -289,6 +340,7 @@ int nn_mlp_load_weights(void* context, FILE* fp) {
         return 0;
     }
 
+    /* Payload layout is strictly layer-major so save/load stay symmetric. */
     for (i = 0; i < ctx->layer_count; i++) {
         MlpDenseLayer* layer = ctx->layers[i];
 
@@ -307,6 +359,9 @@ int nn_mlp_load_weights(void* context, FILE* fp) {
     return 1;
 }
 
+/**
+ * @brief Save weights together with compatibility metadata required at load time.
+ */
 int nn_mlp_save_weights(void* context, FILE* fp) {
     MlpInferContext* ctx = (MlpInferContext*)context;
     uint64_t hash;
@@ -319,6 +374,7 @@ int nn_mlp_save_weights(void* context, FILE* fp) {
         return 0;
     }
 
+    /* Prefer externally supplied hashes so generated wrappers control compatibility policy. */
     hash = (ctx->expected_network_hash != 0U)
         ? ctx->expected_network_hash
         : nn_mlp_get_network_hash(ctx);
@@ -335,6 +391,7 @@ int nn_mlp_save_weights(void* context, FILE* fp) {
     rc = (int)fwrite(&abi_ver, sizeof(abi_ver), 1, fp);
     if (rc != 1) return 0;
 
+    /* Emit tensors in the same order nn_mlp_load_weights() expects to read them. */
     for (i = 0; i < ctx->layer_count; i++) {
         MlpDenseLayer* layer = ctx->layers[i];
 
@@ -353,6 +410,9 @@ int nn_mlp_save_weights(void* context, FILE* fp) {
     return 1;
 }
 
+/**
+ * @brief Expose the current MLP structural hash to save/load callers.
+ */
 uint64_t nn_mlp_get_network_hash(const void* context) {
     const MlpInferContext* ctx = (const MlpInferContext*)context;
 

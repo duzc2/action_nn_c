@@ -1,11 +1,20 @@
+/**
+ * @file nn_type_mlp_train.c
+ * @brief Registry bridge that exposes the MLP training backend to codegen.
+ */
+
 #include "nn_train_registry.h"
 #include "mlp_train_ops.h"
 
 #include <string.h>
 
+/**
+ * @brief Reconstruct a typed MLP training context from codegen metadata.
+ */
 static void* nn_type_mlp_train_create_codegen(void* infer_ctx, const NNCodegenTrainConfig* config) {
     MlpTrainConfig train_config;
 
+    /* Training must wrap an existing MLP infer context plus a typed train config. */
     if (infer_ctx == 0 ||
         config == 0 ||
         config->type_config == 0 ||
@@ -19,6 +28,9 @@ static void* nn_type_mlp_train_create_codegen(void* infer_ctx, const NNCodegenTr
     return nn_mlp_train_create(infer_ctx, &train_config);
 }
 
+/**
+ * @brief Adapt raw graph buffers to the typed MLP backprop entry point.
+ */
 static int nn_type_mlp_train_step_with_output_gradient_codegen(
     void* context,
     const void* input,
@@ -33,6 +45,9 @@ static int nn_type_mlp_train_step_with_output_gradient_codegen(
     );
 }
 
+/**
+ * @brief Builtin registry entry published when the MLP training backend is enabled.
+ */
 const NNTrainRegistryEntry nn_type_mlp_train_entry = {
     "mlp",
     nn_mlp_train_step,

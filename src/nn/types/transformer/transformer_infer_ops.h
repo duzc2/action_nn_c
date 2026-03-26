@@ -1,3 +1,13 @@
+/**
+ * @file transformer_infer_ops.h
+ * @brief Public inference-side API for the tiny transformer backend.
+ *
+ * The implementation is intentionally compact and oriented toward demo-sized
+ * conversational tasks. This header exposes only the pieces required by the
+ * registry bridge and generated code: context shape, parameter I/O, tokenization,
+ * and single-step/graph execution helpers.
+ */
+
 #ifndef TRANSFORMER_INFER_OPS_H
 #define TRANSFORMER_INFER_OPS_H
 
@@ -13,19 +23,25 @@
 #define TRANSFORMER_MAX_RESPONSE_CLASSES 32U
 #define TRANSFORMER_MAX_TEXT_LENGTH 256U
 
+/**
+ * @brief Inference context for the tiny transformer demo backend.
+ *
+ * Most buffers are fixed-size because the demo targets a small, bounded model
+ * and the surrounding code generation pipeline already knows the maximum sizes.
+ */
 typedef struct {
-    const char* question;
-    char* answer;
-    size_t answer_capacity;
-    uint64_t expected_network_hash;
-    uint64_t expected_layout_hash;
-    size_t graph_input_size;
-    size_t graph_output_size;
-    size_t vocab_size;
-    size_t max_seq_length;
-    size_t model_dim;
-    size_t class_count;
-    uint32_t rng_state;
+    const char* question;  /**< Current input text passed in by caller or graph runtime. */
+    char* answer;          /**< Writable answer buffer owned by the caller. */
+    size_t answer_capacity;/**< Capacity of @ref answer in bytes. */
+    uint64_t expected_network_hash; /**< Weight-file compatibility guard. */
+    uint64_t expected_layout_hash;  /**< Layout compatibility guard. */
+    size_t graph_input_size;        /**< Graph-mode input width expected by generated code. */
+    size_t graph_output_size;       /**< Graph-mode output width expected by generated code. */
+    size_t vocab_size;              /**< Effective vocabulary size after initialization. */
+    size_t max_seq_length;          /**< Maximum supported token sequence length. */
+    size_t model_dim;               /**< Active embedding/attention width. */
+    size_t class_count;             /**< Number of learned answer classes. */
+    uint32_t rng_state;             /**< Deterministic RNG state for lightweight init logic. */
     float token_embedding[TRANSFORMER_VOCAB_SIZE][TRANSFORMER_MAX_MODEL_DIM];
     float position_embedding[TRANSFORMER_MAX_SEQ_LENGTH][TRANSFORMER_MAX_MODEL_DIM];
     float query_weight[TRANSFORMER_MAX_MODEL_DIM][TRANSFORMER_MAX_MODEL_DIM];

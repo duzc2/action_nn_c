@@ -1,21 +1,15 @@
 /**
  * @file profiler.c
- * @brief Network code generator core implementation
+ * @brief Top-level profiler orchestration entry.
  *
- * Features:
- * - Read network specification passed by user
- * - Validate network definition (DAG, connections, ports)
- * - Compute network signature hash
- * - Generate modular network code
+ * This file wires together the three mandatory generation stages described in
+ * the documentation:
+ * 1. validate the caller-supplied request and network definition,
+ * 2. compute deterministic hashes used for compatibility checks,
+ * 3. hand the normalized request to the code generator.
  *
- * Generated modules:
- * - tokenizer: Input/output encoding
- * - network_init: Network initialization
- * - weights_load: Weight loading with hash validation
- * - train: Training loop
- * - weights_save: Weight saving with hash
- * - infer: Inference
- * - metadata: Network metadata header
+ * The implementation preserves the required fast-fail behaviour: as soon as one
+ * stage reports an error, no later stage runs and the first diagnostic is kept.
  */
 
 #include "profiler.h"
@@ -26,6 +20,9 @@
 
 #include <string.h>
 
+/**
+ * @brief Run the full profiler pipeline for one caller-supplied network.
+ */
 ProfStatus profiler_generate_v2(
     const ProfGenerateRequest* req,
     ProfGenerateResult* out_result
@@ -37,14 +34,18 @@ ProfStatus profiler_generate_v2(
     uint64_t layout_hash;
     ProfStatus st;
 
+    /* The public API rejects a NULL request before touching user buffers. */
     if (req == NULL) {
         return PROF_STATUS_INVALID_ARGUMENT;
     }
 
+    /* Normalize the caller-owned error buffer so later helpers can reuse it. */
     prof_error_init(&error, req->error.buffer, req->error.capacity);
 
+    /* The current profiler pipeline consumes the structured network directly. */
     network = (NN_NetworkDef*)req->network_def;
 
+    /* Stage 1: validate topology, paths, and registration-dependent contracts. */
     st = prof_validate_all(req, &error);
     if (st != PROF_STATUS_OK) {
         if (error.buffer != NULL && error.capacity > 0U && error.buffer[0] == '\0') {
@@ -53,9 +54,11 @@ ProfStatus profiler_generate_v2(
         return st;
     }
 
+    /* Stage 2: compute the two hashes used by save/load compatibility checks. */
     network_hash = prof_network_hash(network);
     layout_hash = prof_layout_hash(network);
 
+    /* Stage 3: pass the normalized request into the code generator. */
     prof_codegen_init(&codegen_ctx, network, &req->output_layout,
         network_hash, layout_hash, &error);
 
@@ -67,6 +70,7 @@ ProfStatus profiler_generate_v2(
         return st;
     }
 
+    /* Report stable outputs back to the caller once generation is complete. */
     if (out_result != NULL) {
         out_result->network_hash = network_hash;
         out_result->metadata_written_path = req->output_layout.metadata_path;

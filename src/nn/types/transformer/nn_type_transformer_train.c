@@ -1,9 +1,17 @@
+/**
+ * @file nn_type_transformer_train.c
+ * @brief Registry bridge that exposes the tiny transformer training backend.
+ */
+
 #include "nn_train_registry.h"
 #include "transformer_train_ops.h"
 
 #include <stdlib.h>
 #include <string.h>
 
+/**
+ * @brief Reconstruct a transformer training context from codegen metadata.
+ */
 static void* nn_type_transformer_train_create_codegen(
     void* infer_ctx,
     const NNCodegenTrainConfig* config
@@ -11,6 +19,7 @@ static void* nn_type_transformer_train_create_codegen(
     TransformerTrainContext* context;
     TransformerTrainConfig typed_config;
 
+    /* Training requires both the infer context and the typed training config. */
     if (infer_ctx == 0 ||
         config == 0 ||
         config->type_config == 0 ||
@@ -32,10 +41,16 @@ static void* nn_type_transformer_train_create_codegen(
     return context;
 }
 
+/**
+ * @brief Release a transformer training context created for generated code.
+ */
 static void nn_type_transformer_train_destroy_codegen(void* context) {
     free(context);
 }
 
+/**
+ * @brief Adapt raw question/answer buffers to the text-oriented train API.
+ */
 static int nn_type_transformer_train_step_with_data_codegen(
     void* context,
     const void* input,
@@ -52,6 +67,9 @@ static int nn_type_transformer_train_step_with_data_codegen(
     return nn_transformer_train_step(train_ctx);
 }
 
+/**
+ * @brief Adapt raw graph buffers to the typed transformer backprop entry point.
+ */
 static int nn_type_transformer_train_step_with_output_gradient_codegen(
     void* context,
     const void* input,
@@ -66,6 +84,9 @@ static int nn_type_transformer_train_step_with_output_gradient_codegen(
     );
 }
 
+/**
+ * @brief Publish cumulative training counters to generated reporting code.
+ */
 static void nn_type_transformer_train_get_stats_codegen(
     void* context,
     size_t* out_epochs,
@@ -88,6 +109,9 @@ static void nn_type_transformer_train_get_stats_codegen(
     }
 }
 
+/**
+ * @brief Builtin registry entry published when the transformer training backend is enabled.
+ */
 const NNTrainRegistryEntry nn_type_transformer_train_entry = {
     "transformer",
     nn_transformer_train_step,

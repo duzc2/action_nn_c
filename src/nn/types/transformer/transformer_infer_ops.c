@@ -1,3 +1,13 @@
+/**
+ * @file transformer_infer_ops.c
+ * @brief Tiny transformer-style inference backend used by generated code.
+ *
+ * The implementation intentionally focuses on a small, inspectable model for
+ * demo scenarios. It still demonstrates the same lifecycle expected from any
+ * backend integrated into the profiler pipeline: typed configuration, parameter
+ * initialization, graph execution, text inference, and guarded persistence.
+ */
+
 #include "transformer_infer_ops.h"
 
 #include <ctype.h>
@@ -7,6 +17,24 @@
 
 #define TRANSFORMER_ABI_VERSION 1U
 
+/**
+ * @section transformer_infer_design Tiny transformer inference notes
+ *
+ * This backend intentionally trades completeness for transparency. It is small
+ * enough for demo scenarios, yet it still demonstrates the full profiler flow:
+ * typed config reconstruction, deterministic parameter initialization, token
+ * handling, attention-style scoring, class prediction, and hash-guarded weight
+ * persistence. The comments in this file therefore focus on clarifying the
+ * design intent of each stage rather than pretending the model is a production
+ * transformer.
+ */
+
+/**
+ * @brief Serialized weight blob written to disk by the tiny transformer backend.
+ *
+ * The blob intentionally contains both compatibility metadata and all parameter
+ * arrays so save/load stay self-contained and deterministic.
+ */
 typedef struct {
     uint64_t network_hash;
     uint64_t layout_hash;
@@ -28,6 +56,13 @@ typedef struct {
     char fallback_answer[TRANSFORMER_MAX_TEXT_LENGTH];
 } TransformerWeightBlob;
 
+/**
+ * @brief Scratch buffers produced by one forward pass.
+ *
+ * Keeping them in a dedicated stack object makes the forward path easier to
+ * read and lets prediction code expose probabilities without mutating the
+ * long-lived inference context.
+ */
 typedef struct {
     size_t seq_length;
     uint8_t tokens[TRANSFORMER_MAX_SEQ_LENGTH];
@@ -44,6 +79,9 @@ typedef struct {
     float probabilities[TRANSFORMER_MAX_RESPONSE_CLASSES];
 } TransformerForwardCache;
 
+/**
+ * @brief Copy one NUL-terminated string into a bounded destination buffer.
+ */
 static void transformer_copy_text(char* destination, size_t capacity, const char* source) {
     if (destination == 0 || capacity == 0U) {
         return;
@@ -57,6 +95,9 @@ static void transformer_copy_text(char* destination, size_t capacity, const char
     destination[capacity - 1U] = '\0';
 }
 
+/**
+ * @brief Advance the tiny deterministic RNG used by the demo transformer.
+ */
 static uint32_t transformer_next_random(uint32_t* state) {
     uint32_t value = *state;
     value = value * 1664525U + 1013904223U;
@@ -64,12 +105,18 @@ static uint32_t transformer_next_random(uint32_t* state) {
     return value;
 }
 
+/**
+ * @brief Produce a small centered random weight for parameter initialization.
+ */
 static float transformer_random_weight(uint32_t* state, float scale) {
     uint32_t raw = transformer_next_random(state);
     float normalized = (float)(raw & 0xFFFFU) / 65535.0f;
     return (normalized - 0.5f) * scale;
 }
 
+/**
+ * @brief Map a single character into the fixed demo vocabulary.
+ */
 static uint8_t transformer_char_to_token(char ch) {
     unsigned char lower = (unsigned char)tolower((unsigned char)ch);
 
@@ -90,6 +137,9 @@ static uint8_t transformer_char_to_token(char ch) {
     return 0U;
 }
 
+/**
+ * @brief Tokenize a short text string into the fixed demo vocabulary.
+ */
 size_t nn_transformer_tokenize_text(
     const char* text,
     uint8_t* out_tokens,
@@ -118,6 +168,9 @@ size_t nn_transformer_tokenize_text(
     return length;
 }
 
+/**
+ * @brief Find an answer-class index by exact stored text match.
+ */
 int nn_transformer_find_class(
     const TransformerInferContext* context,
     const char* answer
@@ -137,6 +190,9 @@ int nn_transformer_find_class(
     return -1;
 }
 
+/**
+ * @brief Reuse an existing answer class or allocate a new one lazily.
+ */
 int nn_transformer_find_or_add_class(
     TransformerInferContext* context,
     const char* answer
@@ -164,6 +220,9 @@ int nn_transformer_find_or_add_class(
     return (int)(context->class_count - 1U);
 }
 
+/**
+ * @brief Initialize embeddings, attention matrices, and classifier weights.
+ */
 int nn_transformer_init_parameters(
     TransformerInferContext* context,
     size_t model_dim,
@@ -183,6 +242,7 @@ int nn_transformer_init_parameters(
         return -1;
     }
 
+    /* Reset the entire context so every later field starts from a known value. */
     (void)memset(context, 0, sizeof(*context));
     context->vocab_size = TRANSFORMER_VOCAB_SIZE;
     context->max_seq_length = TRANSFORMER_MAX_SEQ_LENGTH;
@@ -194,6 +254,7 @@ int nn_transformer_init_parameters(
         "I can talk with simple English."
     );
 
+    /* Build deterministic token embeddings for the fixed demo vocabulary. */
     for (token_index = 0U; token_index < TRANSFORMER_VOCAB_SIZE; ++token_index) {
         for (column = 0U; column < model_dim; ++column) {
             token_phase = (float)((token_index + 1U) * (column + 1U));
@@ -203,6 +264,7 @@ int nn_transformer_init_parameters(
         }
     }
 
+    /* Add simple position encodings so sequence order affects the forward pass. */
     for (position_index = 0U; position_index < TRANSFORMER_MAX_SEQ_LENGTH; ++position_index) {
         for (column = 0U; column < model_dim; ++column) {
             position_phase = (float)((position_index + 1U) * (column + 1U));
@@ -212,6 +274,7 @@ int nn_transformer_init_parameters(
         }
     }
 
+    /* Start projection matrices close to identity so early behaviour is stable. */
     for (row = 0U; row < model_dim; ++row) {
         for (column = 0U; column < model_dim; ++column) {
             float jitter = transformer_random_weight(&context->rng_state, 0.02f);
@@ -234,6 +297,9 @@ int nn_transformer_init_parameters(
     return 0;
 }
 
+/**
+ * @brief Normalize a score vector in-place with a numerically stable softmax.
+ */
 static void transformer_softmax(float* values, size_t count) {
     float max_value = values[0];
     float sum = 0.0f;
@@ -263,6 +329,9 @@ static void transformer_softmax(float* values, size_t count) {
     }
 }
 
+/**
+ * @brief Compute the Euclidean norm of a dense vector.
+ */
 static float transformer_vector_norm(const float* values, size_t count) {
     float sum = 0.0f;
     size_t index;
@@ -274,6 +343,13 @@ static float transformer_vector_norm(const float* values, size_t count) {
     return sqrtf(sum + 1.0e-6f);
 }
 
+/**
+ * @brief Core inference stage: embed tokens, score classes, and emit logits.
+ *
+ * The helper intentionally keeps every intermediate tensor in a stack cache so
+ * prediction, debug inspection, and training can all share the same forward
+ * semantics without mutating long-lived model state.
+ */
 static void transformer_run_forward(
     const TransformerInferContext* context,
     const char* question,
@@ -285,6 +361,7 @@ static void transformer_run_forward(
     size_t output_index;
     float scale;
 
+    /* Stage 1: tokenize the question and reset scratch buffers. */
     (void)memset(cache, 0, sizeof(*cache));
     cache->seq_length = nn_transformer_tokenize_text(
         question,
@@ -292,6 +369,10 @@ static void transformer_run_forward(
         context->max_seq_length
     );
 
+    /* Stage 2: combine token and position embeddings into input states. */
+    /* Stage 3: project each token into query/key/value spaces. */
+    /* Stage 5: compute normalized token-to-token attention weights. */
+    /* Stage 6: apply attention, output projection, tanh, and mean pooling. */
     for (seq_index = 0U; seq_index < cache->seq_length; ++seq_index) {
         uint8_t token_id = cache->tokens[seq_index];
         for (feature_index = 0U; feature_index < context->model_dim; ++feature_index) {
@@ -320,6 +401,7 @@ static void transformer_run_forward(
         }
     }
 
+    /* Stage 4: apply the usual sqrt(d) scaling before softmax attention. */
     scale = sqrtf((float)context->model_dim);
     if (scale <= 0.0f) {
         scale = 1.0f;
@@ -363,6 +445,7 @@ static void transformer_run_forward(
         }
     }
 
+    /* Stage 7: compare the pooled sentence representation with each class. */
     for (output_index = 0U; output_index < context->class_count; ++output_index) {
         float dot = 0.0f;
         float pooled_norm = transformer_vector_norm(cache->pooled, context->model_dim);
@@ -385,6 +468,14 @@ static void transformer_run_forward(
     }
 }
 
+/**
+ * @brief Public API stage: classify one question into a learned answer bucket.
+ *
+ * Prediction is intentionally separated from answer-string formatting so the
+ * training path can reuse the same probability outputs when computing loss. The
+ * caller can therefore treat this function as the canonical class-selection
+ * step for both interactive inference and supervised updates.
+ */
 int nn_transformer_predict_class(
     const TransformerInferContext* context,
     const char* question,
@@ -406,6 +497,7 @@ int nn_transformer_predict_class(
         return -1;
     }
 
+    /* Run the full forward pipeline once, then reuse its cached probabilities. */
     transformer_run_forward(context, question, &cache);
 
     for (class_index = 1U; class_index < context->class_count; ++class_index) {
@@ -428,6 +520,9 @@ int nn_transformer_predict_class(
     return (int)best_index;
 }
 
+/**
+ * @brief Adapt raw graph buffers to the transformer class-prediction helper.
+ */
 int nn_transformer_graph_run(void* context, const void* input, void* output) {
     TransformerInferContext* infer_ctx = (TransformerInferContext*)context;
     const float* input_values = (const float*)input;
@@ -460,6 +555,12 @@ int nn_transformer_graph_run(void* context, const void* input, void* output) {
     return 0;
 }
 
+/**
+ * @brief Public API stage: turn the predicted class back into an answer string.
+ *
+ * The generated runtime passes question and answer buffers through the context,
+ * so this helper only needs to choose the best class and copy the final text.
+ */
 int nn_transformer_infer_step(void* context) {
     TransformerInferContext* infer_ctx = (TransformerInferContext*)context;
     int class_index;
@@ -476,6 +577,7 @@ int nn_transformer_infer_step(void* context) {
         0U,
         0
     );
+    /* Fall back to a stable English sentence instead of leaving garbage output. */
     if (class_index < 0) {
         (void)snprintf(
             infer_ctx->answer,
@@ -495,6 +597,12 @@ int nn_transformer_infer_step(void* context) {
     return 0;
 }
 
+/**
+ * @brief Load transformer parameters after validating hash and ABI metadata.
+ *
+ * The loader rejects mismatched topology or layout before mutating the runtime
+ * context so callers never observe partially loaded model state.
+ */
 int nn_transformer_load_weights(void* context, FILE* fp) {
     TransformerInferContext* infer_ctx = (TransformerInferContext*)context;
     TransformerWeightBlob blob;
@@ -524,6 +632,7 @@ int nn_transformer_load_weights(void* context, FILE* fp) {
         return 0;
     }
 
+    /* Copy validated metadata first so later calls see a consistent context. */
     infer_ctx->vocab_size = blob.vocab_size;
     infer_ctx->max_seq_length = blob.max_seq_length;
     infer_ctx->model_dim = blob.model_dim;
@@ -543,6 +652,12 @@ int nn_transformer_load_weights(void* context, FILE* fp) {
     return 1;
 }
 
+/**
+ * @brief Save transformer parameters together with compatibility metadata.
+ *
+ * Persistence uses one flat blob because the demo backend has a fixed upper
+ * bound on every tensor size and benefits from deterministic binary layout.
+ */
 int nn_transformer_save_weights(void* context, FILE* fp) {
     TransformerInferContext* infer_ctx = (TransformerInferContext*)context;
     TransformerWeightBlob blob;
@@ -551,6 +666,7 @@ int nn_transformer_save_weights(void* context, FILE* fp) {
         return 0;
     }
 
+    /* Zero-fill the blob so every serialized byte is deterministic. */
     (void)memset(&blob, 0, sizeof(blob));
     blob.network_hash = infer_ctx->expected_network_hash;
     blob.layout_hash = infer_ctx->expected_layout_hash;

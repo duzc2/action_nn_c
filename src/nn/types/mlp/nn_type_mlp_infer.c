@@ -1,12 +1,26 @@
+/**
+ * @file nn_type_mlp_infer.c
+ * @brief Registry bridge that exposes the MLP inference backend to codegen.
+ *
+ * The profiler-generated runtime passes backend-agnostic hook contracts through
+ * the registry. This adapter validates the opaque config blob, rebuilds the
+ * concrete MLP config type, and then forwards creation and execution to the
+ * hand-written MLP implementation.
+ */
+
 #include "nn_infer_registry.h"
 #include "mlp_infer_ops.h"
 
 #include <string.h>
 
+/**
+ * @brief Reconstruct a typed MLP inference context from codegen metadata.
+ */
 static void* nn_type_mlp_infer_create_codegen(const NNCodegenInferConfig* config) {
     MlpConfig mlp_config;
     MlpInferContext* context;
 
+    /* The bridge only accepts the exact typed config emitted by profiler codegen. */
     if (config == 0 ||
         config->type_config == 0 ||
         config->type_config_size != sizeof(MlpConfig) ||
@@ -25,10 +39,16 @@ static void* nn_type_mlp_infer_create_codegen(const NNCodegenInferConfig* config
     return context;
 }
 
+/**
+ * @brief Adapt raw codegen buffers to the float-based MLP inference helper.
+ */
 static int nn_type_mlp_infer_auto_run_codegen(void* context, const void* input, void* output) {
     return nn_mlp_infer_auto_run(context, (const float*)input, (float*)output);
 }
 
+/**
+ * @brief Builtin registry entry published when the MLP backend is enabled.
+ */
 const NNInferRegistryEntry nn_type_mlp_infer_entry = {
     .type_name = "mlp",
     .infer_step = nn_mlp_infer_step,
