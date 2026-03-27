@@ -66,7 +66,7 @@ static float cnn_apply_activation(float value, CnnActivationType activation) {
 }
 
 /**
- * @brief Validate that the type config stays within the backend's fixed bounds.
+ * @brief Validate that the type config is structurally coherent.
  */
 static int cnn_config_is_valid(const CnnConfig* config) {
     size_t frame_stride;
@@ -74,28 +74,26 @@ static int cnn_config_is_valid(const CnnConfig* config) {
     if (config == NULL) {
         return 0;
     }
-    if (config->sequence_length == 0U ||
-        config->sequence_length > CNN_MAX_SEQUENCE_LENGTH) {
+    if (config->sequence_length == 0U) {
         return 0;
     }
-    if (config->frame_width == 0U || config->frame_width > CNN_MAX_FRAME_WIDTH ||
-        config->frame_height == 0U || config->frame_height > CNN_MAX_FRAME_HEIGHT) {
+    if (config->frame_width == 0U || config->frame_height == 0U) {
         return 0;
     }
-    if (config->channel_count == 0U || config->channel_count > CNN_MAX_CHANNEL_COUNT) {
+    if (config->channel_count == 0U) {
         return 0;
     }
-    if (config->kernel_size == 0U || config->kernel_size > CNN_MAX_KERNEL_SIZE) {
+    if (config->kernel_size == 0U) {
         return 0;
     }
     if (config->kernel_size > config->frame_width ||
         config->kernel_size > config->frame_height) {
         return 0;
     }
-    if (config->filter_count == 0U || config->filter_count > CNN_MAX_FILTER_COUNT) {
+    if (config->filter_count == 0U) {
         return 0;
     }
-    if (config->feature_size == 0U || config->feature_size > CNN_MAX_FEATURE_COUNT) {
+    if (config->feature_size == 0U) {
         return 0;
     }
 
@@ -104,9 +102,6 @@ static int cnn_config_is_valid(const CnnConfig* config) {
         return 0;
     }
     if (config->total_input_size != frame_stride * config->sequence_length) {
-        return 0;
-    }
-    if (config->total_input_size > CNN_MAX_TOTAL_INPUT_SIZE) {
         return 0;
     }
 
@@ -343,7 +338,7 @@ int nn_cnn_forward_pass(
     /* Each step reuses the same filters so the CNN acts as a shared frame encoder. */
     for (step_index = 0U; step_index < config->sequence_length; ++step_index) {
         const float* frame = input + (step_index * frame_stride);
-        float pooled_values[CNN_MAX_FILTER_COUNT];
+        float pooled_values[64U];
 
         for (filter_index = 0U; filter_index < config->filter_count; ++filter_index) {
             float pooled_linear = 0.0f;

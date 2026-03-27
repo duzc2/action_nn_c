@@ -64,19 +64,16 @@ static int rnn_config_is_valid(const RnnConfig* config) {
     if (config == NULL) {
         return 0;
     }
-    if (config->sequence_length == 0U || config->sequence_length > RNN_MAX_SEQUENCE_LENGTH) {
+    if (config->sequence_length == 0U) {
         return 0;
     }
-    if (config->input_feature_size == 0U || config->input_feature_size > RNN_MAX_INPUT_FEATURES) {
+    if (config->input_feature_size == 0U) {
         return 0;
     }
-    if (config->hidden_size == 0U || config->hidden_size > RNN_MAX_HIDDEN_SIZE) {
+    if (config->hidden_size == 0U) {
         return 0;
     }
-    if (config->output_size == 0U || config->output_size > RNN_MAX_OUTPUT_SIZE) {
-        return 0;
-    }
-    if ((config->sequence_length * config->input_feature_size) > RNN_MAX_TOTAL_INPUT_SIZE) {
+    if (config->output_size == 0U) {
         return 0;
     }
     return 1;
@@ -242,7 +239,7 @@ int nn_rnn_forward_pass(
     float* output_linear_cache
 ) {
     const RnnConfig* config;
-    float previous_hidden[RNN_MAX_HIDDEN_SIZE];
+    float previous_hidden[64U];
     size_t step_index;
     size_t hidden_index;
 
@@ -256,7 +253,7 @@ int nn_rnn_forward_pass(
     /* Walk the sequence from oldest frame feature to newest frame feature. */
     for (step_index = 0U; step_index < config->sequence_length; ++step_index) {
         const float* step_input = input + (step_index * config->input_feature_size);
-        float current_hidden[RNN_MAX_HIDDEN_SIZE];
+        float current_hidden[64U];
 
         for (hidden_index = 0U; hidden_index < config->hidden_size; ++hidden_index) {
             float linear_value = context->hidden_bias[hidden_index];

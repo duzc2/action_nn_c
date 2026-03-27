@@ -9,12 +9,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define RNN_MAX_SEQUENCE_LENGTH 8U
-#define RNN_MAX_INPUT_FEATURES 16U
-#define RNN_MAX_HIDDEN_SIZE 16U
-#define RNN_MAX_OUTPUT_SIZE 8U
-#define RNN_MAX_TOTAL_INPUT_SIZE (RNN_MAX_SEQUENCE_LENGTH * RNN_MAX_INPUT_FEATURES)
-
 /**
  * @brief Activation types used by the tiny RNN backend.
  */

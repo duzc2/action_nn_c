@@ -102,7 +102,7 @@ static int rnn_backpropagate(
 ) {
     RnnInferContext* infer_ctx;
     const RnnConfig* config;
-    float dh_next[RNN_MAX_HIDDEN_SIZE];
+    float dh_next[64U];
     size_t output_index;
     size_t hidden_index;
 
@@ -152,7 +152,7 @@ static int rnn_backpropagate(
         const float* previous_hidden = step_index == 0U ?
             NULL :
             (context->hidden_cache + ((step_index - 1U) * config->hidden_size));
-        float dh_current[RNN_MAX_HIDDEN_SIZE];
+        float dh_current[64U];
         size_t current_index;
 
         (void)memcpy(dh_current, dh_next, config->hidden_size * sizeof(float));
@@ -299,7 +299,7 @@ int nn_rnn_train_step_with_output_gradient(
 int nn_rnn_train_step_with_data(RnnTrainContext* context, const float* input, const float* target) {
     RnnInferContext* infer_ctx;
     const RnnConfig* config;
-    float output_gradient[RNN_MAX_OUTPUT_SIZE];
+    float output_gradient[64U];
     float loss = 0.0f;
     size_t output_index;
     int rc;
