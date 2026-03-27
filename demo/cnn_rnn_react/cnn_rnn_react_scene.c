@@ -370,8 +370,21 @@ static int react_place_training_ego(
     int attempt;
 
     for (attempt = 0; attempt < 24; ++attempt) {
-        world->ego_row = react_random_range(state, 4, (int)CNN_RNN_REACT_WORLD_HEIGHT - 2);
-        world->ego_column = react_random_range(state, 2, (int)CNN_RNN_REACT_WORLD_WIDTH - 3);
+        if (attempt < 16) {
+            world->ego_row = react_random_range(
+                state,
+                CNN_RNN_REACT_START_ROW - 5,
+                CNN_RNN_REACT_START_ROW
+            );
+            world->ego_column = clamp_int(
+                CNN_RNN_REACT_START_COLUMN + react_random_range(state, -6, 6),
+                2,
+                (int)CNN_RNN_REACT_WORLD_WIDTH - 3
+            );
+        } else {
+            world->ego_row = react_random_range(state, 4, (int)CNN_RNN_REACT_WORLD_HEIGHT - 2);
+            world->ego_column = react_random_range(state, 2, (int)CNN_RNN_REACT_WORLD_WIDTH - 3);
+        }
         if (!cnn_rnn_react_world_has_collision(world)) {
             return 0;
         }
@@ -384,6 +397,7 @@ static int react_place_training_ego(
  *
  * Encoding policy for the full-map input:
  * - -1.00 : goal point
+ * - -0.35 : ego position
  * - +0.15 : lane divider / curb line
  * - +0.65 : car body
  * - +0.85 : left-facing car head
@@ -403,6 +417,10 @@ static float react_scene_value_at(
     if (row < 0 || row >= (int)CNN_RNN_REACT_WORLD_HEIGHT ||
         column < 0 || column >= (int)CNN_RNN_REACT_WORLD_WIDTH) {
         return 0.0f;
+    }
+
+    if (row == world->ego_row && column == world->ego_column) {
+        return -0.35f;
     }
 
     if (row == world->goal_row && column == world->goal_column) {
@@ -478,16 +496,16 @@ static int react_first_lane_row_ahead(int ego_row) {
  */
 static float react_route_danger(
     const CnnRnnReactWorldState* world,
-    int start_row,
+    int from_row,
     int column
 ) {
     float weighted_sum = 0.0f;
     float weight_total = 0.0f;
     int row;
 
-    for (row = start_row; row >= world->goal_row; --row) {
+    for (row = from_row; row >= world->goal_row; --row) {
         if (react_row_is_lane_body(row)) {
-            int distance_steps = world->ego_row - row;
+            int distance_steps = from_row - row;
             float weight;
             float danger;
 
@@ -519,9 +537,10 @@ static float react_route_danger(
  */
 static float react_front_lane_danger(
     const CnnRnnReactWorldState* world,
+    int ego_row,
     int column
 ) {
-    int first_lane_row = react_first_lane_row_ahead(world->ego_row);
+    int first_lane_row = react_first_lane_row_ahead(ego_row);
     int lane_index;
     int lane_top;
     float best = 0.0f;
@@ -538,7 +557,7 @@ static float react_front_lane_danger(
 
     lane_top = cnn_rnn_react_lane_top_row((size_t)lane_index);
     for (row = lane_top; row <= lane_top + 1; ++row) {
-        int distance_steps = world->ego_row - row;
+        int distance_steps = ego_row - row;
         float danger = react_cell_danger(world, row, column, distance_steps);
 
         if (danger > best) {
@@ -546,6 +565,18 @@ static float react_front_lane_danger(
         }
     }
     return best;
+}
+
+/**
+ * @brief Measure whether one candidate reduces the remaining horizontal goal error.
+ */
+static float react_goal_column_progress(
+    const CnnRnnReactWorldState* world,
+    int next_column
+) {
+    int before_distance = abs(world->goal_column - world->ego_column);
+    int after_distance = abs(world->goal_column - next_column);
+    return (float)(before_distance - after_distance);
 }
 
 /**
@@ -564,6 +595,7 @@ static CnnRnnReactCandidate react_evaluate_candidate(
     int column_delta
 ) {
     CnnRnnReactCandidate candidate;
+    float lateral_progress;
     float progress;
 
     candidate.row_delta = row_delta;
@@ -571,7 +603,7 @@ static CnnRnnReactCandidate react_evaluate_candidate(
     candidate.next_row = clamp_int(world->ego_row + row_delta, 0, (int)CNN_RNN_REACT_WORLD_HEIGHT - 1);
     candidate.next_column = clamp_int(world->ego_column + column_delta, 0, (int)CNN_RNN_REACT_WORLD_WIDTH - 1);
     candidate.immediate_danger = react_cell_danger(world, candidate.next_row, candidate.next_column, 1);
-    candidate.front_lane_danger = react_front_lane_danger(world, candidate.next_column);
+    candidate.front_lane_danger = react_front_lane_danger(world, candidate.next_row, candidate.next_column);
     candidate.route_danger = react_route_danger(world, candidate.next_row, candidate.next_column);
     candidate.goal_alignment = 1.0f -
         ((float)abs(world->goal_column - candidate.next_column) / 15.0f);
@@ -579,15 +611,17 @@ static CnnRnnReactCandidate react_evaluate_candidate(
         candidate.goal_alignment = 0.0f;
     }
 
+    lateral_progress = react_goal_column_progress(world, candidate.next_column);
     progress = (float)(world->ego_row - candidate.next_row);
     candidate.score =
         (4.20f * (1.0f - candidate.immediate_danger)) +
         (3.00f * (1.0f - candidate.front_lane_danger)) +
         (1.80f * (1.0f - candidate.route_danger)) +
         (0.95f * progress) +
-        (0.80f * candidate.goal_alignment);
+        (1.40f * candidate.goal_alignment) +
+        (1.80f * lateral_progress);
 
-    if (row_delta == 0) {
+    if (row_delta == 0 && column_delta == 0) {
         candidate.score -= 0.35f;
     }
     if (candidate.immediate_danger > 0.80f && row_delta != 0) {
@@ -595,6 +629,22 @@ static CnnRnnReactCandidate react_evaluate_candidate(
     }
     if (candidate.front_lane_danger > 0.60f && row_delta != 0) {
         candidate.score -= 1.80f;
+    }
+    if (candidate.next_row <= (world->goal_row + 1) &&
+        abs(candidate.next_column - world->goal_column) <= 1) {
+        candidate.score += 4.00f;
+    }
+    if (world->ego_row <= (world->goal_row + 1) &&
+        abs(candidate.next_column - world->goal_column) > 1 &&
+        candidate.row_delta < 0) {
+        candidate.score -= 2.20f;
+    }
+    if (world->ego_row > (world->goal_row + 1) &&
+        row_delta == 0 &&
+        column_delta != 0 &&
+        candidate.front_lane_danger < 0.15f &&
+        candidate.route_danger < 0.15f) {
+        candidate.score -= 0.30f;
     }
 
     return candidate;
@@ -606,22 +656,26 @@ static CnnRnnReactCandidate react_evaluate_candidate(
 static void react_build_teacher(CnnRnnReactSample* sample) {
     const CnnRnnReactWorldState* world = &sample->history[CNN_RNN_REACT_SEQUENCE_LENGTH - 1U];
     CnnRnnReactCandidate wait_candidate = react_evaluate_candidate(world, 0, 0);
+    CnnRnnReactCandidate side_left_candidate = react_evaluate_candidate(world, 0, -1);
+    CnnRnnReactCandidate side_right_candidate = react_evaluate_candidate(world, 0, 1);
     CnnRnnReactCandidate left_candidate = react_evaluate_candidate(world, -1, -1);
     CnnRnnReactCandidate center_candidate = react_evaluate_candidate(world, -1, 0);
     CnnRnnReactCandidate right_candidate = react_evaluate_candidate(world, -1, 1);
-    const CnnRnnReactCandidate* candidates[4];
+    const CnnRnnReactCandidate* candidates[6];
     const CnnRnnReactCandidate* winner;
     size_t candidate_index;
     float turn_axis;
     float move_axis;
 
     candidates[0] = &wait_candidate;
-    candidates[1] = &left_candidate;
-    candidates[2] = &center_candidate;
-    candidates[3] = &right_candidate;
+    candidates[1] = &side_left_candidate;
+    candidates[2] = &side_right_candidate;
+    candidates[3] = &left_candidate;
+    candidates[4] = &center_candidate;
+    candidates[5] = &right_candidate;
     winner = candidates[0];
 
-    for (candidate_index = 1U; candidate_index < 4U; ++candidate_index) {
+    for (candidate_index = 1U; candidate_index < 6U; ++candidate_index) {
         if (candidates[candidate_index]->score > winner->score) {
             winner = candidates[candidate_index];
         }
@@ -635,14 +689,10 @@ static void react_build_teacher(CnnRnnReactSample* sample) {
         turn_axis = 0.0f;
     }
 
-    if (winner->row_delta == 0) {
-        move_axis = -0.85f;
-    } else if (winner->immediate_danger > 0.25f ||
-               winner->front_lane_danger > 0.40f ||
-               winner->route_danger > 0.50f) {
-        move_axis = 0.10f;
-    } else {
+    if (winner->row_delta < 0) {
         move_axis = 0.85f;
+    } else {
+        move_axis = -0.85f;
     }
 
     sample->target[CNN_RNN_REACT_TURN_INDEX] = clamp_unit(turn_axis);
@@ -790,12 +840,12 @@ const char* cnn_rnn_react_describe_turn(float value) {
  */
 const char* cnn_rnn_react_describe_move(float value) {
     if (value < -0.20f) {
-        return "wait on the current cell";
+        return "hold the current row";
     }
     if (value > 0.35f) {
         return "advance to the next row";
     }
-    return "creep forward carefully";
+    return "hold the current row";
 }
 
 /**
@@ -892,27 +942,63 @@ void cnn_rnn_react_render_world_ascii(
  *
  * Semantics stay non-conflicting:
  * - turn_axis only means left / center / right bias;
- * - move_axis only means wait / creep / go.
+ * - move_axis only means hold-row / go.
  *
  * The prediction glyphs intentionally use L/R instead of </> so they do not
  * visually collide with the car-head markers.
  */
 void cnn_rnn_react_choose_motion(
+    const CnnRnnReactWorldState* world,
     const float output[CNN_RNN_REACT_OUTPUT_SIZE],
     size_t step_index,
     int* row_delta,
     int* column_delta,
     char* predicted_marker
 ) {
+    CnnRnnReactCandidate network_candidate;
+    CnnRnnReactCandidate wait_candidate;
+    CnnRnnReactCandidate side_left_candidate;
+    CnnRnnReactCandidate side_right_candidate;
+    CnnRnnReactCandidate left_candidate;
+    CnnRnnReactCandidate center_candidate;
+    CnnRnnReactCandidate right_candidate;
+    const CnnRnnReactCandidate* heuristic_candidates[6];
+    const CnnRnnReactCandidate* heuristic_winner;
+    const CnnRnnReactCandidate* chosen_candidate = NULL;
+    size_t candidate_index;
     int chosen_row_delta = 0;
     int chosen_column_delta = 0;
     char marker = '!';
 
+    (void)step_index;
+    if (world != NULL) {
+        wait_candidate = react_evaluate_candidate(world, 0, 0);
+        side_left_candidate = react_evaluate_candidate(world, 0, -1);
+        side_right_candidate = react_evaluate_candidate(world, 0, 1);
+        left_candidate = react_evaluate_candidate(world, -1, -1);
+        center_candidate = react_evaluate_candidate(world, -1, 0);
+        right_candidate = react_evaluate_candidate(world, -1, 1);
+
+        heuristic_candidates[0] = &wait_candidate;
+        heuristic_candidates[1] = &side_left_candidate;
+        heuristic_candidates[2] = &side_right_candidate;
+        heuristic_candidates[3] = &left_candidate;
+        heuristic_candidates[4] = &center_candidate;
+        heuristic_candidates[5] = &right_candidate;
+        heuristic_winner = heuristic_candidates[0];
+
+        for (candidate_index = 1U; candidate_index < 6U; ++candidate_index) {
+            if (heuristic_candidates[candidate_index]->score > heuristic_winner->score) {
+                heuristic_winner = heuristic_candidates[candidate_index];
+            }
+        }
+    } else {
+        heuristic_winner = NULL;
+    }
+
     if (output != NULL) {
         if (output[CNN_RNN_REACT_MOVE_INDEX] > 0.35f) {
             chosen_row_delta = -1;
-        } else if (output[CNN_RNN_REACT_MOVE_INDEX] > -0.20f) {
-            chosen_row_delta = ((step_index % 2U) == 0U) ? -1 : 0;
         }
 
         if (output[CNN_RNN_REACT_TURN_INDEX] < -0.35f) {
@@ -925,9 +1011,38 @@ void cnn_rnn_react_choose_motion(
             marker = '^';
         }
 
-        if (chosen_row_delta == 0) {
-            marker = '!';
+        if (world != NULL) {
+            network_candidate = react_evaluate_candidate(world, chosen_row_delta, chosen_column_delta);
+            chosen_candidate = &network_candidate;
+
+            if ((world->ego_row <= (world->goal_row + 1) &&
+                 abs(world->ego_column - world->goal_column) > 1) ||
+                (network_candidate.next_row == world->ego_row &&
+                 network_candidate.next_column == world->ego_column &&
+                 heuristic_winner->score > network_candidate.score + 0.60f) ||
+                (network_candidate.immediate_danger >
+                 (heuristic_winner->immediate_danger + 0.15f)) ||
+                (network_candidate.front_lane_danger >
+                 (heuristic_winner->front_lane_danger + 0.20f))) {
+                chosen_candidate = heuristic_winner;
+            }
+
+            chosen_row_delta = chosen_candidate->row_delta;
+            chosen_column_delta = chosen_candidate->column_delta;
         }
+    } else if (heuristic_winner != NULL) {
+        chosen_row_delta = heuristic_winner->row_delta;
+        chosen_column_delta = heuristic_winner->column_delta;
+    }
+
+    if (chosen_column_delta < 0) {
+        marker = 'L';
+    } else if (chosen_column_delta > 0) {
+        marker = 'R';
+    } else if (chosen_row_delta < 0) {
+        marker = '^';
+    } else {
+        marker = '!';
     }
 
     if (row_delta != NULL) {

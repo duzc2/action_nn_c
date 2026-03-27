@@ -147,7 +147,7 @@ int main(void) {
     printf("Scenario: C starts on the lower sidewalk and tries to reach G on the upper sidewalk.\n");
     printf("Input and display both use the same 30x20 full map over 4 recent frames.\n");
     printf("Lane 1-2 move left to right, lane 3-4 move right to left, and car heads show direction.\n");
-    printf("The network output is a reaction: left / center / right bias + wait / creep / go.\n\n");
+    printf("The network output is a reaction: left / center / right bias + hold-row / go.\n\n");
 
     cnn_rnn_react_world_init_random(&history[0], &rng_state);
     for (frame_index = 1U; frame_index < CNN_RNN_REACT_SEQUENCE_LENGTH; ++frame_index) {
@@ -189,7 +189,14 @@ int main(void) {
             return 1;
         }
 
-        cnn_rnn_react_choose_motion(output, frame_index, &row_delta, &column_delta, &predicted_marker);
+        cnn_rnn_react_choose_motion(
+            &current,
+            output,
+            frame_index,
+            &row_delta,
+            &column_delta,
+            &predicted_marker
+        );
         predicted_row = clamp_int(
             current.ego_row + row_delta,
             0,

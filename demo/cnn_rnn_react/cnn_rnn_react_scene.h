@@ -118,6 +118,7 @@ void cnn_rnn_react_render_world_ascii(
     char rows[CNN_RNN_REACT_WORLD_HEIGHT][CNN_RNN_REACT_WORLD_WIDTH + 1U]
 );
 void cnn_rnn_react_choose_motion(
+    const CnnRnnReactWorldState* world,
     const float output[CNN_RNN_REACT_OUTPUT_SIZE],
     size_t step_index,
     int* row_delta,
