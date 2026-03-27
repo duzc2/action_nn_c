@@ -83,6 +83,8 @@ typedef struct {
  * @brief Copy one NUL-terminated string into a bounded destination buffer.
  */
 static void transformer_copy_text(char* destination, size_t capacity, const char* source) {
+    size_t copy_length;
+
     if (destination == 0 || capacity == 0U) {
         return;
     }
@@ -91,8 +93,12 @@ static void transformer_copy_text(char* destination, size_t capacity, const char
         return;
     }
 
-    (void)strncpy(destination, source, capacity - 1U);
-    destination[capacity - 1U] = '\0';
+    copy_length = strlen(source);
+    if (copy_length >= capacity) {
+        copy_length = capacity - 1U;
+    }
+    (void)memcpy(destination, source, copy_length);
+    destination[copy_length] = '\0';
 }
 
 /**

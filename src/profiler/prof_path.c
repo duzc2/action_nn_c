@@ -29,6 +29,28 @@ static int prof_is_dir_separator(char ch) {
 }
 
 /**
+ * @brief Copy a filesystem path into a fixed buffer without deprecated CRT calls.
+ */
+static void prof_copy_path(char* destination, size_t capacity, const char* source) {
+    size_t copy_length;
+
+    if (destination == NULL || capacity == 0U) {
+        return;
+    }
+    if (source == NULL) {
+        destination[0] = '\0';
+        return;
+    }
+
+    copy_length = strlen(source);
+    if (copy_length >= capacity) {
+        copy_length = capacity - 1U;
+    }
+    (void)memcpy(destination, source, copy_length);
+    destination[copy_length] = '\0';
+}
+
+/**
  * @brief Create one directory level if it does not already exist.
  */
 static ProfStatus prof_mkdir_if_needed(const char* path) {
@@ -60,8 +82,7 @@ ProfStatus prof_path_ensure_directory(const char* dir_path) {
     }
 
     /* Work on a private copy because the algorithm inserts temporary terminators. */
-    strncpy(buffer, dir_path, sizeof(buffer) - 1U);
-    buffer[sizeof(buffer) - 1U] = '\0';
+    prof_copy_path(buffer, sizeof(buffer), dir_path);
 
     /* Strip trailing separators so the final mkdir call receives a real segment. */
     len = strlen(buffer);
@@ -115,8 +136,7 @@ ProfStatus prof_path_ensure_parent_directory(const char* file_path) {
         return PROF_STATUS_PATH_INVALID;
     }
 
-    strncpy(buffer, file_path, sizeof(buffer) - 1U);
-    buffer[sizeof(buffer) - 1U] = '\0';
+    prof_copy_path(buffer, sizeof(buffer), file_path);
 
     /* Search for the last path separator using both Windows and POSIX styles. */
     last_sep = strrchr(buffer, '/');
