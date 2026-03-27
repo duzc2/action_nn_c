@@ -36,6 +36,28 @@ static int is_empty(const char* text) {
 }
 
 /**
+ * @brief Copy a registry key into a fixed buffer without using deprecated CRT APIs.
+ */
+static void copy_type_name(char* destination, size_t capacity, const char* source) {
+    size_t copy_length;
+
+    if (destination == 0 || capacity == 0U) {
+        return;
+    }
+    if (source == 0) {
+        destination[0] = '\0';
+        return;
+    }
+
+    copy_length = strlen(source);
+    if (copy_length >= capacity) {
+        copy_length = capacity - 1U;
+    }
+    (void)memcpy(destination, source, copy_length);
+    destination[copy_length] = '\0';
+}
+
+/**
  * @brief Register or replace one inference backend entry.
  */
 int nn_infer_registry_register(const NNInferRegistryEntry* entry) {
@@ -58,8 +80,7 @@ int nn_infer_registry_register(const NNInferRegistryEntry* entry) {
     for (i = 0; i < (int)(sizeof(g_slots) / sizeof(g_slots[0])); ++i) {
         if (!g_slots[i].used) {
             g_slots[i].used = 1;
-            (void)strncpy(g_slots[i].type_name, entry->type_name, sizeof(g_slots[i].type_name) - 1);
-            g_slots[i].type_name[sizeof(g_slots[i].type_name) - 1] = '\0';
+            copy_type_name(g_slots[i].type_name, sizeof(g_slots[i].type_name), entry->type_name);
             g_slots[i].entry = entry;
             return 0;
         }

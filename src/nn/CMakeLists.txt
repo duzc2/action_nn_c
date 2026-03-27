@@ -35,6 +35,16 @@ if(ACTION_C_ENABLE_NN_TRANSFORMER)
     action_c_append_type_sources(transformer)
 endif()
 
+if(ACTION_C_ENABLE_NN_CNN)
+    list(APPEND NN_ENABLED_TYPES cnn)
+    action_c_append_type_sources(cnn)
+endif()
+
+if(ACTION_C_ENABLE_NN_RNN)
+    list(APPEND NN_ENABLED_TYPES rnn)
+    action_c_append_type_sources(rnn)
+endif()
+
 if(NOT NN_ENABLED_TYPES)
     message(FATAL_ERROR "No network types are enabled for nn core")
 endif()

@@ -25,6 +25,28 @@ typedef struct {
 static NNGraphInferContractSlot g_infer_contract_slots[32];
 
 /**
+ * @brief Copy a semantic type name into a fixed cache key buffer safely.
+ */
+static void copy_type_name(char* destination, size_t capacity, const char* source) {
+    size_t copy_length;
+
+    if (destination == 0 || capacity == 0U) {
+        return;
+    }
+    if (source == 0) {
+        destination[0] = '\0';
+        return;
+    }
+
+    copy_length = strlen(source);
+    if (copy_length >= capacity) {
+        copy_length = capacity - 1U;
+    }
+    (void)memcpy(destination, source, copy_length);
+    destination[copy_length] = '\0';
+}
+
+/**
  * @brief Resolve an inference contract and cache it on first use.
  */
 const NNGraphInferContract* nn_graph_infer_contract_find(const char* type_name) {
@@ -59,8 +81,11 @@ const NNGraphInferContract* nn_graph_infer_contract_find(const char* type_name) 
     for (index = 0; index < (int)(sizeof(g_infer_contract_slots) / sizeof(g_infer_contract_slots[0])); ++index) {
         if (!g_infer_contract_slots[index].used) {
             g_infer_contract_slots[index].used = 1;
-            (void)strncpy(g_infer_contract_slots[index].type_name, type_name, sizeof(g_infer_contract_slots[index].type_name) - 1);
-            g_infer_contract_slots[index].type_name[sizeof(g_infer_contract_slots[index].type_name) - 1] = '\0';
+            copy_type_name(
+                g_infer_contract_slots[index].type_name,
+                sizeof(g_infer_contract_slots[index].type_name),
+                type_name
+            );
             g_infer_contract_slots[index].contract.type_name = entry->type_name;
             g_infer_contract_slots[index].contract.create = entry->create;
             g_infer_contract_slots[index].contract.destroy = entry->destroy;

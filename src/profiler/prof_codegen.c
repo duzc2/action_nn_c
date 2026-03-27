@@ -16,6 +16,29 @@
 #define ABI_VERSION 1
 #define CODE_BUFFER_CAPACITY 524288U
 
+#ifdef _WIN32
+/**
+ * @brief Open one text file for writing without triggering MSVC CRT deprecation warnings.
+ */
+static FILE* prof_fopen_write_text(const char* path) {
+    FILE* fp = NULL;
+    if (path == NULL) {
+        return NULL;
+    }
+    if (fopen_s(&fp, path, "w") != 0) {
+        return NULL;
+    }
+    return fp;
+}
+#else
+static FILE* prof_fopen_write_text(const char* path) {
+    if (path == NULL) {
+        return NULL;
+    }
+    return fopen(path, "w");
+}
+#endif
+
 /**
  * @section prof_codegen_pipeline Generated-module emission strategy
  *
@@ -70,7 +93,7 @@ static ProfStatus write_file(const char* path, const char* content) {
         return PROF_STATUS_PATH_INVALID;
     }
 
-    fp = fopen(path, "w");
+    fp = prof_fopen_write_text(path);
     if (fp == NULL) {
         return PROF_STATUS_IO_FAILED;
     }
@@ -641,7 +664,7 @@ ProfStatus prof_codegen_metadata(ProfCodegenContext* ctx, const char* metadata_p
 
     /* Write a plain C header so generated modules can include it directly. */
     /* The header stays intentionally small because it is included nearly everywhere. */
-    fp = fopen(metadata_path, "w");
+    fp = prof_fopen_write_text(metadata_path);
     if (fp == NULL) {
         prof_leaf_graph_cleanup(&graph);
         return PROF_STATUS_IO_FAILED;
@@ -1959,7 +1982,20 @@ ProfStatus prof_codegen_weights_save(ProfCodegenContext* ctx) {
             "#include <stdio.h>\n"
             "#include <string.h>\n\n"
             "typedef struct { uint64_t network_hash; uint64_t layout_hash; uint32_t abi_version; uint32_t leaf_count; } GeneratedWeightsHeader;\n"
-            "typedef struct { uint32_t id_length; uint32_t type_length; } GeneratedLeafHeader;\n\n") != 0 ||
+            "typedef struct { uint32_t id_length; uint32_t type_length; } GeneratedLeafHeader;\n\n"
+            "#ifdef _WIN32\n"
+            "static FILE* generated_open_file_write(const char* file_path) {\n"
+            "    FILE* fp = 0;\n"
+            "    if (file_path == 0) return 0;\n"
+            "    if (fopen_s(&fp, file_path, \"wb\") != 0) return 0;\n"
+            "    return fp;\n"
+            "}\n"
+            "#else\n"
+            "static FILE* generated_open_file_write(const char* file_path) {\n"
+            "    if (file_path == 0) return 0;\n"
+            "    return fopen(file_path, \"wb\");\n"
+            "}\n"
+            "#endif\n\n") != 0 ||
         append_weight_runtime_arrays(content, CODE_BUFFER_CAPACITY, &pos, ctx->network, &graph) != 0 ||
         append_format(content, CODE_BUFFER_CAPACITY, &pos,
             "int weights_save_to_file(void* infer_ctx, const char* file_path) {\n"
@@ -1967,7 +2003,7 @@ ProfStatus prof_codegen_weights_save(ProfCodegenContext* ctx) {
             "    GeneratedWeightsHeader header;\n"
             "    size_t order_index;\n"
             "    if (infer_ctx == 0 || file_path == 0) return -1;\n"
-            "    fp = fopen(file_path, \"wb\");\n"
+            "    fp = generated_open_file_write(file_path);\n"
             "    if (fp == 0) return -3;\n"
             "    header.network_hash = 0x%016llxULL;\n"
             "    header.layout_hash = 0x%016llxULL;\n"
@@ -2079,7 +2115,20 @@ ProfStatus prof_codegen_weights_load(ProfCodegenContext* ctx) {
             "#include <stdio.h>\n"
             "#include <string.h>\n\n"
             "typedef struct { uint64_t network_hash; uint64_t layout_hash; uint32_t abi_version; uint32_t leaf_count; } GeneratedWeightsHeader;\n"
-            "typedef struct { uint32_t id_length; uint32_t type_length; } GeneratedLeafHeader;\n\n") != 0 ||
+            "typedef struct { uint32_t id_length; uint32_t type_length; } GeneratedLeafHeader;\n\n"
+            "#ifdef _WIN32\n"
+            "static FILE* generated_open_file_read(const char* file_path) {\n"
+            "    FILE* fp = 0;\n"
+            "    if (file_path == 0) return 0;\n"
+            "    if (fopen_s(&fp, file_path, \"rb\") != 0) return 0;\n"
+            "    return fp;\n"
+            "}\n"
+            "#else\n"
+            "static FILE* generated_open_file_read(const char* file_path) {\n"
+            "    if (file_path == 0) return 0;\n"
+            "    return fopen(file_path, \"rb\");\n"
+            "}\n"
+            "#endif\n\n") != 0 ||
         append_weight_runtime_arrays(content, CODE_BUFFER_CAPACITY, &pos, ctx->network, &graph) != 0 ||
         append_format(content, CODE_BUFFER_CAPACITY, &pos,
             "static int generated_weights_load_internal(void* infer_ctx, const char* file_path, int validate_only) {\n"
@@ -2087,7 +2136,7 @@ ProfStatus prof_codegen_weights_load(ProfCodegenContext* ctx) {
             "    GeneratedWeightsHeader header;\n"
             "    size_t order_index;\n"
             "    if (file_path == 0) return -1;\n"
-            "    fp = fopen(file_path, \"rb\");\n"
+            "    fp = generated_open_file_read(file_path);\n"
             "    if (fp == 0) return -3;\n"
             "    if (fread(&header, sizeof(header), 1, fp) != 1) { fclose(fp); return -4; }\n"
             "    if (header.network_hash != 0x%016llxULL) { fclose(fp); return -5; }\n"
