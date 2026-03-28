@@ -22,8 +22,13 @@
 #define ROAD_GRAPH_NAV_SLOT_COUNT 4U
 #define ROAD_GRAPH_NAV_PATTERN_COUNT 12U
 #define ROAD_GRAPH_NAV_START_NODE (((ROAD_GRAPH_NAV_GRID_SIZE / 2U) - 1U) * ROAD_GRAPH_NAV_GRID_SIZE + ((ROAD_GRAPH_NAV_GRID_SIZE / 2U) - 1U))
-#define ROAD_GRAPH_NAV_GOAL_COUNT 3U
-#define ROAD_GRAPH_NAV_STEP_CAP 220U
+#define ROAD_GRAPH_NAV_GOAL_COUNT 8U
+#define ROAD_GRAPH_NAV_STEP_CAP 720U
+#define ROAD_GRAPH_NAV_MIN_GOAL_MANHATTAN 5U
+#define ROAD_GRAPH_NAV_MIN_GOAL_PATH 8U
+#define ROAD_GRAPH_NAV_MIN_GOAL_DETOUR 2U
+#define ROAD_GRAPH_NAV_CANDIDATE_CAP (ROAD_GRAPH_NAV_PATTERN_COUNT * ROAD_GRAPH_NAV_NODE_COUNT)
+#define ROAD_GRAPH_NAV_SCORE_BAND 64U
 #define ROAD_GRAPH_NAV_FEATURE_OPEN 0U
 #define ROAD_GRAPH_NAV_FEATURE_CURRENT 1U
 #define ROAD_GRAPH_NAV_FEATURE_TARGET 2U
@@ -42,6 +47,11 @@ typedef struct {
     size_t current_node;
     size_t target_node;
 } RoadGraphNavScene;
+
+typedef struct {
+    RoadGraphNavScene scene;
+    size_t score;
+} RoadGraphNavCandidate;
 
 static const char* g_road_graph_nav_action_names[ROAD_GRAPH_NAV_ACTION_COUNT] = {
     "up",
@@ -91,6 +101,20 @@ static inline float road_graph_nav_x_norm(size_t node_index) {
  */
 static inline float road_graph_nav_y_norm(size_t node_index) {
     return 1.0f - (((float)road_graph_nav_row(node_index) / (float)(ROAD_GRAPH_NAV_GRID_SIZE - 1U)) * 2.0f);
+}
+
+/**
+ * @brief Compute the Manhattan distance between two grid nodes.
+ */
+static inline size_t road_graph_nav_manhattan_distance(size_t from_node, size_t to_node) {
+    size_t from_row = road_graph_nav_row(from_node);
+    size_t from_col = road_graph_nav_col(from_node);
+    size_t to_row = road_graph_nav_row(to_node);
+    size_t to_col = road_graph_nav_col(to_node);
+    size_t row_delta = from_row > to_row ? (from_row - to_row) : (to_row - from_row);
+    size_t col_delta = from_col > to_col ? (from_col - to_col) : (to_col - from_col);
+
+    return row_delta + col_delta;
 }
 
 /**
@@ -365,39 +389,171 @@ static inline int road_graph_nav_teacher_action(const RoadGraphNavScene* scene, 
 }
 
 /**
- * @brief Choose a random reachable target and obstacle template for the current node.
+ * @brief Compute the shortest reachable path length between current and target.
+ */
+static inline int road_graph_nav_shortest_distance(const RoadGraphNavScene* scene, size_t* out_distance) {
+    size_t queue[ROAD_GRAPH_NAV_NODE_COUNT];
+    size_t distance[ROAD_GRAPH_NAV_NODE_COUNT];
+    unsigned char visited[ROAD_GRAPH_NAV_NODE_COUNT];
+    size_t head = 0U;
+    size_t tail = 0U;
+    size_t node_index;
+
+    if (!road_graph_nav_node_is_open(scene, scene->current_node) ||
+        !road_graph_nav_node_is_open(scene, scene->target_node)) {
+        return -1;
+    }
+    if (scene->current_node == scene->target_node) {
+        if (out_distance != NULL) {
+            *out_distance = 0U;
+        }
+        return 0;
+    }
+
+    (void)memset(visited, 0, sizeof(visited));
+    for (node_index = 0U; node_index < ROAD_GRAPH_NAV_NODE_COUNT; ++node_index) {
+        distance[node_index] = 0U;
+    }
+
+    visited[scene->current_node] = 1U;
+    queue[tail] = scene->current_node;
+    tail += 1U;
+
+    while (head < tail) {
+        size_t current = queue[head];
+        size_t action_index;
+
+        head += 1U;
+        if (current == scene->target_node) {
+            if (out_distance != NULL) {
+                *out_distance = distance[current];
+            }
+            return 0;
+        }
+
+        for (action_index = 0U; action_index < ROAD_GRAPH_NAV_ACTION_COUNT; ++action_index) {
+            int neighbor = road_graph_nav_next_node(scene, current, action_index);
+
+            if (neighbor >= 0 && !visited[(size_t)neighbor]) {
+                visited[(size_t)neighbor] = 1U;
+                distance[(size_t)neighbor] = distance[current] + 1U;
+                queue[tail] = (size_t)neighbor;
+                tail += 1U;
+            }
+        }
+    }
+
+    return -1;
+}
+
+/**
+ * @brief Choose a reachable goal that strongly prefers long detours over direct paths.
  */
 static inline void road_graph_nav_choose_random_goal(RoadGraphNavScene* scene, unsigned int* state) {
-    size_t attempt;
+    RoadGraphNavCandidate detour_candidates[ROAD_GRAPH_NAV_CANDIDATE_CAP];
+    RoadGraphNavCandidate fallback_candidates[ROAD_GRAPH_NAV_CANDIDATE_CAP];
+    size_t detour_count = 0U;
+    size_t fallback_count = 0U;
+    size_t best_detour_score = 0U;
+    size_t best_fallback_score = 0U;
+    size_t pattern_start;
+    size_t pattern_offset;
 
-    for (attempt = 0U; attempt < 256U; ++attempt) {
-        size_t pattern_index = (size_t)(road_graph_nav_next_random(state) % ROAD_GRAPH_NAV_PATTERN_COUNT);
-        size_t target_node = (size_t)(road_graph_nav_next_random(state) % ROAD_GRAPH_NAV_NODE_COUNT);
+    pattern_start = (size_t)(road_graph_nav_next_random(state) % ROAD_GRAPH_NAV_PATTERN_COUNT);
+
+    for (pattern_offset = 0U; pattern_offset < ROAD_GRAPH_NAV_PATTERN_COUNT; ++pattern_offset) {
+        size_t pattern_index = (pattern_start + pattern_offset) % ROAD_GRAPH_NAV_PATTERN_COUNT;
         RoadGraphNavScene candidate = *scene;
-        size_t teacher_action = 0U;
+        size_t target_node;
 
         candidate.blocked_mask = road_graph_nav_pattern_mask(pattern_index);
         if (!road_graph_nav_node_is_open(&candidate, candidate.current_node)) {
             continue;
         }
-        if (target_node == candidate.current_node) {
-            continue;
-        }
-        if (!road_graph_nav_node_is_open(&candidate, target_node)) {
-            continue;
-        }
-        candidate.target_node = target_node;
-        if (road_graph_nav_teacher_action(&candidate, &teacher_action) == 0) {
-            (void)teacher_action;
-            *scene = candidate;
-            return;
+
+        for (target_node = 0U; target_node < ROAD_GRAPH_NAV_NODE_COUNT; ++target_node) {
+            size_t manhattan;
+            size_t shortest_path;
+            size_t detour;
+            size_t score;
+
+            if (target_node == candidate.current_node) {
+                continue;
+            }
+            if (!road_graph_nav_node_is_open(&candidate, target_node)) {
+                continue;
+            }
+
+            candidate.target_node = target_node;
+            if (road_graph_nav_shortest_distance(&candidate, &shortest_path) != 0) {
+                continue;
+            }
+
+            manhattan = road_graph_nav_manhattan_distance(candidate.current_node, target_node);
+            detour = shortest_path > manhattan ? (shortest_path - manhattan) : 0U;
+            score = (detour * 256U) + (shortest_path * 16U) + manhattan;
+
+            if (detour >= ROAD_GRAPH_NAV_MIN_GOAL_DETOUR &&
+                shortest_path >= ROAD_GRAPH_NAV_MIN_GOAL_PATH &&
+                manhattan >= ROAD_GRAPH_NAV_MIN_GOAL_MANHATTAN) {
+                if (detour_count < ROAD_GRAPH_NAV_CANDIDATE_CAP) {
+                    detour_candidates[detour_count].scene = candidate;
+                    detour_candidates[detour_count].score = score;
+                    detour_count += 1U;
+                }
+                if (score > best_detour_score) {
+                    best_detour_score = score;
+                }
+            } else {
+                if (fallback_count < ROAD_GRAPH_NAV_CANDIDATE_CAP) {
+                    fallback_candidates[fallback_count].scene = candidate;
+                    fallback_candidates[fallback_count].score = score;
+                    fallback_count += 1U;
+                }
+                if (score > best_fallback_score) {
+                    best_fallback_score = score;
+                }
+            }
         }
     }
 
+    if (detour_count > 0U) {
+        size_t eligible_count = 0U;
+        size_t candidate_index;
+
+        for (candidate_index = 0U; candidate_index < detour_count; ++candidate_index) {
+            if (detour_candidates[candidate_index].score + ROAD_GRAPH_NAV_SCORE_BAND >= best_detour_score) {
+                detour_candidates[eligible_count] = detour_candidates[candidate_index];
+                eligible_count += 1U;
+            }
+        }
+
+        *scene = detour_candidates[
+            (size_t)(road_graph_nav_next_random(state) % (unsigned int)eligible_count)
+        ].scene;
+        return;
+    }
+    if (fallback_count > 0U) {
+        size_t eligible_count = 0U;
+        size_t candidate_index;
+
+        for (candidate_index = 0U; candidate_index < fallback_count; ++candidate_index) {
+            if (fallback_candidates[candidate_index].score + ROAD_GRAPH_NAV_SCORE_BAND >= best_fallback_score) {
+                fallback_candidates[eligible_count] = fallback_candidates[candidate_index];
+                eligible_count += 1U;
+            }
+        }
+
+        *scene = fallback_candidates[
+            (size_t)(road_graph_nav_next_random(state) % (unsigned int)eligible_count)
+        ].scene;
+        return;
+    }
+
     scene->blocked_mask = 0ULL;
-    scene->target_node = (scene->current_node + 1U) % ROAD_GRAPH_NAV_NODE_COUNT;
+    scene->target_node = (scene->current_node + ROAD_GRAPH_NAV_GRID_SIZE) % ROAD_GRAPH_NAV_NODE_COUNT;
     if (scene->target_node == scene->current_node) {
-        scene->target_node = 0U;
+        scene->target_node = (scene->current_node + 1U) % ROAD_GRAPH_NAV_NODE_COUNT;
     }
 }
 

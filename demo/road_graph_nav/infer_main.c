@@ -40,6 +40,62 @@ static int road_graph_nav_choose_best_action(
 }
 
 /**
+ * @brief Prefer the policy action, but fall back to the teacher action when the rollout stalls.
+ */
+static size_t road_graph_nav_choose_rollout_action(
+    const RoadGraphNavScene* scene,
+    const float* output,
+    size_t teacher_action,
+    const unsigned int* visit_counts,
+    int* out_used_teacher
+) {
+    size_t chosen_action = teacher_action;
+    size_t current_distance = 0U;
+    int policy_next_node;
+    int teacher_next_node;
+
+    if (out_used_teacher != NULL) {
+        *out_used_teacher = 0;
+    }
+
+    if (road_graph_nav_choose_best_action(scene, output, &chosen_action) != 0) {
+        if (out_used_teacher != NULL) {
+            *out_used_teacher = 1;
+        }
+        return teacher_action;
+    }
+
+    policy_next_node = road_graph_nav_next_node(scene, scene->current_node, chosen_action);
+    teacher_next_node = road_graph_nav_next_node(scene, scene->current_node, teacher_action);
+    if (policy_next_node < 0) {
+        if (out_used_teacher != NULL) {
+            *out_used_teacher = 1;
+        }
+        return teacher_action;
+    }
+    if (road_graph_nav_shortest_distance(scene, &current_distance) == 0) {
+        RoadGraphNavScene policy_scene = *scene;
+        size_t policy_distance = current_distance;
+
+        policy_scene.current_node = (size_t)policy_next_node;
+        if (road_graph_nav_shortest_distance(&policy_scene, &policy_distance) == 0) {
+            int policy_stalls =
+                (policy_distance >= current_distance) ||
+                (visit_counts[(size_t)policy_next_node] >= 2U);
+
+            if (policy_stalls && teacher_next_node >= 0) {
+                if (out_used_teacher != NULL) {
+                    *out_used_teacher = 1;
+                }
+                return teacher_action;
+            }
+        }
+    }
+
+    return chosen_action;
+}
+
+/**
  * @brief Rasterize the current road graph into a tiny ASCII map.
  */
 static void road_graph_nav_render_map(
@@ -164,6 +220,7 @@ int main(void) {
     for (step_index = 0U; step_index < ROAD_GRAPH_NAV_STEP_CAP && reached_goals < ROAD_GRAPH_NAV_GOAL_COUNT; ++step_index) {
         size_t chosen_action;
         size_t teacher_action = ROAD_GRAPH_NAV_UP;
+        int used_teacher = 0;
         int next_node;
 
         road_graph_nav_fill_input(input, &scene);
@@ -176,10 +233,13 @@ int main(void) {
             fprintf(stderr, "Scene became unreachable during rollout\n");
             break;
         }
-        if (road_graph_nav_choose_best_action(&scene, output, &chosen_action) != 0) {
-            fprintf(stderr, "No valid action is available from the current node\n");
-            break;
-        }
+        chosen_action = road_graph_nav_choose_rollout_action(
+            &scene,
+            output,
+            teacher_action,
+            visit_counts,
+            &used_teacher
+        );
 
         road_graph_nav_render_map(
             &scene,
@@ -190,6 +250,9 @@ int main(void) {
             chosen_action,
             teacher_action
         );
+        if (used_teacher) {
+            printf("Rollout controller: teacher action used to break a stall or loop.\n");
+        }
 
         next_node = road_graph_nav_next_node(&scene, scene.current_node, chosen_action);
         if (next_node < 0) {
