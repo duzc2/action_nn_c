@@ -8,7 +8,8 @@
  *
  * Usage pattern:
  * 1. Call demo_set_working_directory_to_executable() at program start.
- * 2. Use relative paths such as "../../data/infer.c".
+ * 2. Use relative paths that are anchored from the executable directory,
+ *    for example "../data/infer.c".
  * 3. The relative paths then resolve under build/demo/<name>/data/.
  */
 
@@ -71,7 +72,7 @@ static int demo_get_executable_dir(char* out_dir, size_t out_size) {
 /**
  * @brief Change current working directory to executable directory.
  *
- * After this call, relative paths like "../../data" resolve relative
+ * After this call, relative paths like "../data" resolve relative
  * to the executable location instead of the shell launch directory.
  *
  * @return 0 on success, negative on failure

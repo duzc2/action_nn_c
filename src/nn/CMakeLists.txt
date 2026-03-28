@@ -45,6 +45,11 @@ if(ACTION_C_ENABLE_NN_RNN)
     action_c_append_type_sources(rnn)
 endif()
 
+if(ACTION_C_ENABLE_NN_GNN)
+    list(APPEND NN_ENABLED_TYPES gnn)
+    action_c_append_type_sources(gnn)
+endif()
+
 if(NOT NN_ENABLED_TYPES)
     message(FATAL_ERROR "No network types are enabled for nn core")
 endif()

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file mlp_train_ops.c
  * @brief MLP training operations implementation
  *
@@ -58,19 +58,6 @@
  * or Adam moment buffers live.
  */
 
-/**
- * @brief Get inference layer at index
- *
- * @param infer_ctx Inference context
- * @param idx Layer index
- * @return Layer pointer or NULL
- */
-static MlpDenseLayer* get_layer(MlpInferContext* infer_ctx, size_t idx) {
-    if (infer_ctx == NULL || idx >= infer_ctx->layer_count) {
-        return NULL;
-    }
-    return infer_ctx->layers[idx];
-}
 
 /**
  * @brief Get layer configuration
@@ -97,113 +84,7 @@ static void get_layer_sizes(MlpInferContext* infer_ctx, size_t idx,
     *output_size = layer->output_size;
 }
 
-/**
- * @brief Allocate gradient buffer for one layer
- *
- * The allocation shape mirrors the associated dense layer exactly. Optimizer-
- * specific state is added only for the selected optimizer so lightweight SGD
- * configurations do not pay for Adam moment storage they never use.
- *
- * @param input_size Number of input features
- * @param output_size Number of output features
- * @param optimizer Optimizer type
- * @return Gradient buffer or NULL
- */
-static MlpLayerGrad* alloc_gradients(size_t input_size, size_t output_size,
-                                     MlpOptimizerType optimizer) {
-    MlpLayerGrad* grad;
-    size_t weight_count;
-    size_t bias_count;
 
-    if (input_size == 0 || output_size == 0) {
-        return NULL;
-    }
-
-    grad = (MlpLayerGrad*)calloc(1, sizeof(MlpLayerGrad));
-    if (grad == NULL) {
-        return NULL;
-    }
-
-    weight_count = input_size * output_size;
-    bias_count = output_size;
-
-    /* Always allocate the raw gradient tensors because every optimizer uses them. */
-    grad->weight_grad = (float*)calloc(weight_count, sizeof(float));
-    grad->bias_grad = (float*)calloc(bias_count, sizeof(float));
-
-    if (grad->weight_grad == NULL || grad->bias_grad == NULL) {
-        free(grad->weight_grad);
-        free(grad->bias_grad);
-        free(grad);
-        return NULL;
-    }
-
-    /* Allocate only the optimizer state required by the configured update rule. */
-    if (optimizer == MLP_OPT_SGD) {
-        grad->velocity_w = (float*)calloc(weight_count, sizeof(float));
-        grad->velocity_b = (float*)calloc(bias_count, sizeof(float));
-
-        if (grad->velocity_w == NULL || grad->velocity_b == NULL) {
-            free(grad->velocity_w);
-            free(grad->velocity_b);
-            free(grad->weight_grad);
-            free(grad->bias_grad);
-            free(grad);
-            return NULL;
-        }
-    } else if (optimizer == MLP_OPT_ADAM) {
-        grad->beta1 = ADAM_BETA1;
-        grad->beta2 = ADAM_BETA2;
-        grad->m_w = (float*)calloc(weight_count, sizeof(float));
-        grad->m_b = (float*)calloc(bias_count, sizeof(float));
-        grad->v_w = (float*)calloc(weight_count, sizeof(float));
-        grad->v_b = (float*)calloc(bias_count, sizeof(float));
-
-        if (grad->m_w == NULL || grad->m_b == NULL ||
-            grad->v_w == NULL || grad->v_b == NULL) {
-            free(grad->m_w);
-            free(grad->m_b);
-            free(grad->v_w);
-            free(grad->v_b);
-            free(grad->weight_grad);
-            free(grad->bias_grad);
-            free(grad);
-            return NULL;
-        }
-    }
-
-    return grad;
-}
-
-/**
- * @brief Free gradient buffer
- *
- * Free order mirrors allocation order: common gradient tensors first, then the
- * optimizer-specific state block chosen for this layer.
- *
- * @param grad Gradient buffer to free
- * @param optimizer Optimizer type
- */
-static void free_gradients(MlpLayerGrad* grad, MlpOptimizerType optimizer) {
-    if (grad == NULL) {
-        return;
-    }
-
-    free(grad->weight_grad);
-    free(grad->bias_grad);
-
-    if (optimizer == MLP_OPT_SGD) {
-        free(grad->velocity_w);
-        free(grad->velocity_b);
-    } else if (optimizer == MLP_OPT_ADAM) {
-        free(grad->m_w);
-        free(grad->m_b);
-        free(grad->v_w);
-        free(grad->v_b);
-    }
-
-    free(grad);
-}
 
 /**
  * @section mlp_train_loss_helpers Loss and local-derivative helpers
