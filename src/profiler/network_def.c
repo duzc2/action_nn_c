@@ -101,12 +101,24 @@ static void nn_subnet_def_clear_train_type_config(NNSubnetDef* subnet) {
  */
 NN_NetworkDef* nn_network_def_create(const char* name) {
     NN_NetworkDef* def = (NN_NetworkDef*)malloc(sizeof(NN_NetworkDef));
+    char* name_copy;
+    char* version_copy;
+
     if (def == NULL) {
         return NULL;
     }
 
-    def->network_name = name;
-    def->network_version = "1.0";
+    name_copy = nn_strdup_local(name);
+    version_copy = nn_strdup_local("1.0");
+    if ((name != NULL && name_copy == NULL) || version_copy == NULL) {
+        free(name_copy);
+        free(version_copy);
+        free(def);
+        return NULL;
+    }
+
+    def->network_name = name_copy;
+    def->network_version = version_copy;
     def->subnets = NULL;
     def->subnet_count = 0;
     def->connections = NULL;
@@ -152,6 +164,8 @@ void nn_network_def_free(NN_NetworkDef* def) {
         free(def->routings);
     }
 
+    free(def->network_name);
+    free(def->network_version);
     free(def);
 }
 
@@ -161,12 +175,12 @@ void nn_network_def_free(NN_NetworkDef* def) {
  * The container grows with realloc because the user-facing construction API is
  * append-oriented and the expected topology size is moderate.
  */
-void nn_network_def_add_subnet(NN_NetworkDef* network, NNSubnetDef* subnet) {
+int nn_network_def_add_subnet(NN_NetworkDef* network, NNSubnetDef* subnet) {
     NNSubnetDef** new_subnets;
     size_t new_count;
 
     if (network == NULL || subnet == NULL) {
-        return;
+        return -1;
     }
 
     new_count = network->subnet_count + 1;
@@ -176,23 +190,24 @@ void nn_network_def_add_subnet(NN_NetworkDef* network, NNSubnetDef* subnet) {
     );
 
     if (new_subnets == NULL) {
-        return;
+        return -1;
     }
 
     network->subnets = new_subnets;
     network->subnets[network->subnet_count] = subnet;
     network->subnet_count = new_count;
+    return 0;
 }
 
 /**
  * @brief Append a connection record to the root network definition.
  */
-void nn_network_def_add_connection(NN_NetworkDef* network, NNConnectionDef* connection) {
+int nn_network_def_add_connection(NN_NetworkDef* network, NNConnectionDef* connection) {
     NNConnectionDef** new_conns;
     size_t new_count;
 
     if (network == NULL || connection == NULL) {
-        return;
+        return -1;
     }
 
     new_count = network->connection_count + 1;
@@ -202,12 +217,13 @@ void nn_network_def_add_connection(NN_NetworkDef* network, NNConnectionDef* conn
     );
 
     if (new_conns == NULL) {
-        return;
+        return -1;
     }
 
     network->connections = new_conns;
     network->connections[network->connection_count] = connection;
     network->connection_count = new_count;
+    return 0;
 }
 
 /**
@@ -223,12 +239,25 @@ NNSubnetDef* nn_subnet_def_create(
     size_t output_size
 ) {
     NNSubnetDef* subnet = (NNSubnetDef*)malloc(sizeof(NNSubnetDef));
+    char* subnet_id_copy;
+    char* subnet_type_copy;
+
     if (subnet == NULL) {
         return NULL;
     }
 
-    subnet->subnet_id = subnet_id;
-    subnet->subnet_type = subnet_type;
+    subnet_id_copy = nn_strdup_local(subnet_id);
+    subnet_type_copy = nn_strdup_local(subnet_type);
+    if ((subnet_id != NULL && subnet_id_copy == NULL) ||
+        (subnet_type != NULL && subnet_type_copy == NULL)) {
+        free(subnet_id_copy);
+        free(subnet_type_copy);
+        free(subnet);
+        return NULL;
+    }
+
+    subnet->subnet_id = subnet_id_copy;
+    subnet->subnet_type = subnet_type_copy;
     subnet->input_layer_size = input_size;
     subnet->output_layer_size = output_size;
     subnet->hidden_layer_count = 0;
@@ -260,46 +289,49 @@ NNSubnetDef* nn_subnet_def_create(
  * The setter fully replaces previous storage so callers can rebuild a subnet
  * description incrementally without manually freeing old buffers first.
  */
-void nn_subnet_def_set_hidden_layers(
+int nn_subnet_def_set_hidden_layers(
     NNSubnetDef* subnet,
     size_t layer_count,
     const size_t* layer_sizes
 ) {
+    size_t* new_hidden_layer_sizes;
     size_t i;
 
     if (subnet == NULL) {
-        return;
+        return -1;
     }
 
-    if (subnet->hidden_layer_sizes != NULL) {
-        free(subnet->hidden_layer_sizes);
+    if (layer_count > 0U && layer_sizes == NULL) {
+        return -1;
     }
 
-    subnet->hidden_layer_count = layer_count;
-
-    if (layer_count > 0 && layer_sizes != NULL) {
-        subnet->hidden_layer_sizes = (size_t*)malloc(
-            layer_count * sizeof(size_t)
-        );
-        if (subnet->hidden_layer_sizes != NULL) {
-            for (i = 0; i < layer_count; i++) {
-                subnet->hidden_layer_sizes[i] = layer_sizes[i];
-            }
+    new_hidden_layer_sizes = NULL;
+    if (layer_count > 0U) {
+        new_hidden_layer_sizes = (size_t*)malloc(layer_count * sizeof(size_t));
+        if (new_hidden_layer_sizes == NULL) {
+            return -1;
         }
-    } else {
-        subnet->hidden_layer_sizes = NULL;
+
+        for (i = 0; i < layer_count; i++) {
+            new_hidden_layer_sizes[i] = layer_sizes[i];
+        }
     }
+
+    free(subnet->hidden_layer_sizes);
+    subnet->hidden_layer_sizes = new_hidden_layer_sizes;
+    subnet->hidden_layer_count = layer_count;
+    return 0;
 }
 
 /**
  * @brief Append a child subnet to a container subnet.
  */
-void nn_subnet_def_add_subnet(NNSubnetDef* parent, NNSubnetDef* child) {
+int nn_subnet_def_add_subnet(NNSubnetDef* parent, NNSubnetDef* child) {
     NNSubnetDef** new_subnets;
     size_t new_count;
 
     if (parent == NULL || child == NULL) {
-        return;
+        return -1;
     }
 
     new_count = parent->subnet_count + 1U;
@@ -309,12 +341,13 @@ void nn_subnet_def_add_subnet(NNSubnetDef* parent, NNSubnetDef* child) {
     );
 
     if (new_subnets == NULL) {
-        return;
+        return -1;
     }
 
     parent->subnets = new_subnets;
     parent->subnets[parent->subnet_count] = child;
     parent->subnet_count = new_count;
+    return 0;
 }
 
 /**
@@ -330,6 +363,9 @@ void nn_subnet_def_free(NNSubnetDef* subnet) {
     if (subnet->hidden_layer_sizes != NULL) {
         free(subnet->hidden_layer_sizes);
     }
+
+    free(subnet->subnet_id);
+    free(subnet->subnet_type);
 
     if (subnet->node_overrides != NULL) {
         free(subnet->node_overrides);
@@ -371,15 +407,36 @@ NNConnectionDef* nn_connection_def_create(
     size_t tgt_node
 ) {
     NNConnectionDef* conn = (NNConnectionDef*)malloc(sizeof(NNConnectionDef));
+    char* src_subnet_copy;
+    char* src_port_copy;
+    char* tgt_subnet_copy;
+    char* tgt_port_copy;
+
     if (conn == NULL) {
         return NULL;
     }
 
-    conn->source_subnet_id = src_subnet;
-    conn->source_port_name = src_port;
+    src_subnet_copy = nn_strdup_local(src_subnet);
+    src_port_copy = nn_strdup_local(src_port);
+    tgt_subnet_copy = nn_strdup_local(tgt_subnet);
+    tgt_port_copy = nn_strdup_local(tgt_port);
+    if ((src_subnet != NULL && src_subnet_copy == NULL) ||
+        (src_port != NULL && src_port_copy == NULL) ||
+        (tgt_subnet != NULL && tgt_subnet_copy == NULL) ||
+        (tgt_port != NULL && tgt_port_copy == NULL)) {
+        free(src_subnet_copy);
+        free(src_port_copy);
+        free(tgt_subnet_copy);
+        free(tgt_port_copy);
+        free(conn);
+        return NULL;
+    }
+
+    conn->source_subnet_id = src_subnet_copy;
+    conn->source_port_name = src_port_copy;
     conn->source_node_index = src_node;
-    conn->target_subnet_id = tgt_subnet;
-    conn->target_port_name = tgt_port;
+    conn->target_subnet_id = tgt_subnet_copy;
+    conn->target_port_name = tgt_port_copy;
     conn->target_node_index = tgt_node;
     conn->merge_strategy = NN_MERGE_SUM;
 
@@ -394,6 +451,10 @@ void nn_connection_def_free(NNConnectionDef* conn) {
         return;
     }
 
+    free(conn->source_subnet_id);
+    free(conn->source_port_name);
+    free(conn->target_subnet_id);
+    free(conn->target_port_name);
     free(conn);
 }
 

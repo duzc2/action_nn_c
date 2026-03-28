@@ -82,8 +82,8 @@ typedef struct {
  * Can be nested (subnet containing subnets).
  */
 typedef struct NNSubnetDef_tag {
-    const char* subnet_id;
-    const char* subnet_type;
+    char* subnet_id;
+    char* subnet_type;
     size_t input_layer_size;
     size_t output_layer_size;
     size_t hidden_layer_count;
@@ -113,11 +113,11 @@ typedef struct NNSubnetDef_tag {
  * Defines a connection from one subnet output to another subnet input.
  */
 typedef struct {
-    const char* source_subnet_id;
-    const char* source_port_name;
+    char* source_subnet_id;
+    char* source_port_name;
     size_t source_node_index;
-    const char* target_subnet_id;
-    const char* target_port_name;
+    char* target_subnet_id;
+    char* target_port_name;
     size_t target_node_index;
     NNMergeStrategy merge_strategy;
 } NNConnectionDef;
@@ -143,8 +143,8 @@ typedef struct {
  * Contains subnets and connections.
  */
 typedef struct {
-    const char* network_name;
-    const char* network_version;
+    char* network_name;
+    char* network_version;
     NNSubnetDef** subnets;
     size_t subnet_count;
     NNConnectionDef** connections;
@@ -172,16 +172,18 @@ void nn_network_def_free(NN_NetworkDef* def);
  *
  * @param network Network definition
  * @param subnet Subnet to add
+ * @return 0 on success, -1 on failure
  */
-void nn_network_def_add_subnet(NN_NetworkDef* network, NNSubnetDef* subnet);
+int nn_network_def_add_subnet(NN_NetworkDef* network, NNSubnetDef* subnet);
 
 /**
  * @brief Add a connection to network definition
  *
  * @param network Network definition
  * @param connection Connection to add
+ * @return 0 on success, -1 on failure
  */
-void nn_network_def_add_connection(NN_NetworkDef* network, NNConnectionDef* connection);
+int nn_network_def_add_connection(NN_NetworkDef* network, NNConnectionDef* connection);
 
 /**
  * @brief Create a subnet definition
@@ -205,8 +207,9 @@ NNSubnetDef* nn_subnet_def_create(
  * @param subnet Subnet definition
  * @param layer_count Number of hidden layers (can be 0)
  * @param layer_sizes Array of node counts for each hidden layer
+ * @return 0 on success, -1 on failure
  */
-void nn_subnet_def_set_hidden_layers(
+int nn_subnet_def_set_hidden_layers(
     NNSubnetDef* subnet,
     size_t layer_count,
     const size_t* layer_sizes
@@ -217,8 +220,9 @@ void nn_subnet_def_set_hidden_layers(
  *
  * @param parent Parent subnet that owns child subnets
  * @param child Child subnet to append
+ * @return 0 on success, -1 on failure
  */
-void nn_subnet_def_add_subnet(NNSubnetDef* parent, NNSubnetDef* child);
+int nn_subnet_def_add_subnet(NNSubnetDef* parent, NNSubnetDef* child);
 
 /**
  * @brief Free subnet definition

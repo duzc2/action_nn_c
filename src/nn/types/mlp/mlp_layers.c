@@ -27,10 +27,13 @@
  */
 static uint32_t pcg_rand(uint32_t* state) {
     uint64_t old_state = *state;
-    *state = old_state * 6364136223846793005ULL + 1442695040888963407ULL;
+    uint32_t shift;
+
+    *state = (uint32_t)(old_state * 6364136223846793005ULL + 1442695040888963407ULL);
     uint32_t xsh = (uint32_t)((old_state >> 28u) ^ old_state);
     uint32_t rot = (uint32_t)(old_state >> 59u);
-    return (xsh >> rot) | (xsh << ((-rot) & 31));
+    shift = (uint32_t)((32U - rot) & 31U);
+    return (xsh >> rot) | (xsh << shift);
 }
 
 /**

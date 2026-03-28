@@ -9,6 +9,7 @@ action_c_enable_network_types(TYPES mlp)
 action_c_add_core_subdirectory()
 
 add_executable(nested_nav_generate ../generate_main.c)
+action_c_apply_strict_warnings(nested_nav_generate)
 target_link_libraries(nested_nav_generate PRIVATE
     profiler_core
 )

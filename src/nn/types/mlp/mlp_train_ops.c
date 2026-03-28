@@ -404,6 +404,8 @@ static void update_adam(float* weights, float* bias,
     float beta1_pow_t;
     float beta2_pow_t;
 
+    (void)weight_decay;
+
     /* Caller supplies the global step so bias correction stays consistent. */
     beta1_pow_t = powf(grad->beta1, (float)t);
     beta2_pow_t = powf(grad->beta2, (float)t);
@@ -1048,8 +1050,6 @@ int nn_mlp_train_save_checkpoint(MlpTrainContext* ctx, FILE* fp, float best_loss
     MlpInferContext* infer_ctx;
     MlpCheckpointHeader header;
     size_t i;
-    size_t input_size;
-    size_t output_size;
     int rc;
 
     if (ctx == NULL || ctx->infer_ctx == NULL || fp == NULL) {

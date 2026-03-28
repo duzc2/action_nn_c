@@ -70,7 +70,10 @@ static NNSubnetDef* create_leaf_subnet(
         return NULL;
     }
 
-    nn_subnet_def_set_hidden_layers(subnet, hidden_layer_count, hidden_sizes);
+    if (nn_subnet_def_set_hidden_layers(subnet, hidden_layer_count, hidden_sizes) != 0) {
+        nn_subnet_def_free(subnet);
+        return NULL;
+    }
     fill_mlp_infer_config(&infer_config, input_size, output_size, hidden_layer_count, hidden_sizes);
     fill_mlp_train_config(&train_config, learning_rate, seed);
 
@@ -118,7 +121,10 @@ static int add_full_connection_block(
         if (connection == NULL) {
             return -1;
         }
-        nn_network_def_add_connection(network, connection);
+        if (nn_network_def_add_connection(network, connection) != 0) {
+            nn_connection_def_free(connection);
+            return -1;
+        }
     }
 
     return 0;
@@ -184,12 +190,77 @@ static NN_NetworkDef* create_nested_nav_network(void) {
         return NULL;
     }
 
-    nn_subnet_def_add_subnet(perception, target_encoder);
-    nn_subnet_def_add_subnet(perception, obstacle_encoder);
-    nn_subnet_def_add_subnet(planner, fusion_head);
-    nn_subnet_def_add_subnet(agent, perception);
-    nn_subnet_def_add_subnet(agent, planner);
-    nn_network_def_add_subnet(network, agent);
+    if (nn_subnet_def_add_subnet(perception, target_encoder) != 0) {
+        nn_subnet_def_free(agent);
+        nn_subnet_def_free(perception);
+        nn_subnet_def_free(planner);
+        nn_subnet_def_free(target_encoder);
+        nn_subnet_def_free(obstacle_encoder);
+        nn_subnet_def_free(fusion_head);
+        nn_network_def_free(network);
+        return NULL;
+    }
+    target_encoder = NULL;
+
+    if (nn_subnet_def_add_subnet(perception, obstacle_encoder) != 0) {
+        nn_subnet_def_free(agent);
+        nn_subnet_def_free(perception);
+        nn_subnet_def_free(planner);
+        nn_subnet_def_free(target_encoder);
+        nn_subnet_def_free(obstacle_encoder);
+        nn_subnet_def_free(fusion_head);
+        nn_network_def_free(network);
+        return NULL;
+    }
+    obstacle_encoder = NULL;
+
+    if (nn_subnet_def_add_subnet(planner, fusion_head) != 0) {
+        nn_subnet_def_free(agent);
+        nn_subnet_def_free(perception);
+        nn_subnet_def_free(planner);
+        nn_subnet_def_free(target_encoder);
+        nn_subnet_def_free(obstacle_encoder);
+        nn_subnet_def_free(fusion_head);
+        nn_network_def_free(network);
+        return NULL;
+    }
+    fusion_head = NULL;
+
+    if (nn_subnet_def_add_subnet(agent, perception) != 0) {
+        nn_subnet_def_free(agent);
+        nn_subnet_def_free(perception);
+        nn_subnet_def_free(planner);
+        nn_subnet_def_free(target_encoder);
+        nn_subnet_def_free(obstacle_encoder);
+        nn_subnet_def_free(fusion_head);
+        nn_network_def_free(network);
+        return NULL;
+    }
+    perception = NULL;
+
+    if (nn_subnet_def_add_subnet(agent, planner) != 0) {
+        nn_subnet_def_free(agent);
+        nn_subnet_def_free(perception);
+        nn_subnet_def_free(planner);
+        nn_subnet_def_free(target_encoder);
+        nn_subnet_def_free(obstacle_encoder);
+        nn_subnet_def_free(fusion_head);
+        nn_network_def_free(network);
+        return NULL;
+    }
+    planner = NULL;
+
+    if (nn_network_def_add_subnet(network, agent) != 0) {
+        nn_subnet_def_free(agent);
+        nn_subnet_def_free(perception);
+        nn_subnet_def_free(planner);
+        nn_subnet_def_free(target_encoder);
+        nn_subnet_def_free(obstacle_encoder);
+        nn_subnet_def_free(fusion_head);
+        nn_network_def_free(network);
+        return NULL;
+    }
+    agent = NULL;
 
     if (add_full_connection_block(
             network,

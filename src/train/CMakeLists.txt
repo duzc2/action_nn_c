@@ -1,6 +1,7 @@
 add_library(train_core STATIC
     train_runtime.c
 )
+action_c_apply_strict_warnings(train_core)
 
 target_include_directories(train_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}

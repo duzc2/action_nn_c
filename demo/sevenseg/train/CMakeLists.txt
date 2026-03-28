@@ -25,6 +25,7 @@ add_executable(sevenseg_train
     "${GENERATED_TRAIN_C}"
     "${GENERATED_WEIGHTS_SAVE_C}"
 )
+action_c_apply_strict_warnings(sevenseg_train)
 
 target_include_directories(sevenseg_train PRIVATE
     "${ACTION_C_ROOT}/src"

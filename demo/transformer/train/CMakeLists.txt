@@ -25,6 +25,7 @@ add_executable(transformer_train
     "${GENERATED_TRAIN_C}"
     "${GENERATED_WEIGHTS_SAVE_C}"
 )
+action_c_apply_strict_warnings(transformer_train)
 
 target_include_directories(transformer_train PRIVATE
     "${ACTION_C_ROOT}/src"

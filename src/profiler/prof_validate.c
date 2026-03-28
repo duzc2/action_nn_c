@@ -6,6 +6,7 @@
 #include "prof_validate.h"
 #include "prof_error.h"
 #include "prof_flatten.h"
+#include "prof_path.h"
 #include "nn_graph_contract.h"
 
 #include <stdlib.h>
@@ -25,6 +26,44 @@
  */
 static int is_empty(const char* str) {
     return str == NULL || str[0] == '\0';
+}
+
+/**
+ * @brief Validate one generated module path pair and prepare its parent folders.
+ */
+static ProfStatus validate_module_path(
+    const ProfModulePath* module_path,
+    const char* module_name,
+    ProfErrorBuffer* error
+) {
+    ProfStatus status;
+
+    if (module_path == NULL) {
+        return prof_error_set(error, PROF_STATUS_INVALID_ARGUMENT,
+            "Module path block '%s' is NULL", module_name);
+    }
+    if (is_empty(module_path->c_path)) {
+        return prof_error_set(error, PROF_STATUS_PATH_INVALID,
+            "Module '%s' is missing .c output path", module_name);
+    }
+    if (is_empty(module_path->h_path)) {
+        return prof_error_set(error, PROF_STATUS_PATH_INVALID,
+            "Module '%s' is missing .h output path", module_name);
+    }
+
+    status = prof_path_ensure_parent_directory(module_path->c_path);
+    if (status != PROF_STATUS_OK) {
+        return prof_error_set(error, status,
+            "Module '%s' .c output path is invalid: %s", module_name, module_path->c_path);
+    }
+
+    status = prof_path_ensure_parent_directory(module_path->h_path);
+    if (status != PROF_STATUS_OK) {
+        return prof_error_set(error, status,
+            "Module '%s' .h output path is invalid: %s", module_name, module_path->h_path);
+    }
+
+    return PROF_STATUS_OK;
 }
 
 /**
@@ -78,6 +117,8 @@ ProfStatus prof_validate_request(
     const ProfGenerateRequest* req,
     ProfErrorBuffer* error
 ) {
+    ProfStatus status;
+
     if (req == NULL) {
         return prof_error_set(error, PROF_STATUS_INVALID_ARGUMENT,
             "Request pointer is NULL");
@@ -86,6 +127,47 @@ ProfStatus prof_validate_request(
     if (req->network_def == NULL) {
         return prof_error_set(error, PROF_STATUS_INVALID_ARGUMENT,
             "Network definition is NULL");
+    }
+
+    if (req->error.buffer == NULL || req->error.capacity == 0U) {
+        return prof_error_set(error, PROF_STATUS_INVALID_ARGUMENT,
+            "Error buffer is invalid");
+    }
+
+    status = validate_module_path(&req->output_layout.tokenizer, "tokenizer", error);
+    if (status != PROF_STATUS_OK) {
+        return status;
+    }
+    status = validate_module_path(&req->output_layout.network_init, "network_init", error);
+    if (status != PROF_STATUS_OK) {
+        return status;
+    }
+    status = validate_module_path(&req->output_layout.weights_load, "weights_load", error);
+    if (status != PROF_STATUS_OK) {
+        return status;
+    }
+    status = validate_module_path(&req->output_layout.train, "train", error);
+    if (status != PROF_STATUS_OK) {
+        return status;
+    }
+    status = validate_module_path(&req->output_layout.weights_save, "weights_save", error);
+    if (status != PROF_STATUS_OK) {
+        return status;
+    }
+    status = validate_module_path(&req->output_layout.infer, "infer", error);
+    if (status != PROF_STATUS_OK) {
+        return status;
+    }
+
+    if (is_empty(req->output_layout.metadata_path)) {
+        return prof_error_set(error, PROF_STATUS_PATH_INVALID,
+            "Metadata output path is missing");
+    }
+
+    status = prof_path_ensure_parent_directory(req->output_layout.metadata_path);
+    if (status != PROF_STATUS_OK) {
+        return prof_error_set(error, status,
+            "Metadata output path is invalid: %s", req->output_layout.metadata_path);
     }
 
     return PROF_STATUS_OK;

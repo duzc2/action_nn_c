@@ -97,6 +97,7 @@ add_library(nn_infer_core STATIC
     ${NN_INFER_ENTRY_SOURCES}
     ${NN_LAYER_SOURCES}
 )
+action_c_apply_strict_warnings(nn_infer_core)
 target_include_directories(nn_infer_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/src/profiler
@@ -109,6 +110,7 @@ add_library(nn_train_core STATIC
     ${NN_TRAIN_OP_SOURCES}
     ${NN_TRAIN_ENTRY_SOURCES}
 )
+action_c_apply_strict_warnings(nn_train_core)
 target_include_directories(nn_train_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
 )

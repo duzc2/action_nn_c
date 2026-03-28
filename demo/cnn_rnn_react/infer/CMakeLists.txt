@@ -23,6 +23,7 @@ add_executable(cnn_rnn_react_infer
     "${GENERATED_INFER_C}"
     "${GENERATED_WEIGHTS_LOAD_C}"
 )
+action_c_apply_strict_warnings(cnn_rnn_react_infer)
 
 set_target_properties(cnn_rnn_react_infer PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Debug"

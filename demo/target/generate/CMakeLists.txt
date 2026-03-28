@@ -9,6 +9,7 @@ action_c_enable_network_types(TYPES mlp)
 action_c_add_core_subdirectory()
 
 add_executable(target_generate ../generate_main.c)
+action_c_apply_strict_warnings(target_generate)
 
 target_link_libraries(target_generate PRIVATE
     profiler_core

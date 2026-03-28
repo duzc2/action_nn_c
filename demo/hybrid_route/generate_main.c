@@ -71,7 +71,10 @@ static NNSubnetDef* create_fusion_leaf(void) {
         return NULL;
     }
 
-    nn_subnet_def_set_hidden_layers(subnet, 1U, hidden_sizes);
+    if (nn_subnet_def_set_hidden_layers(subnet, 1U, hidden_sizes) != 0) {
+        nn_subnet_def_free(subnet);
+        return NULL;
+    }
 
     (void)memset(&infer_config, 0, sizeof(infer_config));
     infer_config.input_size = HYBRID_ROUTE_EMBED_SIZE;
@@ -144,11 +147,60 @@ static NN_NetworkDef* create_hybrid_route_network(void) {
         return NULL;
     }
 
-    nn_subnet_def_add_subnet(semantic_group, transformer_leaf);
-    nn_subnet_def_add_subnet(planner_group, fusion_leaf);
-    nn_subnet_def_add_subnet(root, semantic_group);
-    nn_subnet_def_add_subnet(root, planner_group);
-    nn_network_def_add_subnet(network, root);
+    if (nn_subnet_def_add_subnet(semantic_group, transformer_leaf) != 0) {
+        nn_subnet_def_free(root);
+        nn_subnet_def_free(semantic_group);
+        nn_subnet_def_free(planner_group);
+        nn_subnet_def_free(transformer_leaf);
+        nn_subnet_def_free(fusion_leaf);
+        nn_network_def_free(network);
+        return NULL;
+    }
+    transformer_leaf = NULL;
+
+    if (nn_subnet_def_add_subnet(planner_group, fusion_leaf) != 0) {
+        nn_subnet_def_free(root);
+        nn_subnet_def_free(semantic_group);
+        nn_subnet_def_free(planner_group);
+        nn_subnet_def_free(transformer_leaf);
+        nn_subnet_def_free(fusion_leaf);
+        nn_network_def_free(network);
+        return NULL;
+    }
+    fusion_leaf = NULL;
+
+    if (nn_subnet_def_add_subnet(root, semantic_group) != 0) {
+        nn_subnet_def_free(root);
+        nn_subnet_def_free(semantic_group);
+        nn_subnet_def_free(planner_group);
+        nn_subnet_def_free(transformer_leaf);
+        nn_subnet_def_free(fusion_leaf);
+        nn_network_def_free(network);
+        return NULL;
+    }
+    semantic_group = NULL;
+
+    if (nn_subnet_def_add_subnet(root, planner_group) != 0) {
+        nn_subnet_def_free(root);
+        nn_subnet_def_free(semantic_group);
+        nn_subnet_def_free(planner_group);
+        nn_subnet_def_free(transformer_leaf);
+        nn_subnet_def_free(fusion_leaf);
+        nn_network_def_free(network);
+        return NULL;
+    }
+    planner_group = NULL;
+
+    if (nn_network_def_add_subnet(network, root) != 0) {
+        nn_subnet_def_free(root);
+        nn_subnet_def_free(semantic_group);
+        nn_subnet_def_free(planner_group);
+        nn_subnet_def_free(transformer_leaf);
+        nn_subnet_def_free(fusion_leaf);
+        nn_network_def_free(network);
+        return NULL;
+    }
+    root = NULL;
 
     for (node_index = 0U; node_index < HYBRID_ROUTE_EMBED_SIZE; ++node_index) {
         NNConnectionDef* connection = nn_connection_def_create(
@@ -163,7 +215,11 @@ static NN_NetworkDef* create_hybrid_route_network(void) {
             nn_network_def_free(network);
             return NULL;
         }
-        nn_network_def_add_connection(network, connection);
+        if (nn_network_def_add_connection(network, connection) != 0) {
+            nn_connection_def_free(connection);
+            nn_network_def_free(network);
+            return NULL;
+        }
     }
 
     return network;

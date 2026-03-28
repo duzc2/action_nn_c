@@ -7,8 +7,10 @@
 #include "weights_load.h"
 #include "../demo_runtime_paths.h"
 
+#include <ctype.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #define HYBRID_ROUTE_INPUT_SIZE 8U
 #define HYBRID_ROUTE_MAP_SIZE 11U
@@ -133,6 +135,38 @@ static void mark_reference_road(char map[HYBRID_ROUTE_MAP_SIZE][HYBRID_ROUTE_MAP
 }
 
 /**
+ * @brief Parse one CLI line into the fixed 8-float cue vector.
+ */
+static int read_input_vector(float input[HYBRID_ROUTE_INPUT_SIZE]) {
+    char line[256];
+    char* cursor;
+    char* end_ptr;
+    size_t index;
+
+    if (fgets(line, (int)sizeof(line), stdin) == NULL) {
+        return 0;
+    }
+
+    cursor = line;
+    for (index = 0U; index < HYBRID_ROUTE_INPUT_SIZE; ++index) {
+        input[index] = strtof(cursor, &end_ptr);
+        if (end_ptr == cursor) {
+            return 0;
+        }
+        cursor = end_ptr;
+    }
+
+    while (*cursor != '\0') {
+        if (!isspace((unsigned char)*cursor)) {
+            return 0;
+        }
+        ++cursor;
+    }
+
+    return 1;
+}
+
+/**
  * @brief Render the frame map and the human-readable intent.
  */
 static void render_context_map(
@@ -231,9 +265,7 @@ int main(void) {
     printf("Enter 8 floats:\n");
     printf("cue1_x cue1_y cue2_x cue2_y cue3_x cue3_y cue4_x cue4_y\n\n");
 
-    if (scanf("%f %f %f %f %f %f %f %f",
-            &input[0], &input[1], &input[2], &input[3],
-            &input[4], &input[5], &input[6], &input[7]) != 8) {
+    if (!read_input_vector(input)) {
         fprintf(stderr, "Invalid input\n");
         return 1;
     }

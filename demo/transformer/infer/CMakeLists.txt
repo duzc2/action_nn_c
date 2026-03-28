@@ -22,6 +22,7 @@ add_executable(transformer_infer
     "${GENERATED_INFER_C}"
     "${GENERATED_WEIGHTS_LOAD_C}"
 )
+action_c_apply_strict_warnings(transformer_infer)
 
 target_include_directories(transformer_infer PRIVATE
     "${ACTION_C_ROOT}/src"

@@ -9,6 +9,7 @@ action_c_enable_network_types(TYPES transformer)
 action_c_add_core_subdirectory()
 
 add_executable(transformer_generate ../generate_main.c)
+action_c_apply_strict_warnings(transformer_generate)
 
 target_link_libraries(transformer_generate PRIVATE
     profiler_core

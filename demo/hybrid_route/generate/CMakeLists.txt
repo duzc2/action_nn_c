@@ -9,6 +9,7 @@ action_c_enable_network_types(TYPES mlp transformer)
 action_c_add_core_subdirectory()
 
 add_executable(hybrid_route_generate ../generate_main.c)
+action_c_apply_strict_warnings(hybrid_route_generate)
 
 target_link_libraries(hybrid_route_generate PRIVATE
     profiler_core
