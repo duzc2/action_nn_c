@@ -25,6 +25,7 @@ add_executable(move_train
     "${GENERATED_TRAIN_C}"
     "${GENERATED_WEIGHTS_SAVE_C}"
 )
+action_c_apply_strict_warnings(move_train)
 
 target_include_directories(move_train PRIVATE
     "${ACTION_C_ROOT}/src"

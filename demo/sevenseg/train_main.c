@@ -75,8 +75,6 @@ int main(void) {
     printf("Training for %d epochs...\n\n", epoch_count);
 
     for (epoch = 0; epoch < (size_t)epoch_count; epoch++) {
-        float epoch_loss = 0.0f;
-
         for (digit = 0; digit < 10; digit++) {
             encode_digit((int)digit, input);
             memcpy(target, SEG_MAP[digit], sizeof(target));

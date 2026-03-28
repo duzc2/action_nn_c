@@ -92,7 +92,10 @@ static NNSubnetDef* create_cnn_leaf(void) {
         return NULL;
     }
 
-    nn_subnet_def_set_hidden_layers(subnet, 1U, hidden_sizes);
+    if (nn_subnet_def_set_hidden_layers(subnet, 1U, hidden_sizes) != 0) {
+        nn_subnet_def_free(subnet);
+        return NULL;
+    }
     fill_cnn_infer_config(&infer_config);
     fill_cnn_train_config(&train_config);
 
@@ -138,7 +141,10 @@ static NNSubnetDef* create_rnn_leaf(void) {
         return NULL;
     }
 
-    nn_subnet_def_set_hidden_layers(subnet, 1U, hidden_sizes);
+    if (nn_subnet_def_set_hidden_layers(subnet, 1U, hidden_sizes) != 0) {
+        nn_subnet_def_free(subnet);
+        return NULL;
+    }
     fill_rnn_infer_config(&infer_config);
     fill_rnn_train_config(&train_config);
 
@@ -199,11 +205,60 @@ static NN_NetworkDef* create_cnn_rnn_react_network(void) {
         return NULL;
     }
 
-    nn_subnet_def_add_subnet(perception, cnn_leaf);
-    nn_subnet_def_add_subnet(controller, rnn_leaf);
-    nn_subnet_def_add_subnet(agent, perception);
-    nn_subnet_def_add_subnet(agent, controller);
-    nn_network_def_add_subnet(network, agent);
+    if (nn_subnet_def_add_subnet(perception, cnn_leaf) != 0) {
+        nn_subnet_def_free(agent);
+        nn_subnet_def_free(perception);
+        nn_subnet_def_free(controller);
+        nn_subnet_def_free(cnn_leaf);
+        nn_subnet_def_free(rnn_leaf);
+        nn_network_def_free(network);
+        return NULL;
+    }
+    cnn_leaf = NULL;
+
+    if (nn_subnet_def_add_subnet(controller, rnn_leaf) != 0) {
+        nn_subnet_def_free(agent);
+        nn_subnet_def_free(perception);
+        nn_subnet_def_free(controller);
+        nn_subnet_def_free(cnn_leaf);
+        nn_subnet_def_free(rnn_leaf);
+        nn_network_def_free(network);
+        return NULL;
+    }
+    rnn_leaf = NULL;
+
+    if (nn_subnet_def_add_subnet(agent, perception) != 0) {
+        nn_subnet_def_free(agent);
+        nn_subnet_def_free(perception);
+        nn_subnet_def_free(controller);
+        nn_subnet_def_free(cnn_leaf);
+        nn_subnet_def_free(rnn_leaf);
+        nn_network_def_free(network);
+        return NULL;
+    }
+    perception = NULL;
+
+    if (nn_subnet_def_add_subnet(agent, controller) != 0) {
+        nn_subnet_def_free(agent);
+        nn_subnet_def_free(perception);
+        nn_subnet_def_free(controller);
+        nn_subnet_def_free(cnn_leaf);
+        nn_subnet_def_free(rnn_leaf);
+        nn_network_def_free(network);
+        return NULL;
+    }
+    controller = NULL;
+
+    if (nn_network_def_add_subnet(network, agent) != 0) {
+        nn_subnet_def_free(agent);
+        nn_subnet_def_free(perception);
+        nn_subnet_def_free(controller);
+        nn_subnet_def_free(cnn_leaf);
+        nn_subnet_def_free(rnn_leaf);
+        nn_network_def_free(network);
+        return NULL;
+    }
+    agent = NULL;
 
     /* Feed every per-frame CNN feature into the matching RNN time-step slot. */
     for (feature_index = 0U; feature_index < CNN_RNN_REACT_CNN_OUTPUT_SIZE; ++feature_index) {
@@ -219,7 +274,11 @@ static NN_NetworkDef* create_cnn_rnn_react_network(void) {
             nn_network_def_free(network);
             return NULL;
         }
-        nn_network_def_add_connection(network, connection);
+        if (nn_network_def_add_connection(network, connection) != 0) {
+            nn_connection_def_free(connection);
+            nn_network_def_free(network);
+            return NULL;
+        }
     }
 
     return network;

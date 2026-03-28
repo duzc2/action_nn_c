@@ -43,3 +43,11 @@ function(action_c_add_demo_clean_target DEMO_NAME)
         COMMENT "Clean generated and built files for ${DEMO_NAME} demo"
     )
 endfunction()
+
+function(action_c_apply_strict_warnings TARGET_NAME)
+    if(MSVC)
+        target_compile_options(${TARGET_NAME} PRIVATE /W4 /WX)
+    else()
+        target_compile_options(${TARGET_NAME} PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    endif()
+endfunction()

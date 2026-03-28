@@ -22,6 +22,7 @@ add_executable(hybrid_route_infer
     "${GENERATED_INFER_C}"
     "${GENERATED_WEIGHTS_LOAD_C}"
 )
+action_c_apply_strict_warnings(hybrid_route_infer)
 
 target_include_directories(hybrid_route_infer PRIVATE
     "${ACTION_C_ROOT}/src"

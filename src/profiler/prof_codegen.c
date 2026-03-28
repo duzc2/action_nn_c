@@ -328,33 +328,10 @@ static size_t prof_codegen_network_output_size(const ProfLeafGraph* graph) {
     return output_size;
 }
 
-/**
- * @brief Compute the packed output offset assigned to one sink leaf subnet.
- *
- * Non-sink leaves do not contribute directly to the external output tensor, so
- * the offset is defined only over sink leaves encountered in flattened order.
- */
-static size_t prof_codegen_sink_offset(const ProfLeafGraph* graph, size_t target_leaf_index) {
-    size_t offset = 0U;
-    size_t leaf_index;
-
-    if (graph == NULL) {
-        return 0U;
-    }
-
-    for (leaf_index = 0U; leaf_index < graph->leaf_subnets.count; ++leaf_index) {
-        NNSubnetDef* subnet = graph->leaf_subnets.items[leaf_index];
-        if (graph->outgoing_counts[leaf_index] != 0U || subnet == NULL) {
-            continue;
-        }
-        if (leaf_index == target_leaf_index) {
-            break;
-        }
-        offset += subnet->output_layer_size;
-    }
-
-    return offset;
-}
+enum {
+    GENERATED_CONST_TOPOLOGY_ORDER = 1U << 0,
+    GENERATED_CONST_EDGE_COUNTS = 1U << 1
+};
 
 /**
  * @brief Emit constants that describe flattened leaf ordering and graph sizes.
@@ -368,7 +345,8 @@ static int append_leaf_graph_constants(
     size_t buffer_capacity,
     size_t* position,
     const NN_NetworkDef* network,
-    const ProfLeafGraph* graph
+    const ProfLeafGraph* graph,
+    unsigned int flags
 ) {
     size_t leaf_index;
 
@@ -389,63 +367,54 @@ static int append_leaf_graph_constants(
     }
 
     /* Topology order drives execution order for graph-mode infer/train code. */
-    if (append_format(buffer, buffer_capacity, position,
-            "static const size_t g_topology_order[GENERATED_LEAF_COUNT] = {") != 0) {
-        return -1;
-    }
-    for (leaf_index = 0U; leaf_index < graph->leaf_subnets.count; ++leaf_index) {
-        if (append_format(buffer, buffer_capacity, position, "%s%zuU",
-                leaf_index == 0U ? "" : ", ", graph->topology_order[leaf_index]) != 0) {
+    if ((flags & GENERATED_CONST_TOPOLOGY_ORDER) != 0U) {
+        if (append_format(buffer, buffer_capacity, position,
+                "static const size_t g_topology_order[GENERATED_LEAF_COUNT] = {") != 0) {
             return -1;
         }
-    }
-    if (append_format(buffer, buffer_capacity, position, "};\n") != 0) {
-        return -1;
+        for (leaf_index = 0U; leaf_index < graph->leaf_subnets.count; ++leaf_index) {
+            if (append_format(buffer, buffer_capacity, position, "%s%zuU",
+                    leaf_index == 0U ? "" : ", ", graph->topology_order[leaf_index]) != 0) {
+                return -1;
+            }
+        }
+        if (append_format(buffer, buffer_capacity, position, "};\n") != 0) {
+            return -1;
+        }
     }
 
     /* Incoming and outgoing counts let generated helpers detect sources and sinks cheaply. */
-    if (append_format(buffer, buffer_capacity, position,
-            "static const size_t g_incoming_counts[GENERATED_LEAF_COUNT] = {") != 0) {
-        return -1;
-    }
-    for (leaf_index = 0U; leaf_index < graph->leaf_subnets.count; ++leaf_index) {
-        if (append_format(buffer, buffer_capacity, position, "%s%zuU",
-                leaf_index == 0U ? "" : ", ", graph->incoming_counts[leaf_index]) != 0) {
+    if ((flags & GENERATED_CONST_EDGE_COUNTS) != 0U) {
+        if (append_format(buffer, buffer_capacity, position,
+                "static const size_t g_incoming_counts[GENERATED_LEAF_COUNT] = {") != 0) {
             return -1;
         }
-    }
-    if (append_format(buffer, buffer_capacity, position, "};\n") != 0) {
-        return -1;
+        for (leaf_index = 0U; leaf_index < graph->leaf_subnets.count; ++leaf_index) {
+            if (append_format(buffer, buffer_capacity, position, "%s%zuU",
+                    leaf_index == 0U ? "" : ", ", graph->incoming_counts[leaf_index]) != 0) {
+                return -1;
+            }
+        }
+        if (append_format(buffer, buffer_capacity, position, "};\n") != 0) {
+            return -1;
+        }
+
+        if (append_format(buffer, buffer_capacity, position,
+                "static const size_t g_outgoing_counts[GENERATED_LEAF_COUNT] = {") != 0) {
+            return -1;
+        }
+        for (leaf_index = 0U; leaf_index < graph->leaf_subnets.count; ++leaf_index) {
+            if (append_format(buffer, buffer_capacity, position, "%s%zuU",
+                    leaf_index == 0U ? "" : ", ", graph->outgoing_counts[leaf_index]) != 0) {
+                return -1;
+            }
+        }
+        if (append_format(buffer, buffer_capacity, position, "};\n") != 0) {
+            return -1;
+        }
     }
 
-    if (append_format(buffer, buffer_capacity, position,
-            "static const size_t g_outgoing_counts[GENERATED_LEAF_COUNT] = {") != 0) {
-        return -1;
-    }
-    for (leaf_index = 0U; leaf_index < graph->leaf_subnets.count; ++leaf_index) {
-        if (append_format(buffer, buffer_capacity, position, "%s%zuU",
-                leaf_index == 0U ? "" : ", ", graph->outgoing_counts[leaf_index]) != 0) {
-            return -1;
-        }
-    }
-    if (append_format(buffer, buffer_capacity, position, "};\n") != 0) {
-        return -1;
-    }
-
-    /* Sink offsets pack multiple terminal leaves into one caller-visible output vector. */
-    if (append_format(buffer, buffer_capacity, position,
-            "static const size_t g_sink_output_offsets[GENERATED_LEAF_COUNT] = {") != 0) {
-        return -1;
-    }
-    for (leaf_index = 0U; leaf_index < graph->leaf_subnets.count; ++leaf_index) {
-        if (append_format(buffer, buffer_capacity, position, "%s%zuU",
-                leaf_index == 0U ? "" : ", ",
-                graph->outgoing_counts[leaf_index] == 0U ?
-                    prof_codegen_sink_offset(graph, leaf_index) : 0U) != 0) {
-            return -1;
-        }
-    }
-    if (append_format(buffer, buffer_capacity, position, "};\n\n") != 0) {
+    if (append_format(buffer, buffer_capacity, position, "\n") != 0) {
         return -1;
     }
 
@@ -580,17 +549,16 @@ static int append_train_type_blobs(
 }
 
 /**
- * @brief Write a generated header only when the caller configured a path for it.
+ * @brief Write one generated header to the caller-mandated destination path.
  *
- * Some outputs in the documented pipeline are optional. This helper preserves
- * that behaviour by treating a missing header path as a no-op instead of an
- * error, while still creating parent directories for explicit destinations.
+ * Header outputs are part of the required module contract, so a missing path is
+ * treated as a hard error instead of being silently skipped.
  */
 static ProfStatus write_optional_header(const char* path, const char* content) {
     ProfStatus st;
 
     if (path == NULL) {
-        return PROF_STATUS_OK;
+        return PROF_STATUS_PATH_INVALID;
     }
 
     st = prof_path_ensure_parent_directory(path);
@@ -1132,7 +1100,13 @@ ProfStatus prof_codegen_infer(ProfCodegenContext* ctx) {
 
     /* Append structural constants, routing tables, type blobs, and runtime helpers in order. */
     if (append_format(content, CODE_BUFFER_CAPACITY, &pos, "\n") != 0 ||
-        append_leaf_graph_constants(content, CODE_BUFFER_CAPACITY, &pos, network, &graph) != 0 ||
+        append_leaf_graph_constants(
+            content,
+            CODE_BUFFER_CAPACITY,
+            &pos,
+            network,
+            &graph,
+            GENERATED_CONST_TOPOLOGY_ORDER | GENERATED_CONST_EDGE_COUNTS) != 0 ||
         append_connection_table(content, CODE_BUFFER_CAPACITY, &pos, network, &graph) != 0 ||
         append_infer_type_blobs(content, CODE_BUFFER_CAPACITY, &pos, &graph) != 0 ||
         append_generated_infer_structs(content, CODE_BUFFER_CAPACITY, &pos) != 0 ||
@@ -1323,14 +1297,17 @@ ProfStatus prof_codegen_infer(ProfCodegenContext* ctx) {
             "int infer_auto_run(void* context, const void* input, void* output) {\n"
             "    InferContext* ctx = (InferContext*)context;\n"
             "    if (ctx == 0) return -1;\n"
-            "    if (GENERATED_LEAF_COUNT == 1U) {\n"
+            "#if GENERATED_LEAF_COUNT == 1U\n"
+            "    {\n"
             "        GeneratedInferLeaf* leaf = &ctx->leaves[0U];\n"
             "        if (leaf->contract == 0 || leaf->contract->auto_run == 0 || leaf->network_ctx == 0) return -1;\n"
             "        return leaf->contract->auto_run(leaf->network_ctx, input, output);\n"
             "    }\n"
+            "#else\n"
             "    if (generated_infer_execute_graph(ctx, (const float*)input) != 0) return -1;\n"
             "    generated_infer_collect_outputs(ctx, (float*)output);\n"
             "    return 0;\n"
+            "#endif\n"
             "}\n") != 0) {
         free(content);
         prof_leaf_graph_cleanup(&graph);
@@ -1647,7 +1624,13 @@ ProfStatus prof_codegen_train(ProfCodegenContext* ctx) {
 
     /* Append the same structural facts used by inference, then layer on train-only helpers. */
     if (append_format(content, CODE_BUFFER_CAPACITY, &pos, "\n") != 0 ||
-        append_leaf_graph_constants(content, CODE_BUFFER_CAPACITY, &pos, network, &graph) != 0 ||
+        append_leaf_graph_constants(
+            content,
+            CODE_BUFFER_CAPACITY,
+            &pos,
+            network,
+            &graph,
+            GENERATED_CONST_TOPOLOGY_ORDER | GENERATED_CONST_EDGE_COUNTS) != 0 ||
         append_connection_table(content, CODE_BUFFER_CAPACITY, &pos, network, &graph) != 0 ||
         append_train_type_blobs(content, CODE_BUFFER_CAPACITY, &pos, &graph) != 0 ||
         append_generated_train_infer_mirror(content, CODE_BUFFER_CAPACITY, &pos) != 0 ||
@@ -1770,10 +1753,11 @@ ProfStatus prof_codegen_train(ProfCodegenContext* ctx) {
             "int train_step(void* context, const void* input, const void* target) {\n"
             "    TrainContext* ctx = (TrainContext*)context;\n"
             "    if (ctx == 0) return -1;\n"
-            "    if (GENERATED_LEAF_COUNT == 1U) {\n"
-            "        if (ctx->leaves[0U].contract == 0 || ctx->leaves[0U].contract->step_with_data == 0 || ctx->leaves[0U].train_ctx == 0) return -1;\n"
-            "        if (ctx->leaves[0U].contract->step_with_data(ctx->leaves[0U].train_ctx, input, target) != 0) return -1;\n"
-            "    } else {\n"
+            "#if GENERATED_LEAF_COUNT == 1U\n"
+            "    if (ctx->leaves[0U].contract == 0 || ctx->leaves[0U].contract->step_with_data == 0 || ctx->leaves[0U].train_ctx == 0) return -1;\n"
+            "    if (ctx->leaves[0U].contract->step_with_data(ctx->leaves[0U].train_ctx, input, target) != 0) return -1;\n"
+            "#else\n"
+            "    {\n"
             "        InferContext* infer_ctx = (InferContext*)ctx->infer_owner;\n"
             "        const float* input_values = (const float*)input;\n"
             "        const float* target_values = (const float*)target;\n"
@@ -1807,6 +1791,7 @@ ProfStatus prof_codegen_train(ProfCodegenContext* ctx) {
             "            generated_train_route_input_gradients(ctx, infer_ctx, idx);\n"
             "        }\n"
             "    }\n"
+            "#endif\n"
             "    ctx->step_count += 1U;\n"
             "    return 0;\n}\n\n"
             "int train_epoch(void* context, int epoch) {\n"
@@ -1826,7 +1811,8 @@ ProfStatus prof_codegen_train(ProfCodegenContext* ctx) {
             "float train_get_loss(void* context) {\n"
             "    TrainContext* ctx = (TrainContext*)context;\n"
             "    if (ctx == 0) return 0.0f;\n"
-            "    if (GENERATED_LEAF_COUNT == 1U) {\n"
+            "#if GENERATED_LEAF_COUNT == 1U\n"
+            "    {\n"
             "        size_t epochs = 0U;\n"
             "        size_t steps = 0U;\n"
             "        float avg_loss = 0.0f;\n"
@@ -1835,7 +1821,10 @@ ProfStatus prof_codegen_train(ProfCodegenContext* ctx) {
             "        }\n"
             "        return avg_loss;\n"
             "    }\n"
-            "    return ctx->last_loss;\n}\n") != 0) {
+            "#else\n"
+            "    return ctx->last_loss;\n"
+            "#endif\n"
+            "}\n") != 0) {
         free(content);
         prof_leaf_graph_cleanup(&graph);
         return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
@@ -1900,14 +1889,26 @@ static int append_weight_runtime_arrays(
     size_t buffer_capacity,
     size_t* position,
     const NN_NetworkDef* network,
-    const ProfLeafGraph* graph
+    const ProfLeafGraph* graph,
+    int include_expected_leaf_metadata
 ) {
     size_t order_index;
 
-    /* Reuse the standard graph constants so save/load share the same leaf numbering. */
-    if (append_leaf_graph_constants(buffer, buffer_capacity, position, network, graph) != 0) {
+    /* Save/load only need topological ordering plus optional identity metadata. */
+    if (append_leaf_graph_constants(
+            buffer,
+            buffer_capacity,
+            position,
+            network,
+            graph,
+            GENERATED_CONST_TOPOLOGY_ORDER) != 0) {
         return -1;
     }
+
+    if (!include_expected_leaf_metadata) {
+        return 0;
+    }
+
     if (append_format(buffer, buffer_capacity, position,
             "static const char* g_expected_leaf_ids[GENERATED_LEAF_COUNT] = {") != 0) {
         return -1;
@@ -1996,7 +1997,13 @@ ProfStatus prof_codegen_weights_save(ProfCodegenContext* ctx) {
             "    return fopen(file_path, \"wb\");\n"
             "}\n"
             "#endif\n\n") != 0 ||
-        append_weight_runtime_arrays(content, CODE_BUFFER_CAPACITY, &pos, ctx->network, &graph) != 0 ||
+        append_weight_runtime_arrays(
+            content,
+            CODE_BUFFER_CAPACITY,
+            &pos,
+            ctx->network,
+            &graph,
+            0) != 0 ||
         append_format(content, CODE_BUFFER_CAPACITY, &pos,
             "int weights_save_to_file(void* infer_ctx, const char* file_path) {\n"
             "    FILE* fp;\n"
@@ -2129,7 +2136,13 @@ ProfStatus prof_codegen_weights_load(ProfCodegenContext* ctx) {
             "    return fopen(file_path, \"rb\");\n"
             "}\n"
             "#endif\n\n") != 0 ||
-        append_weight_runtime_arrays(content, CODE_BUFFER_CAPACITY, &pos, ctx->network, &graph) != 0 ||
+        append_weight_runtime_arrays(
+            content,
+            CODE_BUFFER_CAPACITY,
+            &pos,
+            ctx->network,
+            &graph,
+            1) != 0 ||
         append_format(content, CODE_BUFFER_CAPACITY, &pos,
             "static int generated_weights_load_internal(void* infer_ctx, const char* file_path, int validate_only) {\n"
             "    FILE* fp;\n"

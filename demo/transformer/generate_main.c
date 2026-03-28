@@ -32,7 +32,11 @@ static NN_NetworkDef* create_transformer_network(void) {
         return NULL;
     }
 
-    nn_subnet_def_set_hidden_layers(subnet, 2U, hidden_sizes);
+    if (nn_subnet_def_set_hidden_layers(subnet, 2U, hidden_sizes) != 0) {
+        nn_subnet_def_free(subnet);
+        nn_network_def_free(network);
+        return NULL;
+    }
     infer_config.model_dim = 32U;
     infer_config.seed = 42U;
     train_config.learning_rate = 0.002f;
@@ -56,7 +60,11 @@ static NN_NetworkDef* create_transformer_network(void) {
         nn_network_def_free(network);
         return NULL;
     }
-    nn_network_def_add_subnet(network, subnet);
+    if (nn_network_def_add_subnet(network, subnet) != 0) {
+        nn_subnet_def_free(subnet);
+        nn_network_def_free(network);
+        return NULL;
+    }
 
     return network;
 }

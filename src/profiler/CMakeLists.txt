@@ -9,6 +9,7 @@ add_library(profiler_core STATIC
     prof_validate.c
     prof_codegen.c
 )
+action_c_apply_strict_warnings(profiler_core)
 
 target_include_directories(profiler_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}

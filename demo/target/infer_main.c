@@ -3,6 +3,7 @@
 #include "../demo_runtime_paths.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 
 static void build_input(
     float* input,
@@ -19,6 +20,53 @@ static void build_input(
     input[4] = max_speed / 5.0f;
 }
 
+/**
+ * @brief Parse a single input line into five float values
+ *
+ * Uses C99 strtof-based parsing to avoid MSVC scanf deprecation warnings
+ * while keeping the console interface unchanged.
+ *
+ * @return 1 on success, 0 on parse failure
+ */
+static int parse_input_line(
+    const char* line,
+    float* target_x,
+    float* target_y,
+    float* current_x,
+    float* current_y,
+    float* max_speed
+) {
+    const char* cursor = line;
+    char* end_ptr = NULL;
+    float values[5];
+    size_t index;
+
+    for (index = 0; index < 5; ++index) {
+        values[index] = strtof(cursor, &end_ptr);
+        if (end_ptr == cursor) {
+            return 0;
+        }
+        cursor = end_ptr;
+    }
+
+    while (*cursor != '\0') {
+        if ((*cursor != ' ') &&
+            (*cursor != '\t') &&
+            (*cursor != '\r') &&
+            (*cursor != '\n')) {
+            return 0;
+        }
+        ++cursor;
+    }
+
+    *target_x = values[0];
+    *target_y = values[1];
+    *current_x = values[2];
+    *current_y = values[3];
+    *max_speed = values[4];
+    return 1;
+}
+
 int main(void) {
     const char* weights_file = "../../data/weights.bin";
     void* infer_ctx;
@@ -31,6 +79,7 @@ int main(void) {
     float output[2];
     float move_dx;
     float move_dy;
+    char line[256];
 
     if (demo_set_working_directory_to_executable() != 0) {
         fprintf(stderr, "failed to switch working directory to executable directory\n");
@@ -50,7 +99,18 @@ int main(void) {
     }
 
     printf("input: targetX targetY currentX currentY maxSpeed\n");
-    while (scanf("%f %f %f %f %f", &target_x, &target_y, &current_x, &current_y, &max_speed) == 5) {
+    while (fgets(line, sizeof(line), stdin) != NULL) {
+        if (!parse_input_line(
+                line,
+                &target_x,
+                &target_y,
+                &current_x,
+                &current_y,
+                &max_speed)) {
+            printf("invalid input, expected: targetX targetY currentX currentY maxSpeed\n");
+            continue;
+        }
+
         if (max_speed <= 0.0f) {
             printf("maxSpeed must be positive\n");
             continue;

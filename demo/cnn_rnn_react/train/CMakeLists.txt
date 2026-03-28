@@ -26,6 +26,7 @@ add_executable(cnn_rnn_react_train
     "${GENERATED_TRAIN_C}"
     "${GENERATED_WEIGHTS_SAVE_C}"
 )
+action_c_apply_strict_warnings(cnn_rnn_react_train)
 
 set_target_properties(cnn_rnn_react_train PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Debug"

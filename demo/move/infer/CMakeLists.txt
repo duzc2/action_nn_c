@@ -22,6 +22,10 @@ add_executable(move_infer
     "${GENERATED_INFER_C}"
     "${GENERATED_WEIGHTS_LOAD_C}"
 )
+action_c_apply_strict_warnings(move_infer)
+if(MSVC)
+    target_compile_definitions(move_infer PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()
 
 target_include_directories(move_infer PRIVATE
     "${ACTION_C_ROOT}/src"

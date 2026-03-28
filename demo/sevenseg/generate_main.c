@@ -43,7 +43,11 @@ static NN_NetworkDef* create_sevenseg_network(void) {
         return NULL;
     }
 
-    nn_subnet_def_set_hidden_layers(subnet, 2U, hidden_sizes);
+    if (nn_subnet_def_set_hidden_layers(subnet, 2U, hidden_sizes) != 0) {
+        nn_subnet_def_free(subnet);
+        nn_network_def_free(network);
+        return NULL;
+    }
     infer_config.input_size = 10U;
     infer_config.hidden_layer_count = 2U;
     infer_config.hidden_sizes[0] = 16U;
@@ -80,7 +84,11 @@ static NN_NetworkDef* create_sevenseg_network(void) {
         nn_network_def_free(network);
         return NULL;
     }
-    nn_network_def_add_subnet(network, subnet);
+    if (nn_network_def_add_subnet(network, subnet) != 0) {
+        nn_subnet_def_free(subnet);
+        nn_network_def_free(network);
+        return NULL;
+    }
 
     return network;
 }
