@@ -1,6 +1,6 @@
-# 代码质量检查报告
+﻿# 代码质量检查报告
 
-日期：2026-03-28
+日期：2026-03-29
 
 ## 1. 检查范围
 
@@ -8,9 +8,17 @@
   - `docs/user_manual.md`
   - `docs/developer_manual.md`
   - `docs/network_topology_requirements.md`
+  - `docs/network_design_manual.md`
   - `docs/profiler_api_contract_draft.md`
   - `docs/profiler_interface_draft.md`
   - `docs/profiler_development_plan.md`
+- 本次同步重点：
+  - `src/nn/types/gnn/*`
+  - `demo/road_graph_nav/*`
+  - `src/CMakeLists.txt`
+  - `src/nn/CMakeLists.txt`
+  - `demo/demo_common.cmake`
+  - `src/nn/types/mlp/mlp_train_ops.c`
 - 检查方式：
   - 静态代码审查
   - 目录/构建脚本一致性检查
@@ -19,23 +27,30 @@
 
 ## 2. 总体结论
 
-当前代码并非“不可用”，但距离仓库文档要求的目标状态还有明显差距。主要问题不是某一个算法文件写坏了，而是若干基础契约没有被真正落地：
+当前代码状态相比上一版报告，已经需要按下面的新口径同步：
 
-- 公共 API 对输入合同校验不完整
-- 网络定义构造 API 在内存失败场景下不能快速失败
-- 文档要求的构建质量门禁没有进入 CMake
-- 文档要求的网络类型覆盖远未完成
-- 注释密度显著低于文档要求
+- 仓库已新增一个受 CMake 开关控制、可注册接入主流程的 `gnn` 网络类型
+- `gnn` 的配置语义已从业务特化字段，收敛为更通用的图网络字段：
+  - 节点活动掩码
+  - 主/次锚点特征
+  - 聚合策略
+  - 读出策略
+- `road_graph_nav` 被实现为**通用 GNN + MLP 组合网络的一种使用示例**，而不是为 demo 特化的核心后端
+- 现有 `target` demo 的自动演示脚本与地图可视化结论仍然成立
 
-如果按文档作为交付标准，当前状态应判定为：**功能雏形已建立，但代码质量门禁与契约完整性未达标**。
+因此，当前状态更准确的结论应为：
+
+> **核心构建门禁与 profiler 契约保持改善，网络类型能力从 4 种提升到 5 种，并新增了通用化 GNN 后端及其组合示例；但从文档验收口径看，注释密度与网络类型覆盖仍未达标。**
 
 ## 3. 量化结果
 
 ### 3.1 注释密度
 
-- `src/`：60 个 `.c/.h` 文件，12735 行，注释行约 3091，注释占比约 **24.3%**
-- `demo/`：25 个 `.c/.h` 文件，5638 行，注释行约 618，注释占比约 **11.0%**
-- `src/ + demo/` 总体：85 个 `.c/.h` 文件，18373 行，注释行约 3709，注释占比约 **20.2%**
+按当前仓库静态统计：
+
+- `src/`：67 个 `.c/.h` 文件，14594 行，注释行约 3482，注释占比约 **23.9%**
+- `demo/`：32 个 `.c/.h` 文件，8133 行，注释行约 810，注释占比约 **10.0%**
+- `src/ + demo/` 总体：99 个 `.c/.h` 文件，22727 行，注释行约 4292，注释占比约 **18.9%**
 
 对照文档：
 
@@ -43,190 +58,137 @@
 - `docs/profiler_interface_draft.md`
 - `docs/profiler_api_contract_draft.md`
 
-上述文档都要求“源码与生成代码注释量不少于 50%”。按当前静态统计，差距较大。
+上述文档都要求“源码与生成代码注释量不少于 50%”。当前静态统计仍不满足该要求。
 
 ### 3.2 网络类型覆盖
 
 - 文档要求常见网络类型：**21** 种
-- 当前 `src/nn/types/` 实际存在：`cnn`、`mlp`、`rnn`、`transformer`，共 **4** 种
-- 缺失：`knn`、`rbfn`、`autoencoder`、`variational_autoencoder`、`tcn`、`gnn`、`ssm`、`mamba_s4`、`esn`、`siamese_triplet`、`unet_encoder_decoder_skip`、`capsule`、`kan`、`som`、`tree_random_forest_xgboost`、`svm`、`tiny_tcn`
+- 当前 `src/nn/types/` 实际存在：`cnn`、`gnn`、`mlp`、`rnn`、`transformer`，共 **5** 种
+- 仍缺失：`knn`、`rbfn`、`autoencoder`、`variational_autoencoder`、`tcn`、`ssm`、`mamba_s4`、`esn`、`siamese_triplet`、`unet_encoder_decoder_skip`、`capsule`、`kan`、`som`、`tree_random_forest_xgboost`、`svm`、`tiny_tcn`
 
-## 4. 主要问题
+## 4. 当前已同步修正的结论
 
-### 4.1 高优先级：公共 API 没有完整落实文档合同
+### 4.1 已同步：新增 GNN 网络类型并接入编译期开关/注册链路
 
-证据：
+当前已确认：
 
-- `src/profiler/prof_validate.c:77`
-- `src/profiler/prof_validate.c:86`
-- `src/profiler/prof_codegen.c:580`
-- `src/profiler/prof_codegen.c:583`
+- `src/CMakeLists.txt` 新增 `ACTION_C_ENABLE_NN_GNN`
+- `src/nn/CMakeLists.txt` 在开关启用时纳入 `gnn` 类型源码
+- `demo/demo_common.cmake` 已支持 demo 侧按类型启用 `gnn`
+- `src/nn/types/gnn/` 已包含：
+  - config-only 头文件
+  - infer/train 两套 ops
+  - infer/train 两个注册桥接文件
+  - 目录级说明文档
 
-问题说明：
+这与文档要求的“通过 CMake 开关 + 注册配置接入，不修改 profiler 主流程做特例”的方向保持一致。
 
-- `prof_validate_request()` 只校验了 `req` 和 `req->network_def`，没有校验文档明确要求的 `error.buffer`、`error.capacity`、`output_layout` 各模块路径。
-- `write_optional_header()` 将头文件路径视为可选；当 `h_path == NULL` 时直接返回成功。
+### 4.2 已同步：GNN 后端语义已从场景特化改为通用图结构语义
 
-影响：
+当前 `GnnConfig` 已不再使用“open/current/target”这类业务命名作为后端固有配置，而是改为：
 
-- 与 `docs/profiler_api_contract_draft.md`、`docs/profiler_interface_draft.md` 中“错误缓冲区必填、模块路径必填”的合同不一致。
-- 调用方即使传入不完整请求，也可能进入更深层逻辑，导致行为与文档预期不一致。
-- 生成物可能出现“部分模块成功、头文件缺失”的状态，不利于快速失败和定位。
+- `node_mask_feature_index`
+- `primary_anchor_feature_index`
+- `secondary_anchor_feature_index`
+- `aggregator_type`
+- `readout_type`
 
-建议：
+同时：
 
-- 在 `prof_validate_request()` 内集中校验 `ProfErrorBuffer` 与 `ProfOutputLayout`。
-- 明确 `h_path` 是否允许可选；如果文档不改，代码应改为强制必填并在首错处返回 `PROF_STATUS_PATH_INVALID`。
+- 推理侧支持 `GNN_READOUT_GRAPH_POOL`
+- 推理/训练共同支持 `GNN_READOUT_ANCHOR_SLOTS`
+- 权重保存/加载头部已同步校验聚合类型、读出类型与相关特征索引
 
-### 4.2 高优先级：网络定义构造 API 在分配失败时静默降级
+这使 `gnn` 更符合“`src/` 提供通用网络能力，demo 仅展示用法”的工程定位。
 
-证据：
+### 4.3 已同步：`road_graph_nav` 的定位已调整为“使用示例”
 
-- `src/profiler/network_def.c:164`
-- `src/profiler/network_def.c:178`
-- `src/profiler/network_def.c:190`
-- `src/profiler/network_def.c:204`
-- `src/profiler/network_def.c:297`
-- `src/profiler/network_def.c:311`
-- `src/profiler/network_def.c:263`
-- `src/profiler/network_def.c:278`
-- `src/profiler/network_def.c:281`
+当前 `demo/road_graph_nav/` 更准确的理解应为：
 
-问题说明：
+- 这是 `gnn(graph_encoder) -> mlp(decision_head)` 的组合网络示例
+- `open/current/target/x/y` 是**场景特征编码**，不是 GNN 后端内建语义
+- 示例通过 BFS 教师策略生成监督信号，用于说明图结构网络在局部导航场景中的一种可行用法
 
-- `nn_network_def_add_subnet()`、`nn_network_def_add_connection()`、`nn_subnet_def_add_subnet()` 在 `realloc()` 失败时直接 `return`，无错误码、无日志、无所有权说明。
-- `nn_subnet_def_set_hidden_layers()` 先写入 `hidden_layer_count`，再尝试 `malloc()`；若分配失败，会留下“层数 > 0 但数组为 NULL”的不一致状态。
+因此，这个目录的职责是“展示一个通用网络组合如何用于图结构导航”，而不是“为 demo 定制一个专用网络类型”。
 
-影响：
+### 4.4 仍然成立：严格告警 / 警告即错误门禁已落地
 
-- 违反文档要求的“首错即停、快速失败、返回可定位错误信息”。
-- 调用方无法知道网络图是否已被截断，容易产生不完整拓扑、隐藏泄漏和后续误报。
-- 当前验证逻辑确实能在部分场景里兜底报错，但报错位置已经偏后，不能替代构造阶段的失败传播。
+当前仍已确认：
 
-建议：
+- `src/CMakeLists.txt` 与 `demo/demo_common.cmake` 都定义了严格告警函数
+- MSVC 使用 `/W4 /WX`
+- 非 MSVC 使用 `-Wall -Wextra -Wpedantic -Werror`
 
-- 这几类构造函数统一改成返回状态码。
-- 明确“成功后谁拥有对象”的所有权语义。
-- 在内存失败时立即向上返回，不允许静默保持半有效对象。
+并且这些规则继续覆盖核心库与 demo 目标。这一点与文档要求保持一致。
 
-### 4.3 高优先级：网络/子网/连接字符串生命周期没有被接管
+## 5. 当前仍然存在的主要问题
 
-证据：
+### 5.1 高优先级：网络类型覆盖仍明显不足
 
-- `src/profiler/network_def.c:108`
-- `src/profiler/network_def.c:230`
-- `src/profiler/network_def.c:231`
-- `src/profiler/network_def.c:378`
-- `src/profiler/network_def.c:381`
-- `src/profiler/network_def.c:382`
-- `src/profiler/network_def.c:12`
-
-问题说明：
-
-- `nn_network_def_create()` 直接保存 `name` 指针。
-- `nn_subnet_def_create()` 直接保存 `subnet_id`、`subnet_type` 指针。
-- `nn_connection_def_create()` 直接保存源/目标子网与端口名指针。
-- 但同文件前面的注释明确写了“复制调用方提供的字符串可避免后续变更破坏网络描述”；实现和注释本身不一致。
+虽然当前已从 4 种提升到 5 种，但距离文档要求的 21 种常见网络类型仍有明显差距。
 
 影响：
 
-- 如果调用方传入的不是字符串字面量，而是栈内存、临时缓冲区或后续会被修改/释放的字符串，就存在悬垂指针和哈希/校验不稳定风险。
-- 这是公共建模 API 的生命周期缺陷，会直接影响 profiler 输入的可信度。
+- 当前实现范围仍小于文档承诺范围
+- 若按现有文档直接验收，覆盖度仍不足
 
-建议：
+### 5.2 高优先级：注释密度仍明显低于文档要求
 
-- 对 `network_name`、`subnet_id`、`subnet_type`、连接端点字符串统一做深拷贝。
-- 在 `free` 路径中同步释放这些字符串，保持完整所有权闭环。
+现状：
 
-### 4.4 中优先级：CMake 没有落地“最严格告警 + 告警即错误”
-
-证据：
-
-- `CMakeLists.txt:4`
-- `CMakeLists.txt:8`
-- `src/profiler/CMakeLists.txt:1`
-- `src/infer/CMakeLists.txt:1`
-- `src/train/CMakeLists.txt:1`
-- `src/nn/CMakeLists.txt:92`
-
-问题说明：
-
-- 当前 CMake 只设置了 `C99`，没有看到 `target_compile_options()`、`add_compile_options()`、`-Werror`、`/WX`、高等级警告开关。
-- 全局搜索也没有发现严格告警门禁配置。
+- `src/` 约 23.9%
+- `demo/` 约 10.0%
+- 总体约 18.9%
 
 影响：
 
-- 与文档“零警告、警告即错误”的质量要求不一致。
-- 即使代码当前可编译，也缺少把退化阻断在 CI/本地构建阶段的机制。
+- 与“源码与生成代码注释不少于 50%”的文档要求不一致
+- 新增 GNN 与组合示例虽然已补充部分结构性注释，但整体仍未达标
 
-建议：
+### 5.3 中优先级：GNN 当前仍是轻量版本，不等同于完整通用 GNN 家族覆盖
 
-- 按 clang/clang-cl 补齐严格警告选项。
-- 对 `nn_infer_core`、`nn_train_core`、`infer_core`、`train_core`、`profiler_core` 统一施加门禁。
+当前 `gnn` 已经完成“通用图网络叶子能力”的第一步，但它仍然是轻量后端，主要提供：
 
-### 4.5 中优先级：实现范围与文档要求差距很大
+- 固定节点数
+- 固定槽位邻接
+- 均值聚合
+- 图池化 / 锚点槽位两类读出
 
-证据：
+这满足了当前工程主链路接入要求，但不等于已经覆盖更广义的 GNN 变体能力。
 
-- `src/CMakeLists.txt:1`
-- `src/CMakeLists.txt:4`
-- `src/nn/CMakeLists.txt:28`
-- `src/nn/CMakeLists.txt:46`
-- `src/nn/types/` 当前仅有 4 个目录
+## 6. 正向观察
 
-问题说明：
+- `gnn` 已按文档要求接入 `src/nn/types/`、CMake 开关与注册桥接
+- GNN 配置字段已从业务语义收敛到通用图语义
+- 推理与训练读出逻辑已经同步到新的通用配置
+- 权重头部的保存/加载兼容性校验已与新字段保持一致
+- `road_graph_nav` 作为示例，已经比较清楚地体现了“通用叶子能力 + 场景特征编码 + 组合网络”的关系
+- 之前修复的严格告警门禁、target demo 可视化与脚本修复结论仍然有效
 
-- 文档把 21 个常见网络类型列为基线能力，但当前构建脚本和源码目录只覆盖 `mlp`、`transformer`、`cnn`、`rnn`。
+## 7. 建议的后续修复顺序
 
-影响：
+1. 继续决定并收敛“21 种网络类型”是当前阶段刚性要求还是阶段目标。
+2. 若当前文档口径不变，则继续扩展缺失网络类型；若要分阶段交付，应先明确文档阶段边界。
+3. 系统性补齐注释密度，优先覆盖：
+   - 所有权与生命周期
+   - profiler 输入/输出合同
+   - train/infer 依赖边界
+   - 新增 GNN 的读出/保存/加载一致性
+4. 在能力覆盖与注释密度稳定后，再继续扩展更丰富的 GNN 聚合/读出策略。
 
-- 这不是单纯“后续可扩展”的问题，而是当前实现与文档承诺之间存在显著缺口。
-- 若团队按文档开展扩展或验收，当前结构会产生预期偏差。
+## 8. 一致性结论
 
-建议：
+按当前仓库重新审视后的更准确结论是：
 
-- 如果文档是刚性要求，应把缺失类型列为显式 backlog，并调整验收口径。
-- 如果当前阶段只打算支持 4 种类型，应先收敛文档，不要让规范与实际长期背离。
+- 与文档**更趋一致**的部分：
+  - profiler 主链路下的编译期启用 / 注册接入思路
+  - 严格告警与警告即错误门禁
+  - 新增 `gnn` 网络类型的通用化定位
+  - `road_graph_nav` 作为使用示例而非核心后端特例
+- 与文档**仍不一致**的部分：
+  - 网络类型覆盖
+  - 注释密度
 
-### 4.6 中优先级：注释密度明显低于仓库要求
+因此，本次更新后的结论应为：
 
-证据样例：
-
-- `src/profiler/prof_codegen.c` 注释占比约 14.9%
-- `src/nn/types/rnn/rnn_train_ops.c` 注释占比约 10.1%
-- `demo/target/infer_main.c` 注释占比约 0%
-
-问题说明：
-
-- 从统计结果看，核心实现和 demo 代码都没有接近文档要求的 50% 注释密度。
-
-影响：
-
-- 与当前仓库制定的“高注释密度”规范不一致。
-- 后续继续扩展复杂拓扑和生成链路时，维护成本会上升。
-
-建议：
-
-- 不建议为满足数字机械灌注释，但至少应补齐模块边界、所有权、错误码、数据布局、生成流程的解释性注释。
-
-## 5. 正向观察
-
-- `src/profiler/profiler.c` 的主流程相对清晰，校验、哈希、生成三阶段划分明确。
-- `src/profiler/prof_validate.c` 的校验顺序整体符合“先浅后深、首错即停”的思路。
-- `src/nn/nn_infer_registry.c` 的静态注册表设计简单直接，启动路径可读性较好。
-
-## 6. 建议的修复顺序
-
-1. 先修 `network_def.c` 的失败传播和字符串所有权问题。
-2. 再补 `prof_validate_request()` 的合同校验，把 `error` 和 `output_layout` 检查前置。
-3. 把 CMake 质量门禁补齐，再考虑继续扩展网络类型。
-4. 最后再处理注释密度与文档收敛，避免“规范先写满、实现继续漂移”。
-
-## 7. 一致性结论
-
-按当前仓库文档作为唯一开发依据进行审查，结论如下：
-
-- 与文档**一致**的部分：项目已经具备 profiler、注册表、训练/推理核心分层的雏形。
-- 与文档**不一致**的部分：公共合同校验、失败处理、注释密度、编译质量门禁、网络类型覆盖。
-
-因此，本次审查结论是：**代码基础可继续迭代，但当前不能判定为满足文档要求的高质量实现。**
+> **当前仓库在“工程主链路正确性”和“新增 GNN 的通用化设计”方面已经前进了一步，但实现范围与注释密度仍未满足文档验收口径。**
