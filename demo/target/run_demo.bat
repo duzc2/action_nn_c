@@ -1,6 +1,21 @@
 @echo off
 setlocal
+goto :main
 
+:run_with_timeout
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$cmd = $env:RUN_COMMAND; $timeout = [int]$env:RUN_TIMEOUT; " ^
+  "$p = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $cmd -NoNewWindow -PassThru; " ^
+  "try { Wait-Process -Id $p.Id -Timeout $timeout -ErrorAction Stop; exit $p.ExitCode } " ^
+  "catch { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue; Write-Host '[target] process timeout'; exit 124 }"
+set "STEP_EXIT=%ERRORLEVEL%"
+exit /b %STEP_EXIT%
+
+:fail
+echo [target] demo failed
+exit /b 1
+
+:main
 set "SCRIPT_DIR=%~dp0"
 for %%I in ("%SCRIPT_DIR%..\..") do set "ACTION_C_ROOT=%%~fI"
 set "BUILD_ROOT=%ACTION_C_ROOT%\build\demo\target"
@@ -40,23 +55,10 @@ cmake --build "%BUILD_ROOT%\infer" --config Debug
 if errorlevel 1 goto :fail
 
 echo [target] step 6/6 run infer
-set "RUN_COMMAND=(echo 10 12 0 0 5) ^| ""%BUILD_ROOT%\infer\Debug\target_infer.exe"""
-set "RUN_TIMEOUT=30"
+set "RUN_COMMAND=""%BUILD_ROOT%\infer\Debug\target_infer.exe"""
+set "RUN_TIMEOUT=60"
 call :run_with_timeout
 if errorlevel 1 goto :fail
 
 echo [target] demo completed successfully
 exit /b 0
-
-:fail
-echo [target] demo failed
-exit /b 1
-
-:run_with_timeout
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$cmd = $env:RUN_COMMAND; $timeout = [int]$env:RUN_TIMEOUT; " ^
-  "$p = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $cmd -NoNewWindow -PassThru; " ^
-  "try { Wait-Process -Id $p.Id -Timeout $timeout -ErrorAction Stop; exit $p.ExitCode } " ^
-  "catch { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue; Write-Host '[target] process timeout'; exit 124 }"
-set "STEP_EXIT=%ERRORLEVEL%"
-exit /b %STEP_EXIT%

@@ -24,4 +24,4 @@ cmake -S "$SCRIPT_DIR/infer" -B "$BUILD_ROOT/infer"
 cmake --build "$BUILD_ROOT/infer" --config Debug
 
 echo "[target] step 6/6 run infer"
-printf '10 12 0 0\n' | "$BUILD_ROOT/infer/Debug/target_infer.exe"
+"$BUILD_ROOT/infer/Debug/target_infer.exe"
