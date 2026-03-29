@@ -102,7 +102,8 @@ static int rnn_backpropagate(
 ) {
     RnnInferContext* infer_ctx;
     const RnnConfig* config;
-    float dh_next[64U];
+    float* dh_next;
+    float* dh_current;
     size_t output_index;
     size_t hidden_index;
 
@@ -113,7 +114,12 @@ static int rnn_backpropagate(
     infer_ctx = context->infer_ctx;
     config = &infer_ctx->config;
     rnn_zero_gradients(context);
-    (void)memset(dh_next, 0, sizeof(dh_next));
+    dh_next = context->hidden_grad_a;
+    dh_current = context->hidden_grad_b;
+    if (dh_next == NULL || dh_current == NULL) {
+        return -1;
+    }
+    (void)memset(dh_next, 0, config->hidden_size * sizeof(float));
 
     if (input_gradient != NULL) {
         (void)memset(
@@ -152,7 +158,6 @@ static int rnn_backpropagate(
         const float* previous_hidden = step_index == 0U ?
             NULL :
             (context->hidden_cache + ((step_index - 1U) * config->hidden_size));
-        float dh_current[64U];
         size_t current_index;
 
         (void)memcpy(dh_current, dh_next, config->hidden_size * sizeof(float));
@@ -226,11 +231,15 @@ RnnTrainContext* nn_rnn_train_create(void* infer_ctx_ptr, const RnnTrainConfig* 
     context->hidden_bias_grad = (float*)calloc(infer_config->hidden_size, sizeof(float));
     context->hidden_to_output_grad = (float*)calloc(hidden_to_output_count, sizeof(float));
     context->output_bias_grad = (float*)calloc(infer_config->output_size, sizeof(float));
+    context->hidden_grad_a = (float*)calloc(infer_config->hidden_size, sizeof(float));
+    context->hidden_grad_b = (float*)calloc(infer_config->hidden_size, sizeof(float));
+    context->output_gradient_buffer = (float*)calloc(infer_config->output_size, sizeof(float));
 
     if (context->hidden_cache == NULL || context->output_linear_cache == NULL ||
         context->input_to_hidden_grad == NULL || context->hidden_to_hidden_grad == NULL ||
         context->hidden_bias_grad == NULL || context->hidden_to_output_grad == NULL ||
-        context->output_bias_grad == NULL) {
+        context->output_bias_grad == NULL || context->hidden_grad_a == NULL ||
+        context->hidden_grad_b == NULL || context->output_gradient_buffer == NULL) {
         nn_rnn_train_destroy(context);
         return NULL;
     }
@@ -253,6 +262,9 @@ void nn_rnn_train_destroy(RnnTrainContext* context) {
     free(context->hidden_bias_grad);
     free(context->hidden_to_output_grad);
     free(context->output_bias_grad);
+    free(context->hidden_grad_a);
+    free(context->hidden_grad_b);
+    free(context->output_gradient_buffer);
     free(context);
 }
 
@@ -299,7 +311,7 @@ int nn_rnn_train_step_with_output_gradient(
 int nn_rnn_train_step_with_data(RnnTrainContext* context, const float* input, const float* target) {
     RnnInferContext* infer_ctx;
     const RnnConfig* config;
-    float output_gradient[64U];
+    float* output_gradient;
     float loss = 0.0f;
     size_t output_index;
     int rc;
@@ -310,6 +322,10 @@ int nn_rnn_train_step_with_data(RnnTrainContext* context, const float* input, co
 
     infer_ctx = context->infer_ctx;
     config = &infer_ctx->config;
+    output_gradient = context->output_gradient_buffer;
+    if (output_gradient == NULL) {
+        return -1;
+    }
     rc = nn_rnn_forward_pass(
         infer_ctx,
         input,

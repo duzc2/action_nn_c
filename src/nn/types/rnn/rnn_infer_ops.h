@@ -27,6 +27,8 @@ typedef struct {
     float* output_bias;             /**< One scalar bias per output node. */
     float* input_buffer;            /**< Owned copy of the latest flattened input. */
     float* output_buffer;           /**< Owned copy of the latest output vector. */
+    float* hidden_state_a;          /**< Reusable scratch buffer for one hidden-state vector. */
+    float* hidden_state_b;          /**< Reusable scratch buffer for one hidden-state vector. */
 } RnnInferContext;
 
 RnnInferContext* nn_rnn_infer_create(void);

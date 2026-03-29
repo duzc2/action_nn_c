@@ -12,19 +12,21 @@
  * @brief Reconstruct a typed GNN inference context from codegen metadata.
  */
 static void* nn_type_gnn_infer_create_codegen(const NNCodegenInferConfig* config) {
-    GnnConfig gnn_config;
     GnnInferContext* context;
 
     if (config == 0 ||
         config->type_config == 0 ||
-        config->type_config_size != sizeof(GnnConfig) ||
+        config->type_config_size < sizeof(GnnConfig) ||
         config->type_config_type_name == 0 ||
         strcmp(config->type_config_type_name, "GnnConfig") != 0) {
         return 0;
     }
 
-    gnn_config = *(const GnnConfig*)config->type_config;
-    context = nn_gnn_infer_create_with_config(&gnn_config, config->seed);
+    context = nn_gnn_infer_create_with_config_blob(
+        config->type_config,
+        config->type_config_size,
+        config->seed
+    );
     if (context != 0) {
         context->expected_network_hash = config->network_hash;
         context->expected_layout_hash = config->layout_hash;

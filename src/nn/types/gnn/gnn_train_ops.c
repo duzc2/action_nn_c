@@ -1,6 +1,6 @@
-﻿/**
+/**
  * @file gnn_train_ops.c
- * @brief Tiny fixed-topology GNN training backend.
+ * @brief Dynamically configured GNN training backend.
  *
  * The training path mirrors the handwritten infer backend so profiler-generated
  * composed graphs can backpropagate through the GNN leaf just like they do for
@@ -39,6 +39,13 @@ static size_t gnn_total_input_size(const GnnConfig* config) {
  */
 static size_t gnn_stage_stride(const GnnConfig* config) {
     return config->node_count * config->hidden_size;
+}
+
+/**
+ * @brief Read one neighbor entry from the flattened topology table.
+ */
+static int gnn_neighbor_at(const GnnConfig* config, size_t node_index, size_t slot_index) {
+    return gnn_config_neighbor_row_view(config, node_index)[slot_index];
 }
 
 /**
@@ -158,7 +165,7 @@ static int gnn_get_active_neighbor(
         return -1;
     }
 
-    neighbor = config->neighbor_index[source_node][slot_index];
+    neighbor = gnn_neighbor_at(config, source_node, slot_index);
     if (neighbor < 0) {
         return -1;
     }
@@ -181,7 +188,7 @@ static void gnn_zero_gradients(GnnTrainContext* context) {
         return;
     }
 
-    config = &context->infer_ctx->config;
+    config = context->infer_ctx->config;
     input_weight_count = config->hidden_size * config->node_feature_size;
     hidden_weight_count = config->hidden_size * config->hidden_size;
     readout_weight_count = config->output_size * config->hidden_size;
@@ -209,7 +216,7 @@ static void gnn_apply_parameter_update(GnnTrainContext* context) {
     size_t value_index;
 
     infer_ctx = context->infer_ctx;
-    config = &infer_ctx->config;
+    config = infer_ctx->config;
     input_weight_count = config->hidden_size * config->node_feature_size;
     hidden_weight_count = config->hidden_size * config->hidden_size;
     readout_weight_count = config->output_size * config->hidden_size;
@@ -270,8 +277,12 @@ static int gnn_backpropagate(
     const float* final_stage;
     const float* current_stage;
     const float* previous_stage;
-    float stage_grad[GNN_MAX_NODE_COUNT * GNN_MAX_HIDDEN_SIZE];
-    float previous_stage_grad[GNN_MAX_NODE_COUNT * GNN_MAX_HIDDEN_SIZE];
+    float* stage_grad;
+    float* previous_stage_grad;
+    float* pooled_hidden = NULL;
+    float* pooled_grad = NULL;
+    float* aggregated = NULL;
+    float* aggregated_grad = NULL;
     size_t stage_stride;
     size_t node_index;
     size_t output_index;
@@ -283,10 +294,21 @@ static int gnn_backpropagate(
     }
 
     infer_ctx = context->infer_ctx;
-    config = &infer_ctx->config;
+    config = infer_ctx->config;
     stage_stride = gnn_stage_stride(config);
     gnn_zero_gradients(context);
-    (void)memset(stage_grad, 0, stage_stride * sizeof(float));
+    stage_grad = (float*)calloc(stage_stride, sizeof(float));
+    previous_stage_grad = (float*)calloc(stage_stride, sizeof(float));
+    aggregated = (float*)calloc(config->hidden_size, sizeof(float));
+    aggregated_grad = (float*)calloc(config->hidden_size, sizeof(float));
+    if (stage_grad == NULL || previous_stage_grad == NULL ||
+        aggregated == NULL || aggregated_grad == NULL) {
+        free(stage_grad);
+        free(previous_stage_grad);
+        free(aggregated);
+        free(aggregated_grad);
+        return -1;
+    }
 
     if (input_gradient != NULL) {
         (void)memset(input_gradient, 0, gnn_total_input_size(config) * sizeof(float));
@@ -295,12 +317,20 @@ static int gnn_backpropagate(
     final_stage = context->hidden_cache + (config->message_passes * stage_stride);
 
     if (config->readout_type == GNN_READOUT_GRAPH_POOL) {
-        float pooled_hidden[GNN_MAX_HIDDEN_SIZE];
-        float pooled_grad[GNN_MAX_HIDDEN_SIZE];
         size_t active_count;
 
+        pooled_hidden = (float*)calloc(config->hidden_size, sizeof(float));
+        pooled_grad = (float*)calloc(config->hidden_size, sizeof(float));
+        if (pooled_hidden == NULL || pooled_grad == NULL) {
+            free(stage_grad);
+            free(previous_stage_grad);
+            free(pooled_hidden);
+            free(pooled_grad);
+            free(aggregated);
+            free(aggregated_grad);
+            return -1;
+        }
         active_count = gnn_collect_graph_pool(config, input, final_stage, pooled_hidden);
-        (void)memset(pooled_grad, 0, config->hidden_size * sizeof(float));
 
         /* Graph-pool readout only depends on the pooled hidden state and readout_primary. */
         for (output_index = 0U; output_index < config->output_size; ++output_index) {
@@ -383,8 +413,6 @@ static int gnn_backpropagate(
         (void)memset(previous_stage_grad, 0, stage_stride * sizeof(float));
 
         for (node_index = 0U; node_index < config->node_count; ++node_index) {
-            float aggregated[GNN_MAX_HIDDEN_SIZE];
-            float aggregated_grad[GNN_MAX_HIDDEN_SIZE];
             size_t neighbor_count = 0U;
             size_t slot_index;
 
@@ -483,6 +511,12 @@ static int gnn_backpropagate(
     }
 
     gnn_apply_parameter_update(context);
+    free(stage_grad);
+    free(previous_stage_grad);
+    free(pooled_hidden);
+    free(pooled_grad);
+    free(aggregated);
+    free(aggregated_grad);
     return 0;
 }
 
@@ -501,7 +535,7 @@ GnnTrainContext* nn_gnn_train_create(void* infer_ctx_ptr, const GnnTrainConfig* 
         return NULL;
     }
 
-    infer_config = &infer_ctx->config;
+    infer_config = infer_ctx->config;
     input_weight_count = infer_config->hidden_size * infer_config->node_feature_size;
     hidden_weight_count = infer_config->hidden_size * infer_config->hidden_size;
     readout_weight_count = infer_config->output_size * infer_config->hidden_size;
@@ -600,7 +634,7 @@ int nn_gnn_train_step_with_output_gradient(
 int nn_gnn_train_step_with_data(GnnTrainContext* context, const float* input, const float* target) {
     GnnInferContext* infer_ctx;
     const GnnConfig* config;
-    float output_gradient[GNN_MAX_OUTPUT_SIZE];
+    float* output_gradient;
     float loss = 0.0f;
     size_t output_index;
     int rc;
@@ -610,7 +644,11 @@ int nn_gnn_train_step_with_data(GnnTrainContext* context, const float* input, co
     }
 
     infer_ctx = context->infer_ctx;
-    config = &infer_ctx->config;
+    config = infer_ctx->config;
+    output_gradient = (float*)calloc(config->output_size, sizeof(float));
+    if (output_gradient == NULL) {
+        return -1;
+    }
     rc = nn_gnn_forward_pass(
         infer_ctx,
         input,
@@ -618,6 +656,7 @@ int nn_gnn_train_step_with_data(GnnTrainContext* context, const float* input, co
         context->hidden_cache
     );
     if (rc != 0) {
+        free(output_gradient);
         return rc;
     }
 
@@ -631,9 +670,11 @@ int nn_gnn_train_step_with_data(GnnTrainContext* context, const float* input, co
 
     rc = gnn_backpropagate(context, input, output_gradient, NULL);
     if (rc != 0) {
+        free(output_gradient);
         return rc;
     }
 
+    free(output_gradient);
     context->total_steps += 1U;
     context->last_loss = loss / (float)config->output_size;
     context->cumulative_loss += context->last_loss;
@@ -678,8 +719,8 @@ int nn_gnn_train_step(void* ctx) {
         return -1;
     }
 
-    dummy_input = (float*)calloc(gnn_total_input_size(&context->infer_ctx->config), sizeof(float));
-    dummy_target = (float*)calloc(context->infer_ctx->config.output_size, sizeof(float));
+    dummy_input = (float*)calloc(gnn_total_input_size(context->infer_ctx->config), sizeof(float));
+    dummy_target = (float*)calloc(context->infer_ctx->config->output_size, sizeof(float));
     if (dummy_input == NULL || dummy_target == NULL) {
         free(dummy_input);
         free(dummy_target);
@@ -691,3 +732,4 @@ int nn_gnn_train_step(void* ctx) {
     free(dummy_target);
     return rc;
 }
+

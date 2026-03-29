@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file mlp_train_ops.c
  * @brief MLP training operations implementation
  *
@@ -354,7 +354,7 @@ static int train_forward_pass(MlpTrainContext* ctx,
     }
 
     /* Cache the original sample because backprop needs it later. */
-    memcpy(ctx->input_buffer, input, infer_ctx->config.input_size * sizeof(float));
+    memcpy(ctx->input_buffer, input, infer_ctx->config->input_size * sizeof(float));
 
     /* Materialize each layer activation so the backward pass can reuse it. */
     for (i = 0; i < infer_ctx->layer_count; i++) {
@@ -366,7 +366,7 @@ static int train_forward_pass(MlpTrainContext* ctx,
     /* Mirror the final activation into the infer context so shared callers see fresh outputs. */
     memcpy(infer_ctx->output_buffer,
            ctx->activations[infer_ctx->layer_count - 1U],
-           infer_ctx->config.output_size * sizeof(float));
+           infer_ctx->config->output_size * sizeof(float));
 
     return 0;
 }
@@ -406,7 +406,7 @@ static int train_backward_pass(
     }
 
     /* Seed the reverse sweep with dL/dY from the chosen loss function. */
-    memcpy(current_delta, output_gradient, infer_ctx->config.output_size * sizeof(float));
+    memcpy(current_delta, output_gradient, infer_ctx->config->output_size * sizeof(float));
 
     /* Walk layers from output back to input exactly once. */
     for (layer_cursor = infer_ctx->layer_count; layer_cursor > 0U; --layer_cursor) {
@@ -527,9 +527,9 @@ MlpTrainContext* nn_mlp_train_create(void* infer_ctx, const MlpTrainConfig* conf
     ctx->infer_ctx = infer_ctx;
     ctx->layer_count = mlp_ctx->layer_count;
 
-    max_size = mlp_ctx->config.input_size;
-    if (mlp_ctx->config.output_size > max_size) {
-        max_size = mlp_ctx->config.output_size;
+    max_size = mlp_ctx->config->input_size;
+    if (mlp_ctx->config->output_size > max_size) {
+        max_size = mlp_ctx->config->output_size;
     }
 
     /* Allocate all top-level arrays up front so creation fails early and cleanly. */
@@ -689,13 +689,13 @@ int nn_mlp_train_step_with_data(MlpTrainContext* ctx, const float* input, const 
     }
 
     /* Stage 2: compute loss and seed the output-layer gradient buffer. */
-    memcpy(ctx->target_buffer, target, infer_ctx->config.output_size * sizeof(float));
+    memcpy(ctx->target_buffer, target, infer_ctx->config->output_size * sizeof(float));
     if (ctx->config.loss_func == MLP_LOSS_MSE) {
         loss = mse_loss(infer_ctx->output_buffer, target, ctx->loss_buffer,
-                        infer_ctx->config.output_size);
+                        infer_ctx->config->output_size);
     } else {
         loss = cross_entropy_loss(infer_ctx->output_buffer, target, ctx->loss_buffer,
-                                  infer_ctx->config.output_size);
+                                  infer_ctx->config->output_size);
     }
 
     /* Stage 3: backpropagate dL/dY through the full network. */
@@ -707,15 +707,13 @@ int nn_mlp_train_step_with_data(MlpTrainContext* ctx, const float* input, const 
     /* Stage 4: update parameters and training statistics. */
     ctx->total_steps++;
     train_update(ctx, ctx->total_steps);
-
-    ctx->loss_history[ctx->loss_history_count % 100] = loss;
-    if (ctx->loss_history_count < 100) {
-        ctx->loss_history_count++;
-    }
+    ctx->last_loss = loss;
+    ctx->cumulative_loss += loss;
+    ctx->average_loss = ctx->cumulative_loss / (float)ctx->total_steps;
 
     /* Keep the borrowed infer context synchronized with the latest training pass. */
     if (infer_ctx != NULL) {
-        for (i = 0; i < infer_ctx->config.output_size; i++) {
+        for (i = 0; i < infer_ctx->config->output_size; i++) {
             infer_ctx->output_buffer[i] = ctx->activations[infer_ctx->layer_count - 1U][i];
         }
     }
@@ -755,10 +753,10 @@ int nn_mlp_train_step_ex(MlpTrainContext* ctx,
 
     if (ctx->config.loss_func == MLP_LOSS_MSE) {
         loss = mse_loss(infer_ctx->output_buffer, step_in->target, ctx->loss_buffer,
-                        infer_ctx->config.output_size);
+                        infer_ctx->config->output_size);
     } else {
         loss = cross_entropy_loss(infer_ctx->output_buffer, step_in->target, ctx->loss_buffer,
-                                  infer_ctx->config.output_size);
+                                  infer_ctx->config->output_size);
     }
 
     rc = train_backward_pass(ctx, ctx->loss_buffer, NULL);
@@ -770,17 +768,15 @@ int nn_mlp_train_step_ex(MlpTrainContext* ctx,
     train_update(ctx, ctx->total_steps);
 
     step_out->loss = loss;
+    ctx->last_loss = loss;
+    ctx->cumulative_loss += loss;
+    ctx->average_loss = ctx->cumulative_loss / (float)ctx->total_steps;
 
     /* Prediction export is optional so callers can avoid copies when they only need loss. */
     if (step_out->predictions != NULL && infer_ctx != NULL) {
-        for (i = 0; i < infer_ctx->config.output_size; i++) {
+        for (i = 0; i < infer_ctx->config->output_size; i++) {
             step_out->predictions[i] = infer_ctx->output_buffer[i];
         }
-    }
-
-    ctx->loss_history[ctx->loss_history_count % 100] = loss;
-    if (ctx->loss_history_count < 100) {
-        ctx->loss_history_count++;
     }
 
     return 0;
@@ -835,7 +831,6 @@ int nn_mlp_train_run_auto(MlpTrainContext* ctx, size_t epochs,
     MlpInferContext* infer_ctx;
     size_t e;
     size_t s;
-    size_t batch_size;
     int rc;
 
     if (ctx == NULL || input == NULL || target == NULL || sample_count == 0) {
@@ -843,44 +838,13 @@ int nn_mlp_train_run_auto(MlpTrainContext* ctx, size_t epochs,
     }
 
     infer_ctx = (MlpInferContext*)ctx->infer_ctx;
-    batch_size = ctx->config.batch_size;
-    if (batch_size == 0) {
-        batch_size = 1;
-    }
 
     /* Reuse the single-step path so optimizer behaviour stays centralized. */
     for (e = 0; e < epochs; e++) {
-        for (s = 0; s < sample_count; s += batch_size) {
-            size_t offset_in = s * infer_ctx->config.input_size;
-            size_t offset_out = s * infer_ctx->config.output_size;
-            size_t actual_batch = batch_size;
-
-            if (s + batch_size > sample_count) {
-                actual_batch = sample_count - s;
-            }
-
-            /* Single-sample batches can reuse the caller's memory directly. */
-            if (actual_batch == 1) {
-                rc = nn_mlp_train_step_with_data(ctx,
-                                       input + offset_in,
-                                       target + offset_out);
-            } else {
-                float batch_input[256];
-                float batch_target[256];
-                size_t k;
-
-                /* Materialize one contiguous temporary batch for the helper path. */
-                for (k = 0; k < actual_batch; k++) {
-                    memcpy(batch_input + k * infer_ctx->config.input_size,
-                           input + (s + k) * infer_ctx->config.input_size,
-                           infer_ctx->config.input_size * sizeof(float));
-                    memcpy(batch_target + k * infer_ctx->config.output_size,
-                           target + (s + k) * infer_ctx->config.output_size,
-                           infer_ctx->config.output_size * sizeof(float));
-                }
-
-                rc = nn_mlp_train_step_with_data(ctx, batch_input, batch_target);
-            }
+        for (s = 0; s < sample_count; ++s) {
+            size_t offset_in = s * infer_ctx->config->input_size;
+            size_t offset_out = s * infer_ctx->config->output_size;
+            rc = nn_mlp_train_step_with_data(ctx, input + offset_in, target + offset_out);
 
             if (rc != 0) {
                 return rc;
@@ -905,17 +869,27 @@ float nn_mlp_train_compute_loss(MlpTrainContext* ctx,
                                  const float* targets,
                                  size_t count) {
     float loss;
-    float grad[256];
+    size_t index;
 
-    if (ctx == NULL || predictions == NULL || targets == NULL) {
+    if (ctx == NULL || predictions == NULL || targets == NULL || count == 0U) {
         return 0.0f;
     }
 
     /* Use the same configured loss policy as the training step APIs. */
     if (ctx->config.loss_func == MLP_LOSS_MSE) {
-        loss = mse_loss(predictions, targets, grad, count);
+        loss = 0.0f;
+        for (index = 0U; index < count; ++index) {
+            float diff = predictions[index] - targets[index];
+            loss += diff * diff;
+        }
+        loss /= (float)count;
     } else {
-        loss = cross_entropy_loss(predictions, targets, grad, count);
+        loss = 0.0f;
+        for (index = 0U; index < count; ++index) {
+            float clip_pred = predictions[index] > 1e-7f ? predictions[index] : 1e-7f;
+            clip_pred = clip_pred < 1.0f - 1e-7f ? clip_pred : 1.0f - 1e-7f;
+            loss -= targets[index] * logf(clip_pred);
+        }
     }
 
     return loss;
@@ -1065,9 +1039,6 @@ void nn_mlp_train_get_stats(MlpTrainContext* ctx,
                              size_t* out_epochs,
                              size_t* out_steps,
                              float* out_avg_loss) {
-    size_t i;
-    float total;
-
     if (ctx == NULL) {
         return;
     }
@@ -1081,15 +1052,7 @@ void nn_mlp_train_get_stats(MlpTrainContext* ctx,
     }
 
     if (out_avg_loss != NULL) {
-        *out_avg_loss = 0.0f;
-        if (ctx->loss_history_count > 0) {
-            total = 0.0f;
-            /* Average only the populated portion of the ring buffer. */
-            for (i = 0; i < ctx->loss_history_count; i++) {
-                total += ctx->loss_history[i];
-            }
-            *out_avg_loss = total / (float)ctx->loss_history_count;
-        }
+        *out_avg_loss = ctx->average_loss;
     }
 }
 
@@ -1102,21 +1065,32 @@ void nn_mlp_train_get_stats(MlpTrainContext* ctx,
  */
 int nn_mlp_train_step(void* context) {
     MlpTrainContext* ctx;
-    float dummy_input[16];
-    float dummy_target[16];
-    size_t i;
+    MlpInferContext* infer_ctx;
+    float* dummy_input;
+    float* dummy_target;
+    int rc;
 
     if (context == NULL) {
         return -1;
     }
 
     ctx = (MlpTrainContext*)context;
-
-    /* The compatibility hook uses a fixed tiny sample purely to satisfy the registry signature. */
-    for (i = 0; i < 16; i++) {
-        dummy_input[i] = 0.0f;
-        dummy_target[i] = 0.0f;
+    infer_ctx = (MlpInferContext*)ctx->infer_ctx;
+    if (infer_ctx == NULL || infer_ctx->config == NULL) {
+        return -1;
     }
 
-    return nn_mlp_train_step_with_data(ctx, dummy_input, dummy_target);
+    dummy_input = (float*)calloc(infer_ctx->config->input_size, sizeof(float));
+    dummy_target = (float*)calloc(infer_ctx->config->output_size, sizeof(float));
+    if (dummy_input == NULL || dummy_target == NULL) {
+        free(dummy_input);
+        free(dummy_target);
+        return -1;
+    }
+
+    rc = nn_mlp_train_step_with_data(ctx, dummy_input, dummy_target);
+    free(dummy_input);
+    free(dummy_target);
+    return rc;
 }
+

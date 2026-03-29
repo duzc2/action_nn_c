@@ -23,6 +23,9 @@ typedef struct {
     float* hidden_bias_grad;        /**< Scratch gradient vector for hidden bias. */
     float* hidden_to_output_grad;   /**< Scratch gradient tensor for output weights. */
     float* output_bias_grad;        /**< Scratch gradient vector for output bias. */
+    float* hidden_grad_a;           /**< Reusable scratch gradient vector for one hidden state. */
+    float* hidden_grad_b;           /**< Reusable scratch gradient vector for one hidden state. */
+    float* output_gradient_buffer;  /**< Reusable scratch buffer for supervised output loss. */
     size_t total_steps;             /**< Count of successful training updates. */
     size_t total_epochs;            /**< Count reported through train_get_stats. */
     float cumulative_loss;          /**< Running loss accumulator for averages. */

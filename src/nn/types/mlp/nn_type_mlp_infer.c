@@ -17,20 +17,22 @@
  * @brief Reconstruct a typed MLP inference context from codegen metadata.
  */
 static void* nn_type_mlp_infer_create_codegen(const NNCodegenInferConfig* config) {
-    MlpConfig mlp_config;
     MlpInferContext* context;
 
-    /* The bridge only accepts the exact typed config emitted by profiler codegen. */
+    /* The bridge accepts any profiler-emitted MLP config blob whose type name matches. */
     if (config == 0 ||
         config->type_config == 0 ||
-        config->type_config_size != sizeof(MlpConfig) ||
+        config->type_config_size < sizeof(MlpConfig) ||
         config->type_config_type_name == 0 ||
         strcmp(config->type_config_type_name, "MlpConfig") != 0) {
         return 0;
     }
 
-    mlp_config = *(const MlpConfig*)config->type_config;
-    context = nn_mlp_infer_create_with_config(&mlp_config, config->seed);
+    context = nn_mlp_infer_create_with_config_blob(
+        config->type_config,
+        config->type_config_size,
+        config->seed
+    );
     if (context != 0) {
         context->expected_network_hash = config->network_hash;
         context->expected_layout_hash = config->layout_hash;

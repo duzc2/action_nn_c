@@ -27,7 +27,7 @@ typedef struct {
     const char* network_type;           /**< Semantic type name resolved via registry. */
     size_t input_size;                  /**< Executable input width for this leaf subnet. */
     size_t hidden_layer_count;          /**< Number of hidden layers materialized in config. */
-    size_t hidden_sizes[4];             /**< Fixed-size transport buffer for hidden widths. */
+    const size_t* hidden_sizes;         /**< Optional caller-owned hidden-width list, or NULL. */
     size_t output_size;                 /**< Executable output width for this leaf subnet. */
     uint64_t network_hash;              /**< Hash guarding cross-network weight reuse. */
     uint64_t layout_hash;               /**< Hash guarding parameter layout compatibility. */

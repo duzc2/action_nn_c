@@ -1,11 +1,15 @@
-﻿@echo off
+@echo off
 setlocal
 goto :main
 
 :run_with_timeout
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$cmd = $env:RUN_COMMAND; $timeout = [int]$env:RUN_TIMEOUT; " ^
-  "$p = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $cmd -NoNewWindow -PassThru; " ^
+  "$exe = $env:RUN_FILE; $args = $env:RUN_ARGS; $timeout = [int]$env:RUN_TIMEOUT; " ^
+  "if ([string]::IsNullOrWhiteSpace($args)) { " ^
+  "  $p = Start-Process -FilePath $exe -NoNewWindow -PassThru; " ^
+  "} else { " ^
+  "  $p = Start-Process -FilePath $exe -ArgumentList $args -NoNewWindow -PassThru; " ^
+  "} " ^
   "try { Wait-Process -Id $p.Id -Timeout $timeout -ErrorAction Stop; exit $p.ExitCode } " ^
   "catch { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue; Write-Host '[road_graph_nav] process timeout'; exit 124 }"
 set "STEP_EXIT=%ERRORLEVEL%"
@@ -39,6 +43,11 @@ taskkill /F /IM road_graph_nav_generate.exe >nul 2>&1
 taskkill /F /IM road_graph_nav_train.exe >nul 2>&1
 taskkill /F /IM road_graph_nav_infer.exe >nul 2>&1
 
+if exist "%BUILD_ROOT%\generate" rmdir /s /q "%BUILD_ROOT%\generate"
+if exist "%BUILD_ROOT%\train" rmdir /s /q "%BUILD_ROOT%\train"
+if exist "%BUILD_ROOT%\infer" rmdir /s /q "%BUILD_ROOT%\infer"
+if exist "%BUILD_ROOT%\data" rmdir /s /q "%BUILD_ROOT%\data"
+
 echo [road_graph_nav] step 1/6 configure + build generate
 cmake -S "%SCRIPT_DIR%generate" -B "%BUILD_ROOT%\generate" %CMAKE_COMMON%
 if errorlevel 1 goto :fail
@@ -46,10 +55,23 @@ cmake --build "%BUILD_ROOT%\generate"
 if errorlevel 1 goto :fail
 
 echo [road_graph_nav] step 2/6 run generate
-set "RUN_COMMAND=""%BUILD_ROOT%\generate\road_graph_nav_generate.exe"""
+set "RUN_FILE=%BUILD_ROOT%\generate\road_graph_nav_generate.exe"
+set "RUN_ARGS="
 set "RUN_TIMEOUT=%GENERATE_TIMEOUT%"
 call :run_with_timeout
 if errorlevel 1 goto :fail
+if not exist "%BUILD_ROOT%\data\infer.c" (
+  echo [road_graph_nav] missing generated file: %BUILD_ROOT%\data\infer.c
+  goto :fail
+)
+if not exist "%BUILD_ROOT%\data\train.c" (
+  echo [road_graph_nav] missing generated file: %BUILD_ROOT%\data\train.c
+  goto :fail
+)
+if not exist "%BUILD_ROOT%\data\weights_save.c" (
+  echo [road_graph_nav] missing generated file: %BUILD_ROOT%\data\weights_save.c
+  goto :fail
+)
 
 echo [road_graph_nav] step 3/6 configure + build train
 cmake -S "%SCRIPT_DIR%train" -B "%BUILD_ROOT%\train" %CMAKE_COMMON%
@@ -58,7 +80,8 @@ cmake --build "%BUILD_ROOT%\train"
 if errorlevel 1 goto :fail
 
 echo [road_graph_nav] step 4/6 run train
-set "RUN_COMMAND=""%BUILD_ROOT%\train\road_graph_nav_train.exe"""
+set "RUN_FILE=%BUILD_ROOT%\train\road_graph_nav_train.exe"
+set "RUN_ARGS="
 set "RUN_TIMEOUT=%TRAIN_TIMEOUT%"
 call :run_with_timeout
 if errorlevel 1 goto :fail
@@ -70,7 +93,8 @@ cmake --build "%BUILD_ROOT%\infer"
 if errorlevel 1 goto :fail
 
 echo [road_graph_nav] step 6/6 run infer
-set "RUN_COMMAND=""%BUILD_ROOT%\infer\road_graph_nav_infer.exe"""
+set "RUN_FILE=%BUILD_ROOT%\infer\road_graph_nav_infer.exe"
+set "RUN_ARGS="
 set "RUN_TIMEOUT=%INFER_TIMEOUT%"
 call :run_with_timeout
 if errorlevel 1 goto :fail

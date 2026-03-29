@@ -37,8 +37,14 @@ static NN_NetworkDef* create_transformer_network(void) {
         nn_network_def_free(network);
         return NULL;
     }
+    (void)memset(&infer_config, 0, sizeof(infer_config));
+    infer_config.vocab_size = 257U;
     infer_config.model_dim = 32U;
+    infer_config.max_seq_length = 64U;
+    infer_config.max_response_classes = 64U;
+    infer_config.max_text_length = 256U;
     infer_config.seed = 42U;
+    (void)memset(&train_config, 0, sizeof(train_config));
     train_config.learning_rate = 0.002f;
     if (nn_subnet_def_set_infer_type_config(
             subnet,

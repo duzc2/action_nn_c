@@ -26,16 +26,17 @@ static void* nn_type_transformer_infer_create_codegen(const NNCodegenInferConfig
     }
 
     model_config = *(const TransformerModelConfig*)config->type_config;
-    if (config->input_size > model_config.model_dim ||
-        config->output_size > model_config.model_dim) {
-        return 0;
-    }
     context = (TransformerInferContext*)calloc(1U, sizeof(TransformerInferContext));
     if (context == 0) {
         return 0;
     }
-    if (nn_transformer_init_parameters(context, model_config.model_dim, model_config.seed) != 0) {
-        free(context);
+    if (nn_transformer_init_parameters(
+            context,
+            &model_config,
+            config->input_size,
+            config->output_size
+        ) != 0) {
+        nn_transformer_infer_destroy(context);
         return 0;
     }
 
@@ -50,7 +51,7 @@ static void* nn_type_transformer_infer_create_codegen(const NNCodegenInferConfig
  * @brief Release a transformer inference context created for generated code.
  */
 static void nn_type_transformer_infer_destroy_codegen(void* context) {
-    free(context);
+    nn_transformer_infer_destroy(context);
 }
 
 /**
@@ -65,7 +66,7 @@ static int nn_type_transformer_infer_auto_run_codegen(void* context, const void*
 
     infer_ctx->question = (const char*)input;
     infer_ctx->answer = (char*)output;
-    infer_ctx->answer_capacity = 256U;
+    infer_ctx->answer_capacity = infer_ctx->max_text_length;
     return nn_transformer_infer_step(infer_ctx);
 }
 
