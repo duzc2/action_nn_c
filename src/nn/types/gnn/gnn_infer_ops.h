@@ -13,10 +13,11 @@
 #include <stdio.h>
 
 /**
- * @brief Inference context for the tiny fixed-topology GNN leaf.
+ * @brief Inference context for the dynamically configured GNN leaf.
  */
 typedef struct {
-    GnnConfig config;               /**< Reconstructed type-specific configuration blob. */
+    GnnConfig* config;              /**< Owned reconstructed type-specific configuration blob. */
+    size_t config_size;             /**< Byte size of the owned configuration blob. */
     uint64_t expected_network_hash; /**< Hash guard for cross-network weight reuse. */
     uint64_t expected_layout_hash;  /**< Hash guard for parameter layout compatibility. */
     uint32_t rng_state;             /**< Deterministic RNG state for parameter initialization. */
@@ -35,6 +36,11 @@ typedef struct {
 
 GnnInferContext* nn_gnn_infer_create(void);
 GnnInferContext* nn_gnn_infer_create_with_config(const GnnConfig* config, uint32_t seed);
+GnnInferContext* nn_gnn_infer_create_with_config_blob(
+    const void* config_data,
+    size_t config_size,
+    uint32_t seed
+);
 void nn_gnn_infer_destroy(void* context);
 void nn_gnn_infer_set_input(void* context, const float* input, size_t size);
 void nn_gnn_infer_get_output(void* context, float* output, size_t size);

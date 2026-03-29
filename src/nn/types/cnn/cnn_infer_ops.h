@@ -29,6 +29,7 @@ typedef struct {
     float* projection_bias;         /**< One scalar bias per projected feature. */
     float* input_buffer;            /**< Owned copy of the latest flattened input. */
     float* output_buffer;           /**< Owned copy of the latest flattened output. */
+    float* pooled_values;           /**< Reusable scratch buffer for pooled filter responses. */
 } CnnInferContext;
 
 CnnInferContext* nn_cnn_infer_create(void);

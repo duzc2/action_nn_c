@@ -21,7 +21,8 @@
  * @brief MLP inference context
  */
 typedef struct {
-    MlpConfig config;
+    MlpConfig* config;
+    size_t config_size;
     MlpDenseLayer** layers;
     size_t layer_count;
     size_t max_buffer_size;
@@ -53,6 +54,11 @@ MlpInferContext* nn_mlp_infer_create(void);
  * @return New context, or NULL on failure
  */
 MlpInferContext* nn_mlp_infer_create_with_config(const MlpConfig* config, uint32_t seed);
+MlpInferContext* nn_mlp_infer_create_with_config_blob(
+    const void* config_data,
+    size_t config_size,
+    uint32_t seed
+);
 
 /**
  * @brief Free MLP inference context

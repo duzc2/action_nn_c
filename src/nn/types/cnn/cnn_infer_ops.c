@@ -226,10 +226,12 @@ CnnInferContext* nn_cnn_infer_create_with_config(const CnnConfig* config, uint32
         config->sequence_length * config->feature_size,
         sizeof(float)
     );
+    context->pooled_values = (float*)calloc(config->filter_count, sizeof(float));
 
     if (context->conv_weights == NULL || context->conv_bias == NULL ||
         context->projection_weights == NULL || context->projection_bias == NULL ||
-        context->input_buffer == NULL || context->output_buffer == NULL) {
+        context->input_buffer == NULL || context->output_buffer == NULL ||
+        context->pooled_values == NULL) {
         nn_cnn_infer_destroy(context);
         return NULL;
     }
@@ -267,6 +269,7 @@ void nn_cnn_infer_destroy(void* ctx) {
     free(context->projection_bias);
     free(context->input_buffer);
     free(context->output_buffer);
+    free(context->pooled_values);
     free(context);
 }
 
@@ -338,7 +341,11 @@ int nn_cnn_forward_pass(
     /* Each step reuses the same filters so the CNN acts as a shared frame encoder. */
     for (step_index = 0U; step_index < config->sequence_length; ++step_index) {
         const float* frame = input + (step_index * frame_stride);
-        float pooled_values[64U];
+        float* pooled_values = context->pooled_values;
+
+        if (pooled_values == NULL) {
+            return -1;
+        }
 
         for (filter_index = 0U; filter_index < config->filter_count; ++filter_index) {
             float pooled_linear = 0.0f;

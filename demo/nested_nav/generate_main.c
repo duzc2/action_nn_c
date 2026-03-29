@@ -9,6 +9,7 @@
 #include "../demo_runtime_paths.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define NESTED_NAV_INPUT_SIZE 10U
@@ -17,24 +18,31 @@
 #define FUSION_INPUT_SIZE (TARGET_ENCODER_OUTPUT_SIZE + OBSTACLE_ENCODER_OUTPUT_SIZE)
 
 static void fill_mlp_infer_config(
-    MlpConfig* config,
+    MlpConfig** config,
     size_t input_size,
     size_t output_size,
     size_t hidden_layer_count,
     const size_t* hidden_sizes
 ) {
-    size_t hidden_index;
-
-    memset(config, 0, sizeof(*config));
-    config->input_size = input_size;
-    config->hidden_layer_count = hidden_layer_count;
-    for (hidden_index = 0U; hidden_index < 4U; ++hidden_index) {
-        config->hidden_sizes[hidden_index] =
-            (hidden_sizes != NULL && hidden_index < hidden_layer_count) ? hidden_sizes[hidden_index] : 0U;
+    if (config == NULL) {
+        return;
     }
-    config->output_size = output_size;
-    config->hidden_activation = MLP_ACT_TANH;
-    config->output_activation = MLP_ACT_NONE;
+    *config = mlp_config_create(hidden_layer_count);
+    if (*config == NULL) {
+        return;
+    }
+    if (mlp_config_init(
+            *config,
+            input_size,
+            hidden_layer_count,
+            hidden_sizes,
+            output_size,
+            MLP_ACT_TANH,
+            MLP_ACT_NONE
+        ) != 0) {
+        free(*config);
+        *config = NULL;
+    }
 }
 
 static void fill_mlp_train_config(
@@ -62,7 +70,7 @@ static NNSubnetDef* create_leaf_subnet(
     uint32_t seed
 ) {
     NNSubnetDef* subnet;
-    MlpConfig infer_config;
+    MlpConfig* infer_config;
     MlpTrainConfig train_config;
 
     subnet = nn_subnet_def_create(subnet_id, "mlp", input_size, output_size);
@@ -75,17 +83,23 @@ static NNSubnetDef* create_leaf_subnet(
         return NULL;
     }
     fill_mlp_infer_config(&infer_config, input_size, output_size, hidden_layer_count, hidden_sizes);
+    if (infer_config == NULL) {
+        nn_subnet_def_free(subnet);
+        return NULL;
+    }
     fill_mlp_train_config(&train_config, learning_rate, seed);
 
     if (nn_subnet_def_set_infer_type_config(
             subnet,
-            &infer_config,
-            sizeof(infer_config),
+            infer_config,
+            mlp_config_size_for_hidden_layers(infer_config->hidden_layer_count),
             "types/mlp/mlp_config.h",
             "MlpConfig") != 0) {
+        free(infer_config);
         nn_subnet_def_free(subnet);
         return NULL;
     }
+    free(infer_config);
 
     if (nn_subnet_def_set_train_type_config(
             subnet,

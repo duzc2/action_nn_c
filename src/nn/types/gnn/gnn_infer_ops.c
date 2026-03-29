@@ -1,6 +1,6 @@
-﻿/**
+/**
  * @file gnn_infer_ops.c
- * @brief Tiny fixed-topology GNN inference backend.
+ * @brief Dynamically configured GNN inference backend.
  *
  * This backend is intentionally compact. It accepts one flattened graph input,
  * rebuilds per-node hidden states with a deterministic message-passing loop,
@@ -74,31 +74,64 @@ static float gnn_apply_activation(float value, GnnActivationType activation) {
 }
 
 /**
- * @brief Validate that the config stays within the backend's fixed bounds.
+ * @brief Compute the required byte size for one serialized GNN config blob.
  */
-static int gnn_config_is_valid(const GnnConfig* config) {
+static int gnn_config_get_required_size(
+    size_t node_count,
+    size_t slot_count,
+    size_t* out_size
+) {
+    size_t neighbor_count;
+
+    if (out_size == NULL) {
+        return 0;
+    }
+    if (slot_count > 0U && node_count > ((size_t)-1 / slot_count)) {
+        return 0;
+    }
+    neighbor_count = node_count * slot_count;
+    if (neighbor_count > ((size_t)-1 - sizeof(GnnConfig)) / sizeof(int)) {
+        return 0;
+    }
+
+    *out_size = sizeof(GnnConfig) + (neighbor_count * sizeof(int));
+    return 1;
+}
+
+/**
+ * @brief Read one neighbor entry from the flattened topology table.
+ */
+static int gnn_neighbor_at(const GnnConfig* config, size_t node_index, size_t slot_index) {
+    return gnn_config_neighbor_row_view(config, node_index)[slot_index];
+}
+
+/**
+ * @brief Validate that the config stays structurally coherent.
+ */
+static int gnn_config_is_valid(const GnnConfig* config, size_t config_size) {
     size_t node_index;
     size_t slot_index;
+    size_t required_size;
 
     if (config == NULL) {
         return 0;
     }
-    if (config->node_count == 0U || config->node_count > GNN_MAX_NODE_COUNT) {
+    if (!gnn_config_get_required_size(config->node_count, config->slot_count, &required_size)) {
         return 0;
     }
-    if (config->node_feature_size == 0U || config->node_feature_size > GNN_MAX_NODE_FEATURE_SIZE) {
+    if (config_size != required_size) {
         return 0;
     }
-    if (config->hidden_size == 0U || config->hidden_size > GNN_MAX_HIDDEN_SIZE) {
+    if (config->node_count == 0U) {
         return 0;
     }
-    if (config->output_size == 0U || config->output_size > GNN_MAX_OUTPUT_SIZE) {
+    if (config->node_feature_size == 0U) {
         return 0;
     }
-    if (config->message_passes > GNN_MAX_MESSAGE_PASSES) {
+    if (config->hidden_size == 0U) {
         return 0;
     }
-    if (config->slot_count > GNN_MAX_SLOT_COUNT) {
+    if (config->output_size == 0U) {
         return 0;
     }
     if (config->node_mask_feature_index != GNN_FEATURE_INDEX_NONE &&
@@ -126,7 +159,7 @@ static int gnn_config_is_valid(const GnnConfig* config) {
 
     for (node_index = 0U; node_index < config->node_count; ++node_index) {
         for (slot_index = 0U; slot_index < config->slot_count; ++slot_index) {
-            int neighbor = config->neighbor_index[node_index][slot_index];
+            int neighbor = gnn_neighbor_at(config, node_index, slot_index);
 
             if (neighbor >= 0 && (size_t)neighbor >= config->node_count) {
                 return 0;
@@ -174,7 +207,7 @@ static uint64_t gnn_compute_layout_hash(const GnnConfig* config) {
 
     for (node_index = 0U; node_index < config->node_count; ++node_index) {
         for (slot_index = 0U; slot_index < config->slot_count; ++slot_index) {
-            uint64_t encoded_neighbor = (uint64_t)(config->neighbor_index[node_index][slot_index] + 1);
+            uint64_t encoded_neighbor = (uint64_t)(gnn_neighbor_at(config, node_index, slot_index) + 1);
             hash = gnn_hash_u64(hash, encoded_neighbor);
         }
     }
@@ -313,7 +346,7 @@ static int gnn_get_active_neighbor(
         return -1;
     }
 
-    neighbor = config->neighbor_index[source_node][slot_index];
+    neighbor = gnn_neighbor_at(config, source_node, slot_index);
     if (neighbor < 0) {
         return -1;
     }
@@ -347,17 +380,22 @@ GnnInferContext* nn_gnn_infer_create(void) {
 }
 
 /**
- * @brief Allocate and initialize one typed GNN inference context.
+ * @brief Allocate and initialize one typed GNN inference context from raw config bytes.
  */
-GnnInferContext* nn_gnn_infer_create_with_config(const GnnConfig* config, uint32_t seed) {
+GnnInferContext* nn_gnn_infer_create_with_config_blob(
+    const void* config_data,
+    size_t config_size,
+    uint32_t seed
+) {
     GnnInferContext* context;
+    const GnnConfig* config = (const GnnConfig*)config_data;
     size_t input_weight_count;
     size_t hidden_weight_count;
     size_t readout_weight_count;
     size_t input_value_count;
     size_t value_index;
 
-    if (!gnn_config_is_valid(config)) {
+    if (!gnn_config_is_valid(config, config_size)) {
         return NULL;
     }
 
@@ -366,7 +404,13 @@ GnnInferContext* nn_gnn_infer_create_with_config(const GnnConfig* config, uint32
         return NULL;
     }
 
-    context->config = *config;
+    context->config = (GnnConfig*)malloc(config_size);
+    if (context->config == NULL) {
+        free(context);
+        return NULL;
+    }
+    (void)memcpy(context->config, config_data, config_size);
+    context->config_size = config_size;
     context->rng_state = seed != 0U ? seed : (config->seed != 0U ? config->seed : 1U);
     input_weight_count = config->hidden_size * config->node_feature_size;
     hidden_weight_count = config->hidden_size * config->hidden_size;
@@ -420,6 +464,20 @@ GnnInferContext* nn_gnn_infer_create_with_config(const GnnConfig* config, uint32
 }
 
 /**
+ * @brief Compatibility wrapper for direct typed calls that already own a full blob.
+ */
+GnnInferContext* nn_gnn_infer_create_with_config(const GnnConfig* config, uint32_t seed) {
+    if (config == NULL) {
+        return NULL;
+    }
+    return nn_gnn_infer_create_with_config_blob(
+        config,
+        gnn_config_size_for_topology(config->node_count, config->slot_count),
+        seed
+    );
+}
+
+/**
  * @brief Free every owned GNN resource in the reverse order of construction.
  */
 void nn_gnn_infer_destroy(void* ctx) {
@@ -440,6 +498,7 @@ void nn_gnn_infer_destroy(void* ctx) {
     free(context->output_bias);
     free(context->input_buffer);
     free(context->output_buffer);
+    free(context->config);
     free(context);
 }
 
@@ -454,7 +513,7 @@ void nn_gnn_infer_set_input(void* ctx, const float* input, size_t size) {
         return;
     }
 
-    expected_size = gnn_total_input_size(&context->config);
+    expected_size = gnn_total_input_size(context->config);
     if (size != expected_size) {
         return;
     }
@@ -472,7 +531,7 @@ void nn_gnn_infer_get_output(void* ctx, float* output, size_t size) {
         return;
     }
 
-    if (size != context->config.output_size) {
+    if (size != context->config->output_size) {
         return;
     }
 
@@ -489,8 +548,10 @@ int nn_gnn_forward_pass(
     float* hidden_cache
 ) {
     const GnnConfig* config;
-    float local_hidden_cache[(GNN_MAX_MESSAGE_PASSES + 1U) * GNN_MAX_NODE_COUNT * GNN_MAX_HIDDEN_SIZE];
-    float* cache = hidden_cache != NULL ? hidden_cache : local_hidden_cache;
+    float* cache = hidden_cache;
+    float* owned_cache = NULL;
+    float* aggregated = NULL;
+    float* pooled_hidden = NULL;
     size_t stage_stride;
     size_t node_index;
     size_t hidden_index;
@@ -502,12 +563,24 @@ int nn_gnn_forward_pass(
         return -1;
     }
 
-    config = &context->config;
-    if (!gnn_config_is_valid(config)) {
+    config = context->config;
+    if (!gnn_config_is_valid(config, context->config_size)) {
         return -1;
     }
 
     stage_stride = gnn_stage_stride(config);
+    if (cache == NULL) {
+        owned_cache = (float*)calloc((config->message_passes + 1U) * stage_stride, sizeof(float));
+        cache = owned_cache;
+    }
+    if (cache == NULL) {
+        return -1;
+    }
+    aggregated = (float*)calloc(config->hidden_size, sizeof(float));
+    if (aggregated == NULL) {
+        free(owned_cache);
+        return -1;
+    }
 
     /* Stage 0 encodes each active node feature vector into the hidden state space. */
     for (node_index = 0U; node_index < config->node_count; ++node_index) {
@@ -538,7 +611,6 @@ int nn_gnn_forward_pass(
         float* current_stage = cache + (pass_index * stage_stride);
 
         for (node_index = 0U; node_index < config->node_count; ++node_index) {
-            float aggregated[GNN_MAX_HIDDEN_SIZE];
             float* current_node_hidden = current_stage + (node_index * config->hidden_size);
             size_t neighbor_count = 0U;
             size_t slot_index;
@@ -590,7 +662,12 @@ int nn_gnn_forward_pass(
     final_stage = cache + (config->message_passes * stage_stride);
 
     if (config->readout_type == GNN_READOUT_GRAPH_POOL) {
-        float pooled_hidden[GNN_MAX_HIDDEN_SIZE];
+        pooled_hidden = (float*)calloc(config->hidden_size, sizeof(float));
+        if (pooled_hidden == NULL) {
+            free(aggregated);
+            free(owned_cache);
+            return -1;
+        }
 
         (void)gnn_collect_graph_pool(config, input, final_stage, pooled_hidden);
 
@@ -650,6 +727,9 @@ int nn_gnn_forward_pass(
         }
     }
 
+    free(pooled_hidden);
+    free(aggregated);
+    free(owned_cache);
     return 0;
 }
 
@@ -681,11 +761,11 @@ int nn_gnn_infer_auto_run(void* ctx, const float* input, float* output) {
         return -1;
     }
 
-    nn_gnn_infer_set_input(context, input, gnn_total_input_size(&context->config));
+    nn_gnn_infer_set_input(context, input, gnn_total_input_size(context->config));
     if (nn_gnn_infer_step(context) != 0) {
         return -1;
     }
-    nn_gnn_infer_get_output(context, output, context->config.output_size);
+    nn_gnn_infer_get_output(context, output, context->config->output_size);
     return 0;
 }
 
@@ -709,19 +789,19 @@ int nn_gnn_load_weights(void* ctx, FILE* fp) {
     if (header.abi_version != GNN_ABI_VERSION) {
         return 0;
     }
-    if (header.node_count != context->config.node_count ||
-        header.node_feature_size != context->config.node_feature_size ||
-        header.hidden_size != context->config.hidden_size ||
-        header.output_size != context->config.output_size ||
-        header.message_passes != context->config.message_passes ||
-        header.slot_count != context->config.slot_count ||
-        header.aggregator_type != (uint32_t)context->config.aggregator_type ||
-        header.readout_type != (uint32_t)context->config.readout_type ||
-        header.node_mask_feature_index != (uint32_t)context->config.node_mask_feature_index ||
-        header.primary_anchor_feature_index != (uint32_t)context->config.primary_anchor_feature_index ||
-        header.secondary_anchor_feature_index != (uint32_t)context->config.secondary_anchor_feature_index ||
-        header.hidden_activation != (uint32_t)context->config.hidden_activation ||
-        header.output_activation != (uint32_t)context->config.output_activation) {
+    if (header.node_count != context->config->node_count ||
+        header.node_feature_size != context->config->node_feature_size ||
+        header.hidden_size != context->config->hidden_size ||
+        header.output_size != context->config->output_size ||
+        header.message_passes != context->config->message_passes ||
+        header.slot_count != context->config->slot_count ||
+        header.aggregator_type != (uint32_t)context->config->aggregator_type ||
+        header.readout_type != (uint32_t)context->config->readout_type ||
+        header.node_mask_feature_index != (uint32_t)context->config->node_mask_feature_index ||
+        header.primary_anchor_feature_index != (uint32_t)context->config->primary_anchor_feature_index ||
+        header.secondary_anchor_feature_index != (uint32_t)context->config->secondary_anchor_feature_index ||
+        header.hidden_activation != (uint32_t)context->config->hidden_activation ||
+        header.output_activation != (uint32_t)context->config->output_activation) {
         return 0;
     }
     if (context->expected_network_hash != 0U && header.network_hash != context->expected_network_hash) {
@@ -730,23 +810,23 @@ int nn_gnn_load_weights(void* ctx, FILE* fp) {
     if (context->expected_layout_hash != 0U && header.layout_hash != context->expected_layout_hash) {
         return 0;
     }
-    if (context->expected_layout_hash == 0U && header.layout_hash != gnn_compute_layout_hash(&context->config)) {
+    if (context->expected_layout_hash == 0U && header.layout_hash != gnn_compute_layout_hash(context->config)) {
         return 0;
     }
 
-    input_weight_count = context->config.hidden_size * context->config.node_feature_size;
-    hidden_weight_count = context->config.hidden_size * context->config.hidden_size;
-    readout_weight_count = context->config.output_size * context->config.hidden_size;
+    input_weight_count = context->config->hidden_size * context->config->node_feature_size;
+    hidden_weight_count = context->config->hidden_size * context->config->hidden_size;
+    readout_weight_count = context->config->output_size * context->config->hidden_size;
 
     return gnn_transfer_float_block(fp, context->input_weight, input_weight_count, 0) &&
-        gnn_transfer_float_block(fp, context->input_bias, context->config.hidden_size, 0) &&
+        gnn_transfer_float_block(fp, context->input_bias, context->config->hidden_size, 0) &&
         gnn_transfer_float_block(fp, context->self_weight, hidden_weight_count, 0) &&
         gnn_transfer_float_block(fp, context->message_weight, hidden_weight_count, 0) &&
-        gnn_transfer_float_block(fp, context->message_bias, context->config.hidden_size, 0) &&
+        gnn_transfer_float_block(fp, context->message_bias, context->config->hidden_size, 0) &&
         gnn_transfer_float_block(fp, context->readout_primary, readout_weight_count, 0) &&
         gnn_transfer_float_block(fp, context->readout_secondary, readout_weight_count, 0) &&
         gnn_transfer_float_block(fp, context->readout_neighbor, readout_weight_count, 0) &&
-        gnn_transfer_float_block(fp, context->output_bias, context->config.output_size, 0);
+        gnn_transfer_float_block(fp, context->output_bias, context->config->output_size, 0);
 }
 
 /**
@@ -766,39 +846,39 @@ int nn_gnn_save_weights(void* ctx, FILE* fp) {
     header.network_hash = nn_gnn_get_network_hash(context);
     header.layout_hash = context->expected_layout_hash != 0U ?
         context->expected_layout_hash :
-        gnn_compute_layout_hash(&context->config);
+        gnn_compute_layout_hash(context->config);
     header.abi_version = GNN_ABI_VERSION;
-    header.node_count = (uint32_t)context->config.node_count;
-    header.node_feature_size = (uint32_t)context->config.node_feature_size;
-    header.hidden_size = (uint32_t)context->config.hidden_size;
-    header.output_size = (uint32_t)context->config.output_size;
-    header.message_passes = (uint32_t)context->config.message_passes;
-    header.slot_count = (uint32_t)context->config.slot_count;
-    header.aggregator_type = (uint32_t)context->config.aggregator_type;
-    header.readout_type = (uint32_t)context->config.readout_type;
-    header.node_mask_feature_index = (uint32_t)context->config.node_mask_feature_index;
-    header.primary_anchor_feature_index = (uint32_t)context->config.primary_anchor_feature_index;
-    header.secondary_anchor_feature_index = (uint32_t)context->config.secondary_anchor_feature_index;
-    header.hidden_activation = (uint32_t)context->config.hidden_activation;
-    header.output_activation = (uint32_t)context->config.output_activation;
+    header.node_count = (uint32_t)context->config->node_count;
+    header.node_feature_size = (uint32_t)context->config->node_feature_size;
+    header.hidden_size = (uint32_t)context->config->hidden_size;
+    header.output_size = (uint32_t)context->config->output_size;
+    header.message_passes = (uint32_t)context->config->message_passes;
+    header.slot_count = (uint32_t)context->config->slot_count;
+    header.aggregator_type = (uint32_t)context->config->aggregator_type;
+    header.readout_type = (uint32_t)context->config->readout_type;
+    header.node_mask_feature_index = (uint32_t)context->config->node_mask_feature_index;
+    header.primary_anchor_feature_index = (uint32_t)context->config->primary_anchor_feature_index;
+    header.secondary_anchor_feature_index = (uint32_t)context->config->secondary_anchor_feature_index;
+    header.hidden_activation = (uint32_t)context->config->hidden_activation;
+    header.output_activation = (uint32_t)context->config->output_activation;
 
     if (fwrite(&header, sizeof(header), 1U, fp) != 1U) {
         return 0;
     }
 
-    input_weight_count = context->config.hidden_size * context->config.node_feature_size;
-    hidden_weight_count = context->config.hidden_size * context->config.hidden_size;
-    readout_weight_count = context->config.output_size * context->config.hidden_size;
+    input_weight_count = context->config->hidden_size * context->config->node_feature_size;
+    hidden_weight_count = context->config->hidden_size * context->config->hidden_size;
+    readout_weight_count = context->config->output_size * context->config->hidden_size;
 
     return gnn_transfer_float_block(fp, context->input_weight, input_weight_count, 1) &&
-        gnn_transfer_float_block(fp, context->input_bias, context->config.hidden_size, 1) &&
+        gnn_transfer_float_block(fp, context->input_bias, context->config->hidden_size, 1) &&
         gnn_transfer_float_block(fp, context->self_weight, hidden_weight_count, 1) &&
         gnn_transfer_float_block(fp, context->message_weight, hidden_weight_count, 1) &&
-        gnn_transfer_float_block(fp, context->message_bias, context->config.hidden_size, 1) &&
+        gnn_transfer_float_block(fp, context->message_bias, context->config->hidden_size, 1) &&
         gnn_transfer_float_block(fp, context->readout_primary, readout_weight_count, 1) &&
         gnn_transfer_float_block(fp, context->readout_secondary, readout_weight_count, 1) &&
         gnn_transfer_float_block(fp, context->readout_neighbor, readout_weight_count, 1) &&
-        gnn_transfer_float_block(fp, context->output_bias, context->config.output_size, 1);
+        gnn_transfer_float_block(fp, context->output_bias, context->config->output_size, 1);
 }
 
 /**
@@ -816,6 +896,7 @@ uint64_t nn_gnn_get_network_hash(const void* ctx) {
     if (context->expected_layout_hash != 0U) {
         return context->expected_layout_hash;
     }
-    return gnn_compute_layout_hash(&context->config);
+    return gnn_compute_layout_hash(context->config);
 }
+
 

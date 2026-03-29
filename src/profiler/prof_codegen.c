@@ -491,8 +491,9 @@ static int append_connection_table(
  * @brief Emit static byte arrays for every leaf inference config blob.
  *
  * Type-specific config remains opaque to the profiler. Emitting raw bytes keeps
- * the generator decoupled from backend-private struct layouts while still
- * letting generated code reconstruct typed config objects locally.
+ * the generator decoupled from backend-private struct layouts, and generated
+ * code must pass those blobs through unchanged instead of rebuilding fixed-size
+ * typed locals.
  */
 static int append_infer_type_blobs(
     char* buffer,
@@ -1126,7 +1127,6 @@ ProfStatus prof_codegen_infer(ProfCodegenContext* ctx) {
     /* Rehydrate one generated leaf descriptor per flattened executable subnet. */
     for (leaf_index = 0U; leaf_index < graph.leaf_subnets.count; ++leaf_index) {
         NNSubnetDef* subnet = graph.leaf_subnets.items[leaf_index];
-        size_t hidden_index;
         if (subnet == NULL) {
             continue;
         }
@@ -1161,6 +1161,7 @@ ProfStatus prof_codegen_infer(ProfCodegenContext* ctx) {
                 "    ctx->leaves[%zuU].config.network_type = \"%s\";\n"
                 "    ctx->leaves[%zuU].config.input_size = %zuU;\n"
                 "    ctx->leaves[%zuU].config.hidden_layer_count = %zuU;\n"
+                "    ctx->leaves[%zuU].config.hidden_sizes = 0;\n"
                 "    ctx->leaves[%zuU].config.output_size = %zuU;\n"
                 "    ctx->leaves[%zuU].config.network_hash = 0x%016llxULL;\n"
                 "    ctx->leaves[%zuU].config.layout_hash = 0x%016llxULL;\n"
@@ -1171,6 +1172,7 @@ ProfStatus prof_codegen_infer(ProfCodegenContext* ctx) {
                 leaf_index, subnet->subnet_type,
                 leaf_index, subnet->input_layer_size,
                 leaf_index, subnet->hidden_layer_count,
+                leaf_index,
                 leaf_index, subnet->output_layer_size,
                 leaf_index, (unsigned long long)ctx->network_hash,
                 leaf_index, (unsigned long long)ctx->layout_hash,
@@ -1182,20 +1184,6 @@ ProfStatus prof_codegen_infer(ProfCodegenContext* ctx) {
             prof_leaf_graph_cleanup(&graph);
             return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
                 "Failed to append infer leaf configuration");
-        }
-
-        /* Emit a fixed-width hidden-size array so generated config stays plain C. */
-        for (hidden_index = 0U; hidden_index < 4U; ++hidden_index) {
-            size_t hidden_size = hidden_index < subnet->hidden_layer_count ?
-                subnet->hidden_layer_sizes[hidden_index] : 0U;
-            if (append_format(content, CODE_BUFFER_CAPACITY, &pos,
-                    "    ctx->leaves[%zuU].config.hidden_sizes[%zuU] = %zuU;\n",
-                    leaf_index, hidden_index, hidden_size) != 0) {
-                free(content);
-                prof_leaf_graph_cleanup(&graph);
-                return prof_error_set(ctx->error, PROF_STATUS_INTERNAL_ERROR,
-                    "Failed to append infer hidden layer configuration");
-            }
         }
 
         /* Graph mode needs per-leaf staging buffers; single-leaf mode can delegate directly. */
@@ -1222,22 +1210,19 @@ ProfStatus prof_codegen_infer(ProfCodegenContext* ctx) {
                 "Failed to append infer buffer allocation");
         }
 
-        /* Reconstruct the typed config blob on the stack and pass it into the backend factory. */
+        /* Pass the copied config bytes through unchanged so variable-sized blobs remain valid. */
         if (append_format(content, CODE_BUFFER_CAPACITY, &pos,
-                "    {\n"
-                "        %s typed_config;\n"
-                "        (void)memcpy(&typed_config, g_infer_type_config_bytes_%zu, sizeof(typed_config));\n"
-                "        ctx->leaves[%zuU].config.type_config = &typed_config;\n"
-                "        ctx->leaves[%zuU].config.type_config_size = sizeof(typed_config);\n"
-                "        ctx->leaves[%zuU].config.type_config_type_name = \"%s\";\n"
-                "        ctx->leaves[%zuU].network_ctx = ctx->leaves[%zuU].contract->create(&ctx->leaves[%zuU].config);\n"
-                "    }\n",
-                subnet->infer_config_type_name,
+                "    ctx->leaves[%zuU].config.type_config = g_infer_type_config_bytes_%zu;\n"
+                "    ctx->leaves[%zuU].config.type_config_size = sizeof(g_infer_type_config_bytes_%zu);\n"
+                "    ctx->leaves[%zuU].config.type_config_type_name = \"%s\";\n",
                 leaf_index,
                 leaf_index,
                 leaf_index,
                 leaf_index,
-                subnet->infer_config_type_name,
+                leaf_index,
+                subnet->infer_config_type_name) != 0 ||
+            append_format(content, CODE_BUFFER_CAPACITY, &pos,
+                "    ctx->leaves[%zuU].network_ctx = ctx->leaves[%zuU].contract->create(&ctx->leaves[%zuU].config);\n",
                 leaf_index,
                 leaf_index,
                 leaf_index) != 0 ||
@@ -1701,29 +1686,25 @@ ProfStatus prof_codegen_train(ProfCodegenContext* ctx) {
                 leaf_index,
                 leaf_index,
                 leaf_index) != 0 ||
-            /* Rehydrate typed training config and create the backend-specific train context. */
+            /* Pass the copied training config bytes through unchanged for variable-sized blobs. */
             append_format(content, CODE_BUFFER_CAPACITY, &pos,
-                "    {\n"
-                "        %s typed_config;\n"
-                "        (void)memcpy(&typed_config, g_train_type_config_bytes_%zu, sizeof(typed_config));\n"
-                "        ctx->leaves[%zuU].config.type_config = &typed_config;\n"
-                "        ctx->leaves[%zuU].config.type_config_size = sizeof(typed_config);\n"
-                "        ctx->leaves[%zuU].config.type_config_type_name = \"%s\";\n"
-                "        ctx->leaves[%zuU].train_ctx = ctx->leaves[%zuU].contract->create(\n"
-                "            infer_get_leaf_native_context(infer_ctx, %zuU),\n"
-                "            &ctx->leaves[%zuU].config);\n"
-                "    }\n"
+                "    ctx->leaves[%zuU].config.type_config = g_train_type_config_bytes_%zu;\n"
+                "    ctx->leaves[%zuU].config.type_config_size = sizeof(g_train_type_config_bytes_%zu);\n"
+                "    ctx->leaves[%zuU].config.type_config_type_name = \"%s\";\n",
+                leaf_index,
+                leaf_index,
+                leaf_index,
+                leaf_index,
+                leaf_index,
+                subnet->train_config_type_name) != 0 ||
+            append_format(content, CODE_BUFFER_CAPACITY, &pos,
+                "    ctx->leaves[%zuU].train_ctx = ctx->leaves[%zuU].contract->create(\n"
+                "        infer_get_leaf_native_context(infer_ctx, %zuU),\n"
+                "        &ctx->leaves[%zuU].config);\n"
                 "    if (ctx->leaves[%zuU].train_ctx == 0) {\n"
                 "        train_destroy(ctx);\n"
                 "        return 0;\n"
                 "    }\n",
-                subnet->train_config_type_name,
-                leaf_index,
-                leaf_index,
-                leaf_index,
-                leaf_index,
-                subnet->train_config_type_name,
-                leaf_index,
                 leaf_index,
                 leaf_index,
                 leaf_index,
@@ -2258,3 +2239,4 @@ ProfStatus prof_codegen_generate_all(ProfCodegenContext* ctx) {
     if (st != PROF_STATUS_OK) return st;
     return PROF_STATUS_OK;
 }
+

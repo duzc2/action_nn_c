@@ -11,6 +11,7 @@
 #include "road_graph_nav_scene.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define ROAD_GRAPH_NAV_INPUT_SIZE (ROAD_GRAPH_NAV_NODE_COUNT * ROAD_GRAPH_NAV_NODE_FEATURE_SIZE)
@@ -19,7 +20,17 @@
  * @brief Fill the fixed topology table shared by the graph-encoder leaf.
  */
 static void road_graph_nav_fill_gnn_neighbors(GnnConfig* config) {
-    road_graph_nav_fill_neighbors(config->neighbor_index);
+    int neighbors[ROAD_GRAPH_NAV_NODE_COUNT][ROAD_GRAPH_NAV_SLOT_COUNT];
+    size_t node_index;
+    size_t slot_index;
+
+    road_graph_nav_fill_neighbors(neighbors);
+    for (node_index = 0U; node_index < ROAD_GRAPH_NAV_NODE_COUNT; ++node_index) {
+        int* row = gnn_config_neighbor_row_mut(config, node_index);
+        for (slot_index = 0U; slot_index < ROAD_GRAPH_NAV_SLOT_COUNT; ++slot_index) {
+            row[slot_index] = neighbors[node_index][slot_index];
+        }
+    }
 }
 
 /**
@@ -27,7 +38,7 @@ static void road_graph_nav_fill_gnn_neighbors(GnnConfig* config) {
  */
 static NNSubnetDef* create_graph_encoder_leaf(void) {
     NNSubnetDef* subnet;
-    GnnConfig infer_config;
+    GnnConfig* infer_config;
     GnnTrainConfig train_config;
     size_t hidden_sizes[1] = {12U};
 
@@ -46,22 +57,26 @@ static NNSubnetDef* create_graph_encoder_leaf(void) {
         return NULL;
     }
 
-    (void)memset(&infer_config, 0, sizeof(infer_config));
-    infer_config.node_count = ROAD_GRAPH_NAV_NODE_COUNT;
-    infer_config.node_feature_size = ROAD_GRAPH_NAV_NODE_FEATURE_SIZE;
-    infer_config.hidden_size = 12U;
-    infer_config.output_size = ROAD_GRAPH_NAV_GNN_OUTPUT_SIZE;
-    infer_config.message_passes = 2U;
-    infer_config.slot_count = ROAD_GRAPH_NAV_SLOT_COUNT;
-    infer_config.node_mask_feature_index = ROAD_GRAPH_NAV_FEATURE_OPEN;
-    infer_config.primary_anchor_feature_index = ROAD_GRAPH_NAV_FEATURE_CURRENT;
-    infer_config.secondary_anchor_feature_index = ROAD_GRAPH_NAV_FEATURE_TARGET;
-    infer_config.aggregator_type = GNN_AGG_MEAN;
-    infer_config.readout_type = GNN_READOUT_ANCHOR_SLOTS;
-    infer_config.hidden_activation = GNN_ACT_TANH;
-    infer_config.output_activation = GNN_ACT_NONE;
-    infer_config.seed = 23U;
-    road_graph_nav_fill_gnn_neighbors(&infer_config);
+    infer_config = gnn_config_create(ROAD_GRAPH_NAV_NODE_COUNT, ROAD_GRAPH_NAV_SLOT_COUNT);
+    if (infer_config == NULL) {
+        nn_subnet_def_free(subnet);
+        return NULL;
+    }
+    infer_config->node_count = ROAD_GRAPH_NAV_NODE_COUNT;
+    infer_config->node_feature_size = ROAD_GRAPH_NAV_NODE_FEATURE_SIZE;
+    infer_config->hidden_size = 12U;
+    infer_config->output_size = ROAD_GRAPH_NAV_GNN_OUTPUT_SIZE;
+    infer_config->message_passes = 2U;
+    infer_config->slot_count = ROAD_GRAPH_NAV_SLOT_COUNT;
+    infer_config->node_mask_feature_index = ROAD_GRAPH_NAV_FEATURE_OPEN;
+    infer_config->primary_anchor_feature_index = ROAD_GRAPH_NAV_FEATURE_CURRENT;
+    infer_config->secondary_anchor_feature_index = ROAD_GRAPH_NAV_FEATURE_TARGET;
+    infer_config->aggregator_type = GNN_AGG_MEAN;
+    infer_config->readout_type = GNN_READOUT_ANCHOR_SLOTS;
+    infer_config->hidden_activation = GNN_ACT_TANH;
+    infer_config->output_activation = GNN_ACT_NONE;
+    infer_config->seed = 23U;
+    road_graph_nav_fill_gnn_neighbors(infer_config);
 
     (void)memset(&train_config, 0, sizeof(train_config));
     train_config.learning_rate = 0.0035f;
@@ -71,13 +86,15 @@ static NNSubnetDef* create_graph_encoder_leaf(void) {
 
     if (nn_subnet_def_set_infer_type_config(
             subnet,
-            &infer_config,
-            sizeof(infer_config),
+            infer_config,
+            gnn_config_size_for_topology(infer_config->node_count, infer_config->slot_count),
             "types/gnn/gnn_config.h",
             "GnnConfig") != 0) {
+        free(infer_config);
         nn_subnet_def_free(subnet);
         return NULL;
     }
+    free(infer_config);
 
     if (nn_subnet_def_set_train_type_config(
             subnet,
@@ -97,7 +114,7 @@ static NNSubnetDef* create_graph_encoder_leaf(void) {
  */
 static NNSubnetDef* create_decision_head_leaf(void) {
     NNSubnetDef* subnet;
-    MlpConfig infer_config;
+    MlpConfig* infer_config;
     MlpTrainConfig train_config;
     size_t hidden_sizes[1] = {16U};
 
@@ -116,13 +133,21 @@ static NNSubnetDef* create_decision_head_leaf(void) {
         return NULL;
     }
 
-    (void)memset(&infer_config, 0, sizeof(infer_config));
-    infer_config.input_size = ROAD_GRAPH_NAV_GNN_OUTPUT_SIZE;
-    infer_config.hidden_layer_count = 1U;
-    infer_config.hidden_sizes[0] = hidden_sizes[0];
-    infer_config.output_size = ROAD_GRAPH_NAV_ACTION_COUNT;
-    infer_config.hidden_activation = MLP_ACT_TANH;
-    infer_config.output_activation = MLP_ACT_NONE;
+    infer_config = mlp_config_create(1U);
+    if (infer_config == NULL ||
+        mlp_config_init(
+            infer_config,
+            ROAD_GRAPH_NAV_GNN_OUTPUT_SIZE,
+            1U,
+            hidden_sizes,
+            ROAD_GRAPH_NAV_ACTION_COUNT,
+            MLP_ACT_TANH,
+            MLP_ACT_NONE
+        ) != 0) {
+        free(infer_config);
+        nn_subnet_def_free(subnet);
+        return NULL;
+    }
 
     (void)memset(&train_config, 0, sizeof(train_config));
     train_config.learning_rate = 0.0050f;
@@ -135,13 +160,15 @@ static NNSubnetDef* create_decision_head_leaf(void) {
 
     if (nn_subnet_def_set_infer_type_config(
             subnet,
-            &infer_config,
-            sizeof(infer_config),
+            infer_config,
+            mlp_config_size_for_hidden_layers(infer_config->hidden_layer_count),
             "types/mlp/mlp_config.h",
             "MlpConfig") != 0) {
+        free(infer_config);
         nn_subnet_def_free(subnet);
         return NULL;
     }
+    free(infer_config);
 
     if (nn_subnet_def_set_train_type_config(
             subnet,

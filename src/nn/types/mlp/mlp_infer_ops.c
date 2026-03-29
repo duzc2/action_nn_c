@@ -27,6 +27,7 @@
  */
 static uint64_t compute_layout_hash(const MlpConfig* config) {
     uint64_t hash = 0xcbf29ce484222325ULL;
+    const size_t* hidden_sizes;
     size_t i;
 
     if (config == NULL) {
@@ -42,8 +43,9 @@ static uint64_t compute_layout_hash(const MlpConfig* config) {
     hash ^= (uint64_t)config->hidden_layer_count;
     hash *= 0x100000001b3ULL;
 
-    for (i = 0; i < config->hidden_layer_count && i < 4; i++) {
-        hash ^= (uint64_t)config->hidden_sizes[i];
+    hidden_sizes = mlp_config_hidden_sizes_view(config);
+    for (i = 0; i < config->hidden_layer_count; i++) {
+        hash ^= (uint64_t)hidden_sizes[i];
         hash *= 0x100000001b3ULL;
     }
 
@@ -71,13 +73,68 @@ MlpInferContext* nn_mlp_infer_create(void) {
  * on purpose: once the context exists, inference steps should run without any
  * further heap allocation or topology-dependent branching.
  */
-MlpInferContext* nn_mlp_infer_create_with_config(const MlpConfig* config, uint32_t seed) {
+static int mlp_config_get_required_size(size_t hidden_layer_count, size_t* out_size) {
+    size_t total_size;
+
+    if (out_size == NULL) {
+        return 0;
+    }
+    if (hidden_layer_count > ((size_t)-1 - sizeof(MlpConfig)) / sizeof(size_t)) {
+        return 0;
+    }
+
+    total_size = sizeof(MlpConfig) + (hidden_layer_count * sizeof(size_t));
+    *out_size = total_size;
+    return 1;
+}
+
+/**
+ * @brief Validate a serialized MLP config blob before rebuilding typed state.
+ */
+static int mlp_config_blob_is_valid(const void* config_data, size_t config_size) {
+    const MlpConfig* config = (const MlpConfig*)config_data;
+    const size_t* hidden_sizes;
+    size_t required_size;
+    size_t hidden_index;
+
+    if (config_data == NULL) {
+        return 0;
+    }
+    if (!mlp_config_get_required_size(config->hidden_layer_count, &required_size)) {
+        return 0;
+    }
+    if (config_size != required_size) {
+        return 0;
+    }
+    if (config->input_size == 0U || config->output_size == 0U) {
+        return 0;
+    }
+
+    hidden_sizes = mlp_config_hidden_sizes_view(config);
+    for (hidden_index = 0U; hidden_index < config->hidden_layer_count; ++hidden_index) {
+        if (hidden_sizes[hidden_index] == 0U) {
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
+/**
+ * @brief Allocate and initialize a typed MLP inference context from raw config bytes.
+ */
+MlpInferContext* nn_mlp_infer_create_with_config_blob(
+    const void* config_data,
+    size_t config_size,
+    uint32_t seed
+) {
     MlpInferContext* ctx;
+    const size_t* hidden_sizes;
     size_t i;
     size_t prev_size;
     size_t max_buffer_size;
 
-    if (config == NULL) {
+    if (!mlp_config_blob_is_valid(config_data, config_size)) {
         return NULL;
     }
 
@@ -88,44 +145,54 @@ MlpInferContext* nn_mlp_infer_create_with_config(const MlpConfig* config, uint32
 
     memset(ctx, 0, sizeof(MlpInferContext));
 
-    ctx->config = *config;
+    ctx->config = (MlpConfig*)malloc(config_size);
+    if (ctx->config == NULL) {
+        free(ctx);
+        return NULL;
+    }
+    (void)memcpy(ctx->config, config_data, config_size);
+    ctx->config_size = config_size;
     ctx->seed = seed;
     ctx->max_buffer_size = 0U;
+    hidden_sizes = mlp_config_hidden_sizes_view(ctx->config);
 
-    ctx->layer_count = config->hidden_layer_count + 1;
+    ctx->layer_count = ctx->config->hidden_layer_count + 1U;
     ctx->layers = (MlpDenseLayer**)malloc(ctx->layer_count * sizeof(MlpDenseLayer*));
 
     if (ctx->layers == NULL) {
+        free(ctx->config);
         free(ctx);
         return NULL;
     }
 
-    prev_size = config->input_size;
+    prev_size = ctx->config->input_size;
 
     /* Materialize hidden layers in declared order so weight layout stays stable. */
-    for (i = 0; i < config->hidden_layer_count; i++) {
+    for (i = 0; i < ctx->config->hidden_layer_count; i++) {
         ctx->layers[i] = mlp_dense_create(
             prev_size,
-            config->hidden_sizes[i],
-            config->hidden_activation,
+            hidden_sizes[i],
+            ctx->config->hidden_activation,
             seed + (uint32_t)i
         );
         if (ctx->layers[i] == NULL) {
-            for (size_t j = 0; j < i; j++) {
+            size_t j;
+            for (j = 0U; j < i; j++) {
                 mlp_dense_free(ctx->layers[j]);
             }
             free(ctx->layers);
+            free(ctx->config);
             free(ctx);
             return NULL;
         }
-        prev_size = config->hidden_sizes[i];
+        prev_size = hidden_sizes[i];
     }
 
     /* The output layer is created last because it depends on the final hidden width. */
     ctx->layers[ctx->layer_count - 1] = mlp_dense_create(
         prev_size,
-        config->output_size,
-        config->output_activation,
+        ctx->config->output_size,
+        ctx->config->output_activation,
         seed + (uint32_t)ctx->layer_count
     );
 
@@ -134,24 +201,25 @@ MlpInferContext* nn_mlp_infer_create_with_config(const MlpConfig* config, uint32
             mlp_dense_free(ctx->layers[i]);
         }
         free(ctx->layers);
+        free(ctx->config);
         free(ctx);
         return NULL;
     }
 
     /* Reserve work buffers at the maximum layer width so hidden passes can reuse them. */
-    max_buffer_size = config->input_size;
-    if (config->output_size > max_buffer_size) {
-        max_buffer_size = config->output_size;
+    max_buffer_size = ctx->config->input_size;
+    if (ctx->config->output_size > max_buffer_size) {
+        max_buffer_size = ctx->config->output_size;
     }
-    for (i = 0; i < config->hidden_layer_count && i < 4; i++) {
-        if (config->hidden_sizes[i] > max_buffer_size) {
-            max_buffer_size = config->hidden_sizes[i];
+    for (i = 0; i < ctx->config->hidden_layer_count; i++) {
+        if (hidden_sizes[i] > max_buffer_size) {
+            max_buffer_size = hidden_sizes[i];
         }
     }
 
     /* Separate input/output storage avoids aliasing when auto_run uses caller buffers. */
-    ctx->input_buffer = (float*)malloc(config->input_size * sizeof(float));
-    ctx->output_buffer = (float*)malloc(config->output_size * sizeof(float));
+    ctx->input_buffer = (float*)malloc(ctx->config->input_size * sizeof(float));
+    ctx->output_buffer = (float*)malloc(ctx->config->output_size * sizeof(float));
     ctx->work_buffer_a = (float*)malloc(max_buffer_size * sizeof(float));
     ctx->work_buffer_b = (float*)malloc(max_buffer_size * sizeof(float));
     ctx->max_buffer_size = max_buffer_size;
@@ -166,17 +234,32 @@ MlpInferContext* nn_mlp_infer_create_with_config(const MlpConfig* config, uint32
             mlp_dense_free(ctx->layers[i]);
         }
         free(ctx->layers);
+        free(ctx->config);
         free(ctx);
         return NULL;
     }
 
     /* Zero-initialize every buffer so partially run contexts never expose garbage. */
-    memset(ctx->input_buffer, 0, config->input_size * sizeof(float));
-    memset(ctx->output_buffer, 0, config->output_size * sizeof(float));
+    memset(ctx->input_buffer, 0, ctx->config->input_size * sizeof(float));
+    memset(ctx->output_buffer, 0, ctx->config->output_size * sizeof(float));
     memset(ctx->work_buffer_a, 0, max_buffer_size * sizeof(float));
     memset(ctx->work_buffer_b, 0, max_buffer_size * sizeof(float));
 
     return ctx;
+}
+
+/**
+ * @brief Compatibility wrapper for direct typed calls that already own a full blob.
+ */
+MlpInferContext* nn_mlp_infer_create_with_config(const MlpConfig* config, uint32_t seed) {
+    if (config == NULL) {
+        return NULL;
+    }
+    return nn_mlp_infer_create_with_config_blob(
+        config,
+        mlp_config_size_for_hidden_layers(config->hidden_layer_count),
+        seed
+    );
 }
 
 /**
@@ -194,6 +277,7 @@ void nn_mlp_infer_destroy(void* context) {
     free(ctx->output_buffer);
     free(ctx->work_buffer_a);
     free(ctx->work_buffer_b);
+    free(ctx->config);
 
     for (i = 0; i < ctx->layer_count; i++) {
         if (ctx->layers[i] != NULL) {
@@ -216,7 +300,7 @@ void nn_mlp_infer_set_input(void* context, const float* input, size_t size) {
         return;
     }
 
-    if (size != ctx->config.input_size) {
+    if (size != ctx->config->input_size) {
         return;
     }
 
@@ -236,7 +320,7 @@ void nn_mlp_infer_get_output(void* context, float* output, size_t size) {
         return;
     }
 
-    if (size != ctx->config.output_size) {
+    if (size != ctx->config->output_size) {
         return;
     }
 
@@ -290,13 +374,13 @@ int nn_mlp_infer_auto_run(void* context, const float* input, float* output) {
         return -1;
     }
 
-    nn_mlp_infer_set_input(ctx, input, ctx->config.input_size);
+    nn_mlp_infer_set_input(ctx, input, ctx->config->input_size);
 
     if (nn_mlp_infer_step(ctx) != 0) {
         return -1;
     }
 
-    nn_mlp_infer_get_output(ctx, output, ctx->config.output_size);
+    nn_mlp_infer_get_output(ctx, output, ctx->config->output_size);
 
     return 0;
 }
@@ -380,7 +464,7 @@ int nn_mlp_save_weights(void* context, FILE* fp) {
         : nn_mlp_get_network_hash(ctx);
     layout_hash = (ctx->expected_layout_hash != 0U)
         ? ctx->expected_layout_hash
-        : compute_layout_hash(&ctx->config);
+        : compute_layout_hash(ctx->config);
 
     rc = (int)fwrite(&hash, sizeof(hash), 1, fp);
     if (rc != 1) return 0;
@@ -420,5 +504,5 @@ uint64_t nn_mlp_get_network_hash(const void* context) {
         return 0;
     }
 
-    return compute_layout_hash(&ctx->config);
+    return compute_layout_hash(ctx->config);
 }

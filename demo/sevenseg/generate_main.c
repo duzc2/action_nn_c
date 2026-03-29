@@ -27,7 +27,7 @@ static NN_NetworkDef* create_sevenseg_network(void) {
     NN_NetworkDef* network;
     NNSubnetDef* subnet;
     size_t hidden_sizes[2] = {16U, 8U};
-    MlpConfig infer_config;
+    MlpConfig* infer_config;
     MlpTrainConfig train_config;
 
     network = nn_network_def_create("sevenseg");
@@ -48,15 +48,22 @@ static NN_NetworkDef* create_sevenseg_network(void) {
         nn_network_def_free(network);
         return NULL;
     }
-    infer_config.input_size = 10U;
-    infer_config.hidden_layer_count = 2U;
-    infer_config.hidden_sizes[0] = 16U;
-    infer_config.hidden_sizes[1] = 8U;
-    infer_config.hidden_sizes[2] = 0U;
-    infer_config.hidden_sizes[3] = 0U;
-    infer_config.output_size = 7U;
-    infer_config.hidden_activation = MLP_ACT_TANH;
-    infer_config.output_activation = MLP_ACT_NONE;
+    infer_config = mlp_config_create(2U);
+    if (infer_config == NULL ||
+        mlp_config_init(
+            infer_config,
+            10U,
+            2U,
+            hidden_sizes,
+            7U,
+            MLP_ACT_TANH,
+            MLP_ACT_NONE
+        ) != 0) {
+        free(infer_config);
+        nn_subnet_def_free(subnet);
+        nn_network_def_free(network);
+        return NULL;
+    }
     train_config.learning_rate = 0.003f;
     train_config.momentum = 0.9f;
     train_config.weight_decay = 0.0001f;
@@ -66,14 +73,16 @@ static NN_NetworkDef* create_sevenseg_network(void) {
     train_config.seed = 42U;
     if (nn_subnet_def_set_infer_type_config(
             subnet,
-            &infer_config,
-            sizeof(infer_config),
+            infer_config,
+            mlp_config_size_for_hidden_layers(infer_config->hidden_layer_count),
             "types/mlp/mlp_config.h",
             "MlpConfig") != 0) {
+        free(infer_config);
         nn_subnet_def_free(subnet);
         nn_network_def_free(network);
         return NULL;
     }
+    free(infer_config);
     if (nn_subnet_def_set_train_type_config(
             subnet,
             &train_config,

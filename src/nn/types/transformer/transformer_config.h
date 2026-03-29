@@ -16,8 +16,12 @@
  * @brief Minimal structural configuration needed to create a tiny transformer.
  */
 typedef struct {
-    size_t model_dim;  /**< Internal hidden width used by embeddings and attention. */
-    uint32_t seed;     /**< Deterministic seed for reproducible parameter init. */
+    size_t vocab_size;            /**< Token vocabulary size chosen by the user. */
+    size_t model_dim;             /**< Internal hidden width used by embeddings and attention. */
+    size_t max_seq_length;        /**< Maximum token sequence length chosen by the user. */
+    size_t max_response_classes;  /**< Maximum learned answer-class count chosen by the user. */
+    size_t max_text_length;       /**< Maximum stored answer text length, including the terminator. */
+    uint32_t seed;                /**< Deterministic seed for reproducible parameter init. */
 } TransformerModelConfig;
 
 /**

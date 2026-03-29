@@ -147,11 +147,14 @@ RnnInferContext* nn_rnn_infer_create_with_config(const RnnConfig* config, uint32
         sizeof(float)
     );
     context->output_buffer = (float*)calloc(config->output_size, sizeof(float));
+    context->hidden_state_a = (float*)calloc(config->hidden_size, sizeof(float));
+    context->hidden_state_b = (float*)calloc(config->hidden_size, sizeof(float));
 
     if (context->input_to_hidden == NULL || context->hidden_to_hidden == NULL ||
         context->hidden_bias == NULL || context->hidden_to_output == NULL ||
         context->output_bias == NULL || context->input_buffer == NULL ||
-        context->output_buffer == NULL) {
+        context->output_buffer == NULL || context->hidden_state_a == NULL ||
+        context->hidden_state_b == NULL) {
         nn_rnn_infer_destroy(context);
         return NULL;
     }
@@ -193,6 +196,8 @@ void nn_rnn_infer_destroy(void* ctx) {
     free(context->output_bias);
     free(context->input_buffer);
     free(context->output_buffer);
+    free(context->hidden_state_a);
+    free(context->hidden_state_b);
     free(context);
 }
 
@@ -239,7 +244,8 @@ int nn_rnn_forward_pass(
     float* output_linear_cache
 ) {
     const RnnConfig* config;
-    float previous_hidden[64U];
+    float* previous_hidden;
+    float* current_hidden;
     size_t step_index;
     size_t hidden_index;
 
@@ -248,12 +254,16 @@ int nn_rnn_forward_pass(
     }
 
     config = &context->config;
-    (void)memset(previous_hidden, 0, sizeof(previous_hidden));
+    previous_hidden = context->hidden_state_a;
+    current_hidden = context->hidden_state_b;
+    if (previous_hidden == NULL || current_hidden == NULL) {
+        return -1;
+    }
+    (void)memset(previous_hidden, 0, config->hidden_size * sizeof(float));
 
     /* Walk the sequence from oldest frame feature to newest frame feature. */
     for (step_index = 0U; step_index < config->sequence_length; ++step_index) {
         const float* step_input = input + (step_index * config->input_feature_size);
-        float current_hidden[64U];
 
         for (hidden_index = 0U; hidden_index < config->hidden_size; ++hidden_index) {
             float linear_value = context->hidden_bias[hidden_index];

@@ -10,6 +10,7 @@
 #include "../demo_runtime_paths.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define HYBRID_ROUTE_INPUT_SIZE 8U
@@ -31,7 +32,11 @@ static NNSubnetDef* create_transformer_leaf(void) {
     }
 
     (void)memset(&infer_config, 0, sizeof(infer_config));
+    infer_config.vocab_size = 257U;
     infer_config.model_dim = HYBRID_ROUTE_EMBED_SIZE;
+    infer_config.max_seq_length = 32U;
+    infer_config.max_response_classes = 16U;
+    infer_config.max_text_length = 128U;
     infer_config.seed = 7U;
 
     (void)memset(&train_config, 0, sizeof(train_config));
@@ -63,7 +68,7 @@ static NNSubnetDef* create_transformer_leaf(void) {
 static NNSubnetDef* create_fusion_leaf(void) {
     NNSubnetDef* subnet;
     size_t hidden_sizes[1] = {12U};
-    MlpConfig infer_config;
+    MlpConfig* infer_config;
     MlpTrainConfig train_config;
 
     subnet = nn_subnet_def_create("decision_head", "mlp", HYBRID_ROUTE_EMBED_SIZE, 2U);
@@ -76,13 +81,21 @@ static NNSubnetDef* create_fusion_leaf(void) {
         return NULL;
     }
 
-    (void)memset(&infer_config, 0, sizeof(infer_config));
-    infer_config.input_size = HYBRID_ROUTE_EMBED_SIZE;
-    infer_config.hidden_layer_count = 1U;
-    infer_config.hidden_sizes[0] = hidden_sizes[0];
-    infer_config.output_size = 2U;
-    infer_config.hidden_activation = MLP_ACT_TANH;
-    infer_config.output_activation = MLP_ACT_NONE;
+    infer_config = mlp_config_create(1U);
+    if (infer_config == NULL ||
+        mlp_config_init(
+            infer_config,
+            HYBRID_ROUTE_EMBED_SIZE,
+            1U,
+            hidden_sizes,
+            2U,
+            MLP_ACT_TANH,
+            MLP_ACT_NONE
+        ) != 0) {
+        free(infer_config);
+        nn_subnet_def_free(subnet);
+        return NULL;
+    }
 
     (void)memset(&train_config, 0, sizeof(train_config));
     train_config.learning_rate = 0.004f;
@@ -95,13 +108,15 @@ static NNSubnetDef* create_fusion_leaf(void) {
 
     if (nn_subnet_def_set_infer_type_config(
             subnet,
-            &infer_config,
-            sizeof(infer_config),
+            infer_config,
+            mlp_config_size_for_hidden_layers(infer_config->hidden_layer_count),
             "types/mlp/mlp_config.h",
             "MlpConfig") != 0) {
+        free(infer_config);
         nn_subnet_def_free(subnet);
         return NULL;
     }
+    free(infer_config);
 
     if (nn_subnet_def_set_train_type_config(
             subnet,

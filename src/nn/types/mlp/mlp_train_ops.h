@@ -52,8 +52,9 @@ typedef struct {
     float* input_buffer;
     float* target_buffer;
     float* loss_buffer;
-    float loss_history[100];
-    size_t loss_history_count;
+    float cumulative_loss;
+    float average_loss;
+    float last_loss;
     size_t total_epochs;
     size_t total_steps;
     uint64_t checkpoint_network_hash;

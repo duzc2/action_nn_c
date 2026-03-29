@@ -1,6 +1,6 @@
 /**
  * @file transformer_train_ops.h
- * @brief Training-side API for the tiny transformer demo backend.
+ * @brief Training-side API for the dynamically sized transformer backend.
  */
 
 #ifndef TRANSFORMER_TRAIN_OPS_H
@@ -14,9 +14,8 @@
 /**
  * @brief Minimal training context wrapped around the inference parameters.
  *
- * The tiny transformer keeps training state intentionally small because the
- * demo focuses on illustrating the profiler pipeline rather than optimizer
- * sophistication.
+ * The transformer keeps training state intentionally compact so generated code
+ * can reuse the same backend in standalone and composed-graph scenarios.
  */
 typedef struct {
     TransformerInferContext* infer_ctx; /**< Borrowed inference context holding parameters. */
