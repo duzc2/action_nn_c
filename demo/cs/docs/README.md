@@ -12,6 +12,17 @@
 - `location_callouts.md`：`de_dust2` 第一版支持的地点标识符草案
 - `implementation_strategy.md`：后续实现思路、训练流程、网络结构与扩展建议
 - `module_versions.md`：按功能模块拆分的串行版本路线图
+- `v1_area_recognition_spec.md`：Version 1 区域识别的详细规格说明
+- `v1_dataset_spec.md`：Version 1 数据集生成、标注与目录规范
+- `v1_data_collection_tooling.md`：Version 1 数据采集工具与用户操作流程
+- `v1_tool_cli_spec.md`：Version 1 数据采集工具的 CLI 规格
+- `v1_label_schema.md`：Version 1 采集与数据集文件结构定义
+- `v1_user_workflow.md`：Version 1 从打开 CS 到得到数据集的用户操作流程
+- `v1_dev_plan.md`：Version 1 的实际开发顺序、里程碑与测试门禁
+- `place_dictionary.json.spec.md`：`place_token -> place_id` 正式字典格式规范
+- `v1_test_plan.md`：Version 1 的测试项、验收线与失败记录规范
+- `v1_risks_and_mitigations.md`：Version 1 的风险、征兆、排查顺序与应对策略
+- `v1_task_breakdown.md`：Version 1 可执行开发任务清单
 
 ## 3. 设计定位
 
