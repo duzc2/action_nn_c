@@ -55,15 +55,16 @@ Version 1 只做：
 
 1. 打开 CS1.6
 2. 进入固定设置的 `de_dust2`
-3. 启动 `cs_capture_session`
-4. 在第一个区域设置当前 `place_token`
-5. 在该区域内随意走动和转头
-6. 到下一个区域时切换 `place_token`
-7. 重复多次
-8. 停止采集
-9. 运行 `cs_dataset_build`
-10. 运行 `cs_dataset_report`
-11. 检查结果是否可用
+3. 打开 `cs_capture_session` GUI
+4. 在 GUI 中确认 session、分辨率和状态
+5. 在第一个区域设置当前 `place_token`
+6. 在该区域内随意走动和转头
+7. 到下一个区域时切换 `place_token`
+8. 重复多次
+9. 停止采集
+10. 打开 `cs_dataset_build` GUI
+11. 打开 `cs_dataset_report` GUI
+12. 检查结果是否可用
 
 ## 5. 详细操作步骤
 
@@ -79,20 +80,16 @@ Version 1 只做：
 
 - 保证采集条件一致
 
-## Step 2：启动采集工具
+## Step 2：启动采集工具 GUI
 
 用户操作：
 
-```powershell
-cs_capture_session start `
-  --session-root demo/cs/data/v1_area/raw `
-  --session-id session_0001 `
-  --map de_dust2 `
-  --width 1280 `
-  --height 720 `
-  --capture-fps 8 `
-  --team t
-```
+- 打开 `cs_capture_session` GUI
+- 确认 `session_root`
+- 确认 `session_id`
+- 确认 `map`
+- 确认分辨率
+- 点击“开始采集”
 
 工具应完成：
 
@@ -100,8 +97,11 @@ cs_capture_session start `
 - 校验分辨率
 - 创建 `session_0001`
 - 开始截图
+- 在界面中显示当前状态、已采集帧数和输出路径
 
 如果失败，应立即报错并停止。
+
+CLI 仍可保留作为备用入口，但日常采集以 GUI 为主。
 
 ## Step 3：设置第一个区域标签
 
@@ -109,12 +109,8 @@ cs_capture_session start `
 
 用户操作：
 
-```powershell
-cs_label_session set `
-  --session-root demo/cs/data/v1_area/raw `
-  --session-id session_0001 `
-  --place-token t_spawn
-```
+- 在 `cs_label_session` GUI 中选择 `t_spawn`
+- 点击“设置当前标签”
 
 这一步之后，工具应开始把当前这段时间内的帧都标记为 `t_spawn`。
 
@@ -143,12 +139,8 @@ cs_label_session set `
 
 当用户确认自己已经进入 `mid` 后，再执行：
 
-```powershell
-cs_label_session set `
-  --session-root demo/cs/data/v1_area/raw `
-  --session-id session_0001 `
-  --place-token mid
-```
+- 在 `cs_label_session` GUI 中选择 `mid`
+- 点击“设置当前标签”
 
 这一步非常重要：
 
@@ -169,9 +161,7 @@ cs_label_session set `
 
 采集结束后，用户执行：
 
-```powershell
-cs_capture_session stop --session-id session_0001
-```
+- 在 `cs_capture_session` GUI 中点击“停止采集”
 
 工具应完成：
 
@@ -179,20 +169,17 @@ cs_capture_session stop --session-id session_0001
 - 写入 `session.json`
 - 写入最终状态文件
 - 保留 `label_segments.json`
+- 在 GUI 中显示停止结果与最终摘要
 
 ## Step 8：构建数据集
 
 采完一个或多个 session 后，用户执行：
 
-```powershell
-cs_dataset_build run `
-  --raw-root demo/cs/data/v1_area/raw `
-  --output-root demo/cs/data/v1_area/processed `
-  --min-frame-step 3 `
-  --dedup on `
-  --blur-filter on `
-  --split train:val:test=8:1:1
-```
+- 打开 `cs_dataset_build` GUI
+- 选择原始数据目录
+- 选择输出目录
+- 设置抽样、去重、过滤与 split
+- 点击“开始构建”
 
 工具应自动完成：
 
@@ -202,22 +189,23 @@ cs_dataset_build run `
 - 去重
 - 过滤坏帧
 - 生成训练/验证/测试清单
+- 在 GUI 中显示构建进度与摘要
 
 ## Step 9：生成报告
 
 用户执行：
 
-```powershell
-cs_dataset_report run `
-  --dataset-root demo/cs/data/v1_area/processed `
-  --output-root demo/cs/data/v1_area/reports
-```
+- 打开 `cs_dataset_report` GUI
+- 选择数据集目录
+- 选择报告输出目录
+- 点击“生成报告”
 
 工具应输出：
 
 - 每类样本数量
 - 每个 session 的覆盖情况
 - 哪些类别样本不足
+- 并在 GUI 中直接显示核心摘要
 
 ## Step 10：人工检查
 
@@ -308,10 +296,10 @@ cs_dataset_report run `
 如果只记最核心的操作，可以记这 5 条：
 
 1. 固定设置进入 `de_dust2`
-2. 启动 `cs_capture_session`
-3. 进入区域后设置正确的 `place_token`
+2. 打开 `cs_capture_session` GUI 并确认状态在更新
+3. 进入区域后在 GUI 中设置正确的 `place_token`
 4. 在区域里自然移动
-5. 停止后运行 `cs_dataset_build` 和 `cs_dataset_report`
+5. 停止后用 GUI 运行 `cs_dataset_build` 和 `cs_dataset_report`
 
 ## 11. 下一步是什么
 

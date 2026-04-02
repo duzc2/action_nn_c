@@ -1,0 +1,63 @@
+{
+  "dictionary_name": "de_dust2_v1_places",
+  "map_name": "de_dust2",
+  "version": 1,
+  "entries": [
+    {
+      "place_id": 0,
+      "place_token": "t_spawn",
+      "display_name": "T Spawn",
+      "enabled_in_v1": true,
+      "notes": "T spawn main area"
+    },
+    {
+      "place_id": 1,
+      "place_token": "ct_spawn",
+      "display_name": "CT Spawn",
+      "enabled_in_v1": true,
+      "notes": "CT spawn main area"
+    },
+    {
+      "place_id": 2,
+      "place_token": "mid",
+      "display_name": "Mid",
+      "enabled_in_v1": true,
+      "notes": "Mid main area"
+    },
+    {
+      "place_id": 3,
+      "place_token": "a_site",
+      "display_name": "A Site",
+      "enabled_in_v1": true,
+      "notes": "A site main area"
+    },
+    {
+      "place_id": 4,
+      "place_token": "b_site",
+      "display_name": "B Site",
+      "enabled_in_v1": true,
+      "notes": "B site main area"
+    },
+    {
+      "place_id": 5,
+      "place_token": "long_doors",
+      "display_name": "Long Doors",
+      "enabled_in_v1": true,
+      "notes": "Long doors area"
+    },
+    {
+      "place_id": 6,
+      "place_token": "catwalk",
+      "display_name": "Catwalk",
+      "enabled_in_v1": true,
+      "notes": "Catwalk main area"
+    },
+    {
+      "place_id": 7,
+      "place_token": "upper_tuns",
+      "display_name": "Upper Tunnels",
+      "enabled_in_v1": true,
+      "notes": "Upper tunnels area"
+    }
+  ]
+}

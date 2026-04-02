@@ -12,6 +12,12 @@
 - `cs_dataset_build`
 - `cs_dataset_report`
 
+补充约束：
+
+- 以上 4 个工具后续必须同时提供 GUI 版本
+- CLI 规格仍保留，作为脚本接口与自动化回归接口
+- GUI 与 CLI 必须共享同一套核心参数和输出文件格式
+
 ## 2. 总体原则
 
 - CLI 只做明确命令，不做自然语言理解
@@ -19,6 +25,13 @@
 - 输出文件格式固定
 - 错误时快速失败
 - 所有路径使用相对路径或显式传入路径
+
+补充 GUI 原则：
+
+- GUI 是主操作入口，不是可有可无的附属面板
+- GUI 必须展示当前状态、当前路径、当前 session 和错误信息
+- GUI 触发的行为必须可映射到同一套 CLI/核心逻辑
+- GUI 不得引入第二套独立文件格式
 
 ## 3. 工具 1：`cs_capture_session`
 
@@ -100,6 +113,20 @@ cs_capture_session status --session-id session_0001
 - `session.json`
 - `capture_state.json`
 
+## 3.5 GUI 要求
+
+`cs_capture_session` GUI 至少需要：
+
+- 启动采集按钮
+- 停止采集按钮
+- 当前 session id 显示
+- 当前窗口状态显示
+- 当前分辨率显示
+- 已采集帧数显示
+- 实时状态显示，例如 `starting / running / stopped / error`
+- 输出目录显示
+- 最近错误信息显示
+
 ## 4. 工具 2：`cs_label_session`
 
 ## 4.1 目标
@@ -166,6 +193,18 @@ cs_label_session close `
 
 - `label_segments.json`
 
+## 4.5 GUI 要求
+
+`cs_label_session` GUI 至少需要：
+
+- 当前 session 显示
+- 当前激活 `place_token` 显示
+- 可点击或可选择的 token 列表
+- 设置当前 token 按钮
+- 关闭当前标签段按钮
+- 当前帧号显示
+- 最近一次标签切换结果显示
+
 ## 5. 工具 3：`cs_dataset_build`
 
 ## 5.1 目标
@@ -218,6 +257,20 @@ cs_dataset_build run `
 - `test_list.json`
 - `build_report.json`
 
+## 5.5 GUI 要求
+
+`cs_dataset_build` GUI 至少需要：
+
+- 原始数据目录输入框
+- 输出目录输入框
+- 抽样参数输入控件
+- 去重与过滤开关
+- split 配置输入控件
+- 开始构建按钮
+- 构建进度显示
+- 构建结果摘要显示
+- 失败时错误信息显示
+
 ## 6. 工具 4：`cs_dataset_report`
 
 ## 6.1 目标
@@ -255,6 +308,18 @@ cs_dataset_report run `
 - `class_balance.json`
 - `session_coverage.json`
 - `dataset_report.md`
+
+## 6.5 GUI 要求
+
+`cs_dataset_report` GUI 至少需要：
+
+- 数据集目录输入框
+- 报告输出目录输入框
+- 生成报告按钮
+- 类别分布摘要显示
+- session 覆盖摘要显示
+- 缺类或失衡提示显示
+- 报告文件路径显示
 
 ## 7. place token 校验规则
 
@@ -301,3 +366,9 @@ cs_dataset_report run `
 ## 10. 未来扩展
 
 后续如果进入 Version 2/3，可继续沿用本 CLI 风格，不重新发明工具接口。
+
+但扩展时仍需保持：
+
+- GUI 继续作为主入口
+- CLI 继续作为脚本接口
+- 二者共享同一套核心逻辑与输出格式
