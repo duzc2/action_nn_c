@@ -14,7 +14,7 @@
 
 #define MNIST_TRAIN_SAMPLE_LIMIT 1500U
 #define MNIST_EVAL_SAMPLE_LIMIT 300U
-#define MNIST_EPOCH_COUNT 5U
+#define MNIST_EPOCH_COUNT 20U
 
 #define MNIST_DATASET_ROOT "../../../../demo/mnist/dataset"
 #define MNIST_TRAIN_IMAGES MNIST_DATASET_ROOT "/train-images.idx3-ubyte"
