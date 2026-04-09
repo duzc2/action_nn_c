@@ -40,6 +40,11 @@ if(ACTION_C_ENABLE_NN_CNN)
     action_c_append_type_sources(cnn)
 endif()
 
+if(ACTION_C_ENABLE_NN_CNN_DUAL_POOL)
+    list(APPEND NN_ENABLED_TYPES cnn_dual_pool)
+    action_c_append_type_sources(cnn_dual_pool)
+endif()
+
 if(ACTION_C_ENABLE_NN_RNN)
     list(APPEND NN_ENABLED_TYPES rnn)
     action_c_append_type_sources(rnn)
