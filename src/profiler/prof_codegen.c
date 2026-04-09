@@ -442,6 +442,7 @@ static int append_connection_table(
             buffer,
             buffer_capacity,
             position,
+            "#if GENERATED_LEAF_COUNT > 1U\n"
             "typedef struct {\n"
             "    size_t source_leaf_index;\n"
             "    size_t target_leaf_index;\n"
@@ -451,6 +452,17 @@ static int append_connection_table(
             "} GeneratedConnection;\n\n"
             "static const GeneratedConnection g_connections[(GENERATED_CONNECTION_COUNT == 0U) ? 1U : GENERATED_CONNECTION_COUNT] = {\n") != 0) {
         return -1;
+    }
+
+    if (network->connection_count == 0U) {
+        if (append_format(
+                buffer,
+                buffer_capacity,
+                position,
+                "    { 0U, 0U, 0U, 0U, %d },\n",
+                (int)NN_MERGE_SUM) != 0) {
+            return -1;
+        }
     }
 
     /* Serialize each validated edge in declaration order so debugging stays intuitive. */
@@ -480,7 +492,7 @@ static int append_connection_table(
         }
     }
 
-    if (append_format(buffer, buffer_capacity, position, "};\n\n") != 0) {
+    if (append_format(buffer, buffer_capacity, position, "};\n#endif\n\n") != 0) {
         return -1;
     }
 
@@ -929,81 +941,106 @@ static int append_generated_infer_helpers(
      * graph-input staging, connection routing, and sink-output collection.
      * Keeping them adjacent makes the generated infer.c easier to inspect.
      */
-    return append_format(
+    if (append_format(
+            buffer,
+            buffer_capacity,
+            position,
+            "static void generated_infer_destroy_leaf(GeneratedInferLeaf* leaf) {\n"
+            "    if (leaf == 0) return;\n"
+            "    if (leaf->contract != 0 && leaf->contract->destroy != 0 && leaf->network_ctx != 0) {\n"
+            "        leaf->contract->destroy(leaf->network_ctx);\n"
+            "    }\n"
+            "    free(leaf->input_buffer);\n"
+            "    free(leaf->output_buffer);\n"
+            "    free(leaf->average_counts);\n"
+            "    leaf->network_ctx = 0;\n"
+            "}\n\n") != 0) {
+        return -1;
+    }
+
+    if (append_format(buffer, buffer_capacity, position, "#if GENERATED_LEAF_COUNT > 1U\n") != 0) {
+        return -1;
+    }
+
+    if (append_format(
+            buffer,
+            buffer_capacity,
+            position,
+            "static void generated_infer_prepare_inputs(InferContext* ctx, const float* input) {\n"
+            "    size_t leaf_index;\n"
+            "    if (ctx == 0) return;\n"
+            "    for (leaf_index = 0U; leaf_index < GENERATED_LEAF_COUNT; ++leaf_index) {\n"
+            "        GeneratedInferLeaf* leaf = &ctx->leaves[leaf_index];\n"
+            "        if (leaf->input_buffer != 0) memset(leaf->input_buffer, 0, leaf->input_size * sizeof(float));\n"
+            "        if (leaf->output_buffer != 0) memset(leaf->output_buffer, 0, leaf->output_size * sizeof(float));\n"
+            "        if (leaf->average_counts != 0) memset(leaf->average_counts, 0, leaf->input_size * sizeof(size_t));\n"
+            "        if (g_incoming_counts[leaf_index] == 0U && input != 0 && leaf->input_buffer != 0) {\n"
+            "            size_t input_index;\n"
+            "            size_t copy_count = leaf->input_size < GENERATED_NETWORK_INPUT_SIZE ? leaf->input_size : GENERATED_NETWORK_INPUT_SIZE;\n"
+            "            for (input_index = 0U; input_index < copy_count; ++input_index) {\n"
+            "                leaf->input_buffer[input_index] = input[input_index];\n"
+            "            }\n"
+            "        }\n"
+            "    }\n"
+            "}\n\n"
+            "static void generated_infer_finalize_average(GeneratedInferLeaf* leaf) {\n"
+            "    size_t node_index;\n"
+            "    if (leaf == 0 || leaf->input_buffer == 0 || leaf->average_counts == 0) return;\n"
+            "    for (node_index = 0U; node_index < leaf->input_size; ++node_index) {\n"
+            "        if (leaf->average_counts[node_index] > 1U) {\n"
+            "            leaf->input_buffer[node_index] /= (float)leaf->average_counts[node_index];\n"
+            "        }\n"
+            "    }\n"
+            "}\n\n") != 0) {
+        return -1;
+    }
+
+    if (append_format(
+            buffer,
+            buffer_capacity,
+            position,
+            "static void generated_infer_route_outputs(InferContext* ctx, size_t source_leaf_index) {\n"
+            "    size_t connection_index;\n"
+            "    if (ctx == 0) return;\n"
+            "    for (connection_index = 0U; connection_index < GENERATED_CONNECTION_COUNT; ++connection_index) {\n"
+            "        const GeneratedConnection* connection = &g_connections[connection_index];\n"
+            "        GeneratedInferLeaf* target_leaf;\n"
+            "        const GeneratedInferLeaf* source_leaf;\n"
+            "        float value;\n"
+            "        if (connection->source_leaf_index != source_leaf_index) continue;\n"
+            "        source_leaf = &ctx->leaves[connection->source_leaf_index];\n"
+            "        target_leaf = &ctx->leaves[connection->target_leaf_index];\n"
+            "        if (source_leaf->output_buffer == 0 || target_leaf->input_buffer == 0) continue;\n"
+            "        value = source_leaf->output_buffer[connection->source_node_index];\n"
+            "        target_leaf->input_buffer[connection->target_node_index] += value;\n"
+            "        if (connection->merge_strategy == 2 && target_leaf->average_counts != 0) {\n"
+            "            target_leaf->average_counts[connection->target_node_index] += 1U;\n"
+            "        } else if (target_leaf->average_counts != 0 && target_leaf->average_counts[connection->target_node_index] == 0U) {\n"
+            "            target_leaf->average_counts[connection->target_node_index] = 1U;\n"
+            "        }\n"
+            "    }\n"
+            "}\n\n"
+            "static int generated_infer_execute_graph(InferContext* ctx, const float* input) {\n"
+            "    size_t order_index;\n"
+            "    if (ctx == 0) return -1;\n"
+            "    generated_infer_prepare_inputs(ctx, input);\n"
+            "    for (order_index = 0U; order_index < GENERATED_LEAF_COUNT; ++order_index) {\n"
+            "        size_t leaf_index = g_topology_order[order_index];\n"
+            "        GeneratedInferLeaf* leaf = &ctx->leaves[leaf_index];\n"
+            "        if (g_incoming_counts[leaf_index] > 0U) generated_infer_finalize_average(leaf);\n"
+            "        if (leaf->contract == 0 || leaf->contract->graph_run == 0 || leaf->network_ctx == 0) return -1;\n"
+            "        if (leaf->contract->graph_run(leaf->network_ctx, leaf->input_buffer, leaf->output_buffer) != 0) return -1;\n"
+            "        generated_infer_route_outputs(ctx, leaf_index);\n"
+            "    }\n"
+            "    return 0;\n"
+            "}\n\n") != 0) {
+        return -1;
+    }
+
+    if (append_format(
         buffer,
         buffer_capacity,
         position,
-        "static void generated_infer_destroy_leaf(GeneratedInferLeaf* leaf) {\n"
-        "    if (leaf == 0) return;\n"
-        "    if (leaf->contract != 0 && leaf->contract->destroy != 0 && leaf->network_ctx != 0) {\n"
-        "        leaf->contract->destroy(leaf->network_ctx);\n"
-        "    }\n"
-        "    free(leaf->input_buffer);\n"
-        "    free(leaf->output_buffer);\n"
-        "    free(leaf->average_counts);\n"
-        "    leaf->network_ctx = 0;\n"
-        "}\n\n"
-        "static void generated_infer_prepare_inputs(InferContext* ctx, const float* input) {\n"
-        "    size_t leaf_index;\n"
-        "    if (ctx == 0) return;\n"
-        "    for (leaf_index = 0U; leaf_index < GENERATED_LEAF_COUNT; ++leaf_index) {\n"
-        "        GeneratedInferLeaf* leaf = &ctx->leaves[leaf_index];\n"
-        "        if (leaf->input_buffer != 0) memset(leaf->input_buffer, 0, leaf->input_size * sizeof(float));\n"
-        "        if (leaf->output_buffer != 0) memset(leaf->output_buffer, 0, leaf->output_size * sizeof(float));\n"
-        "        if (leaf->average_counts != 0) memset(leaf->average_counts, 0, leaf->input_size * sizeof(size_t));\n"
-        "        if (g_incoming_counts[leaf_index] == 0U && input != 0 && leaf->input_buffer != 0) {\n"
-        "            size_t input_index;\n"
-        "            size_t copy_count = leaf->input_size < GENERATED_NETWORK_INPUT_SIZE ? leaf->input_size : GENERATED_NETWORK_INPUT_SIZE;\n"
-        "            for (input_index = 0U; input_index < copy_count; ++input_index) {\n"
-        "                leaf->input_buffer[input_index] = input[input_index];\n"
-        "            }\n"
-        "        }\n"
-        "    }\n"
-        "}\n\n"
-        "static void generated_infer_finalize_average(GeneratedInferLeaf* leaf) {\n"
-        "    size_t node_index;\n"
-        "    if (leaf == 0 || leaf->input_buffer == 0 || leaf->average_counts == 0) return;\n"
-        "    for (node_index = 0U; node_index < leaf->input_size; ++node_index) {\n"
-        "        if (leaf->average_counts[node_index] > 1U) {\n"
-        "            leaf->input_buffer[node_index] /= (float)leaf->average_counts[node_index];\n"
-        "        }\n"
-        "    }\n"
-        "}\n\n"
-        "static void generated_infer_route_outputs(InferContext* ctx, size_t source_leaf_index) {\n"
-        "    size_t connection_index;\n"
-        "    if (ctx == 0) return;\n"
-        "    for (connection_index = 0U; connection_index < GENERATED_CONNECTION_COUNT; ++connection_index) {\n"
-        "        const GeneratedConnection* connection = &g_connections[connection_index];\n"
-        "        GeneratedInferLeaf* target_leaf;\n"
-        "        const GeneratedInferLeaf* source_leaf;\n"
-        "        float value;\n"
-        "        if (connection->source_leaf_index != source_leaf_index) continue;\n"
-        "        source_leaf = &ctx->leaves[connection->source_leaf_index];\n"
-        "        target_leaf = &ctx->leaves[connection->target_leaf_index];\n"
-        "        if (source_leaf->output_buffer == 0 || target_leaf->input_buffer == 0) continue;\n"
-        "        value = source_leaf->output_buffer[connection->source_node_index];\n"
-        "        target_leaf->input_buffer[connection->target_node_index] += value;\n"
-        "        if (connection->merge_strategy == 2 && target_leaf->average_counts != 0) {\n"
-        "            target_leaf->average_counts[connection->target_node_index] += 1U;\n"
-        "        } else if (target_leaf->average_counts != 0 && target_leaf->average_counts[connection->target_node_index] == 0U) {\n"
-        "            target_leaf->average_counts[connection->target_node_index] = 1U;\n"
-        "        }\n"
-        "    }\n"
-        "}\n\n"
-        "static int generated_infer_execute_graph(InferContext* ctx, const float* input) {\n"
-        "    size_t order_index;\n"
-        "    if (ctx == 0) return -1;\n"
-        "    generated_infer_prepare_inputs(ctx, input);\n"
-        "    for (order_index = 0U; order_index < GENERATED_LEAF_COUNT; ++order_index) {\n"
-        "        size_t leaf_index = g_topology_order[order_index];\n"
-        "        GeneratedInferLeaf* leaf = &ctx->leaves[leaf_index];\n"
-        "        if (g_incoming_counts[leaf_index] > 0U) generated_infer_finalize_average(leaf);\n"
-        "        if (leaf->contract == 0 || leaf->contract->graph_run == 0 || leaf->network_ctx == 0) return -1;\n"
-        "        if (leaf->contract->graph_run(leaf->network_ctx, leaf->input_buffer, leaf->output_buffer) != 0) return -1;\n"
-        "        generated_infer_route_outputs(ctx, leaf_index);\n"
-        "    }\n"
-        "    return 0;\n"
-        "}\n\n"
         "static void generated_infer_collect_outputs(const InferContext* ctx, float* output) {\n"
         "    size_t leaf_index;\n"
         "    size_t output_offset = 0U;\n"
@@ -1017,8 +1054,11 @@ static int append_generated_infer_helpers(
         "        }\n"
         "        output_offset += leaf->output_size;\n"
         "    }\n"
-        "}\n\n"
-    );
+        "}\n\n") != 0) {
+        return -1;
+    }
+
+    return append_format(buffer, buffer_capacity, position, "#endif\n\n");
 }
 
 /**
@@ -1284,6 +1324,9 @@ ProfStatus prof_codegen_infer(ProfCodegenContext* ctx) {
             "    if (ctx == 0) return -1;\n"
             "#if GENERATED_LEAF_COUNT == 1U\n"
             "    {\n"
+            "        (void)g_topology_order;\n"
+            "        (void)g_incoming_counts;\n"
+            "        (void)g_outgoing_counts;\n"
             "        GeneratedInferLeaf* leaf = &ctx->leaves[0U];\n"
             "        if (leaf->contract == 0 || leaf->contract->auto_run == 0 || leaf->network_ctx == 0) return -1;\n"
             "        return leaf->contract->auto_run(leaf->network_ctx, input, output);\n"
@@ -1415,107 +1458,139 @@ static int append_generated_train_helpers(char* buffer, size_t buffer_capacity, 
      * the generated public API can read like orchestration code instead of a
      * wall of buffer-manipulation details.
      */
-    return append_format(
+    if (append_format(buffer, buffer_capacity, position, "#if GENERATED_LEAF_COUNT > 1U\n") != 0) {
+        return -1;
+    }
+
+    if (append_format(
+            buffer,
+            buffer_capacity,
+            position,
+            "static float generated_train_compute_mse(const float* output, const float* target, size_t count) {\n"
+            "    float loss = 0.0f;\n"
+            "    size_t index;\n"
+            "    if (output == 0 || target == 0 || count == 0U) return 0.0f;\n"
+            "    for (index = 0U; index < count; ++index) {\n"
+            "        float diff = output[index] - target[index];\n"
+            "        loss += diff * diff;\n"
+            "    }\n"
+            "    return loss / (float)count;\n"
+            "}\n\n"
+            "static void generated_train_prepare_inputs(InferContext* infer_ctx, const float* input) {\n"
+            "    size_t leaf_index;\n"
+            "    if (infer_ctx == 0) return;\n"
+            "    for (leaf_index = 0U; leaf_index < GENERATED_LEAF_COUNT; ++leaf_index) {\n"
+            "        GeneratedInferLeaf* leaf = &infer_ctx->leaves[leaf_index];\n"
+            "        if (leaf->input_buffer != 0) memset(leaf->input_buffer, 0, leaf->input_size * sizeof(float));\n"
+            "        if (leaf->output_buffer != 0) memset(leaf->output_buffer, 0, leaf->output_size * sizeof(float));\n"
+            "        if (leaf->average_counts != 0) memset(leaf->average_counts, 0, leaf->input_size * sizeof(size_t));\n"
+            "        if (g_incoming_counts[leaf_index] == 0U && input != 0 && leaf->input_buffer != 0) {\n"
+            "            size_t input_index;\n"
+            "            size_t copy_count = leaf->input_size < GENERATED_NETWORK_INPUT_SIZE ? leaf->input_size : GENERATED_NETWORK_INPUT_SIZE;\n"
+            "            for (input_index = 0U; input_index < copy_count; ++input_index) {\n"
+            "                leaf->input_buffer[input_index] = input[input_index];\n"
+            "            }\n"
+            "        }\n"
+            "    }\n"
+            "}\n\n") != 0) {
+        return -1;
+    }
+
+    if (append_format(
+            buffer,
+            buffer_capacity,
+            position,
+            "static void generated_train_finalize_average(GeneratedInferLeaf* leaf) {\n"
+            "    size_t node_index;\n"
+            "    if (leaf == 0 || leaf->input_buffer == 0 || leaf->average_counts == 0) return;\n"
+            "    for (node_index = 0U; node_index < leaf->input_size; ++node_index) {\n"
+            "        if (leaf->average_counts[node_index] > 1U) {\n"
+            "            leaf->input_buffer[node_index] /= (float)leaf->average_counts[node_index];\n"
+            "        }\n"
+            "    }\n"
+            "}\n\n"
+            "static void generated_train_route_outputs(InferContext* infer_ctx, size_t source_leaf_index) {\n"
+            "    size_t connection_index;\n"
+            "    if (infer_ctx == 0) return;\n"
+            "    for (connection_index = 0U; connection_index < GENERATED_CONNECTION_COUNT; ++connection_index) {\n"
+            "        const GeneratedConnection* connection = &g_connections[connection_index];\n"
+            "        GeneratedInferLeaf* target_leaf;\n"
+            "        const GeneratedInferLeaf* source_leaf;\n"
+            "        float value;\n"
+            "        if (connection->source_leaf_index != source_leaf_index) continue;\n"
+            "        source_leaf = &infer_ctx->leaves[connection->source_leaf_index];\n"
+            "        target_leaf = &infer_ctx->leaves[connection->target_leaf_index];\n"
+            "        if (source_leaf->output_buffer == 0 || target_leaf->input_buffer == 0) continue;\n"
+            "        value = source_leaf->output_buffer[connection->source_node_index];\n"
+            "        target_leaf->input_buffer[connection->target_node_index] += value;\n"
+            "        if (connection->merge_strategy == 2 && target_leaf->average_counts != 0) {\n"
+            "            target_leaf->average_counts[connection->target_node_index] += 1U;\n"
+            "        } else if (target_leaf->average_counts != 0 && target_leaf->average_counts[connection->target_node_index] == 0U) {\n"
+            "            target_leaf->average_counts[connection->target_node_index] = 1U;\n"
+            "        }\n"
+            "    }\n"
+            "}\n\n") != 0) {
+        return -1;
+    }
+
+    if (append_format(
+            buffer,
+            buffer_capacity,
+            position,
+            "static void generated_train_clear_gradients(TrainContext* ctx) {\n"
+            "    size_t leaf_index;\n"
+            "    if (ctx == 0) return;\n"
+            "    for (leaf_index = 0U; leaf_index < GENERATED_LEAF_COUNT; ++leaf_index) {\n"
+            "        GeneratedTrainLeaf* leaf = &ctx->leaves[leaf_index];\n"
+            "        GeneratedInferLeaf* infer_leaf = &((InferContext*)ctx->infer_owner)->leaves[leaf_index];\n"
+            "        if (leaf->output_grad_buffer != 0) memset(leaf->output_grad_buffer, 0, infer_leaf->output_size * sizeof(float));\n"
+            "        if (leaf->input_grad_buffer != 0) memset(leaf->input_grad_buffer, 0, infer_leaf->input_size * sizeof(float));\n"
+            "    }\n"
+            "}\n\n"
+            "static void generated_train_collect_outputs(const InferContext* infer_ctx, float* output) {\n"
+            "    size_t leaf_index;\n"
+            "    size_t output_offset = 0U;\n"
+            "    if (infer_ctx == 0 || output == 0) return;\n"
+            "    for (leaf_index = 0U; leaf_index < GENERATED_LEAF_COUNT; ++leaf_index) {\n"
+            "        const GeneratedInferLeaf* leaf = &infer_ctx->leaves[leaf_index];\n"
+            "        size_t node_index;\n"
+            "        if (g_outgoing_counts[leaf_index] != 0U) continue;\n"
+            "        for (node_index = 0U; node_index < leaf->output_size; ++node_index) {\n"
+            "            output[output_offset + node_index] = leaf->output_buffer[node_index];\n"
+            "        }\n"
+            "        output_offset += leaf->output_size;\n"
+            "    }\n"
+            "}\n\n") != 0) {
+        return -1;
+    }
+
+    if (append_format(
+            buffer,
+            buffer_capacity,
+            position,
+            "static void generated_train_seed_output_gradients(TrainContext* ctx, const InferContext* infer_ctx, const float* target) {\n"
+            "    size_t leaf_index;\n"
+            "    size_t output_offset = 0U;\n"
+            "    if (ctx == 0 || infer_ctx == 0 || target == 0) return;\n"
+            "    for (leaf_index = 0U; leaf_index < GENERATED_LEAF_COUNT; ++leaf_index) {\n"
+            "        const GeneratedInferLeaf* infer_leaf = &infer_ctx->leaves[leaf_index];\n"
+            "        GeneratedTrainLeaf* train_leaf = &ctx->leaves[leaf_index];\n"
+            "        size_t node_index;\n"
+            "        if (g_outgoing_counts[leaf_index] != 0U || train_leaf->output_grad_buffer == 0 || infer_leaf->output_buffer == 0) continue;\n"
+            "        for (node_index = 0U; node_index < infer_leaf->output_size; ++node_index) {\n"
+            "            float diff = infer_leaf->output_buffer[node_index] - target[output_offset + node_index];\n"
+            "            train_leaf->output_grad_buffer[node_index] = (2.0f * diff) / (float)GENERATED_NETWORK_OUTPUT_SIZE;\n"
+            "        }\n"
+            "        output_offset += infer_leaf->output_size;\n"
+            "    }\n"
+            "}\n\n") != 0) {
+        return -1;
+    }
+
+    if (append_format(
         buffer,
         buffer_capacity,
         position,
-        "static float generated_train_compute_mse(const float* output, const float* target, size_t count) {\n"
-        "    float loss = 0.0f;\n"
-        "    size_t index;\n"
-        "    if (output == 0 || target == 0 || count == 0U) return 0.0f;\n"
-        "    for (index = 0U; index < count; ++index) {\n"
-        "        float diff = output[index] - target[index];\n"
-        "        loss += diff * diff;\n"
-        "    }\n"
-        "    return loss / (float)count;\n"
-        "}\n\n"
-        "static void generated_train_prepare_inputs(InferContext* infer_ctx, const float* input) {\n"
-        "    size_t leaf_index;\n"
-        "    if (infer_ctx == 0) return;\n"
-        "    for (leaf_index = 0U; leaf_index < GENERATED_LEAF_COUNT; ++leaf_index) {\n"
-        "        GeneratedInferLeaf* leaf = &infer_ctx->leaves[leaf_index];\n"
-        "        if (leaf->input_buffer != 0) memset(leaf->input_buffer, 0, leaf->input_size * sizeof(float));\n"
-        "        if (leaf->output_buffer != 0) memset(leaf->output_buffer, 0, leaf->output_size * sizeof(float));\n"
-        "        if (leaf->average_counts != 0) memset(leaf->average_counts, 0, leaf->input_size * sizeof(size_t));\n"
-        "        if (g_incoming_counts[leaf_index] == 0U && input != 0 && leaf->input_buffer != 0) {\n"
-        "            size_t input_index;\n"
-        "            size_t copy_count = leaf->input_size < GENERATED_NETWORK_INPUT_SIZE ? leaf->input_size : GENERATED_NETWORK_INPUT_SIZE;\n"
-        "            for (input_index = 0U; input_index < copy_count; ++input_index) {\n"
-        "                leaf->input_buffer[input_index] = input[input_index];\n"
-        "            }\n"
-        "        }\n"
-        "    }\n"
-        "}\n\n"
-        "static void generated_train_finalize_average(GeneratedInferLeaf* leaf) {\n"
-        "    size_t node_index;\n"
-        "    if (leaf == 0 || leaf->input_buffer == 0 || leaf->average_counts == 0) return;\n"
-        "    for (node_index = 0U; node_index < leaf->input_size; ++node_index) {\n"
-        "        if (leaf->average_counts[node_index] > 1U) {\n"
-        "            leaf->input_buffer[node_index] /= (float)leaf->average_counts[node_index];\n"
-        "        }\n"
-        "    }\n"
-        "}\n\n"
-        "static void generated_train_route_outputs(InferContext* infer_ctx, size_t source_leaf_index) {\n"
-        "    size_t connection_index;\n"
-        "    if (infer_ctx == 0) return;\n"
-        "    for (connection_index = 0U; connection_index < GENERATED_CONNECTION_COUNT; ++connection_index) {\n"
-        "        const GeneratedConnection* connection = &g_connections[connection_index];\n"
-        "        GeneratedInferLeaf* target_leaf;\n"
-        "        const GeneratedInferLeaf* source_leaf;\n"
-        "        float value;\n"
-        "        if (connection->source_leaf_index != source_leaf_index) continue;\n"
-        "        source_leaf = &infer_ctx->leaves[connection->source_leaf_index];\n"
-        "        target_leaf = &infer_ctx->leaves[connection->target_leaf_index];\n"
-        "        if (source_leaf->output_buffer == 0 || target_leaf->input_buffer == 0) continue;\n"
-        "        value = source_leaf->output_buffer[connection->source_node_index];\n"
-        "        target_leaf->input_buffer[connection->target_node_index] += value;\n"
-        "        if (connection->merge_strategy == 2 && target_leaf->average_counts != 0) {\n"
-        "            target_leaf->average_counts[connection->target_node_index] += 1U;\n"
-        "        } else if (target_leaf->average_counts != 0 && target_leaf->average_counts[connection->target_node_index] == 0U) {\n"
-        "            target_leaf->average_counts[connection->target_node_index] = 1U;\n"
-        "        }\n"
-        "    }\n"
-        "}\n\n"
-        "static void generated_train_clear_gradients(TrainContext* ctx) {\n"
-        "    size_t leaf_index;\n"
-        "    if (ctx == 0) return;\n"
-        "    for (leaf_index = 0U; leaf_index < GENERATED_LEAF_COUNT; ++leaf_index) {\n"
-        "        GeneratedTrainLeaf* leaf = &ctx->leaves[leaf_index];\n"
-        "        GeneratedInferLeaf* infer_leaf = &((InferContext*)ctx->infer_owner)->leaves[leaf_index];\n"
-        "        if (leaf->output_grad_buffer != 0) memset(leaf->output_grad_buffer, 0, infer_leaf->output_size * sizeof(float));\n"
-        "        if (leaf->input_grad_buffer != 0) memset(leaf->input_grad_buffer, 0, infer_leaf->input_size * sizeof(float));\n"
-        "    }\n"
-        "}\n\n"
-        "static void generated_train_collect_outputs(const InferContext* infer_ctx, float* output) {\n"
-        "    size_t leaf_index;\n"
-        "    size_t output_offset = 0U;\n"
-        "    if (infer_ctx == 0 || output == 0) return;\n"
-        "    for (leaf_index = 0U; leaf_index < GENERATED_LEAF_COUNT; ++leaf_index) {\n"
-        "        const GeneratedInferLeaf* leaf = &infer_ctx->leaves[leaf_index];\n"
-        "        size_t node_index;\n"
-        "        if (g_outgoing_counts[leaf_index] != 0U) continue;\n"
-        "        for (node_index = 0U; node_index < leaf->output_size; ++node_index) {\n"
-        "            output[output_offset + node_index] = leaf->output_buffer[node_index];\n"
-        "        }\n"
-        "        output_offset += leaf->output_size;\n"
-        "    }\n"
-        "}\n\n"
-        "static void generated_train_seed_output_gradients(TrainContext* ctx, const InferContext* infer_ctx, const float* target) {\n"
-        "    size_t leaf_index;\n"
-        "    size_t output_offset = 0U;\n"
-        "    if (ctx == 0 || infer_ctx == 0 || target == 0) return;\n"
-        "    for (leaf_index = 0U; leaf_index < GENERATED_LEAF_COUNT; ++leaf_index) {\n"
-        "        const GeneratedInferLeaf* infer_leaf = &infer_ctx->leaves[leaf_index];\n"
-        "        GeneratedTrainLeaf* train_leaf = &ctx->leaves[leaf_index];\n"
-        "        size_t node_index;\n"
-        "        if (g_outgoing_counts[leaf_index] != 0U || train_leaf->output_grad_buffer == 0 || infer_leaf->output_buffer == 0) continue;\n"
-        "        for (node_index = 0U; node_index < infer_leaf->output_size; ++node_index) {\n"
-        "            float diff = infer_leaf->output_buffer[node_index] - target[output_offset + node_index];\n"
-        "            train_leaf->output_grad_buffer[node_index] = (2.0f * diff) / (float)GENERATED_NETWORK_OUTPUT_SIZE;\n"
-        "        }\n"
-        "        output_offset += infer_leaf->output_size;\n"
-        "    }\n"
-        "}\n\n"
         "static void generated_train_route_input_gradients(TrainContext* ctx, const InferContext* infer_ctx, size_t target_leaf_index) {\n"
         "    size_t connection_index;\n"
         "    if (ctx == 0 || infer_ctx == 0) return;\n"
@@ -1539,8 +1614,11 @@ static int append_generated_train_helpers(char* buffer, size_t buffer_capacity, 
         "        }\n"
         "        source_train_leaf->output_grad_buffer[connection->source_node_index] += grad_value;\n"
         "    }\n"
-        "}\n\n"
-    );
+        "}\n\n") != 0) {
+        return -1;
+    }
+
+    return append_format(buffer, buffer_capacity, position, "#endif\n\n");
 }
 
 /**
@@ -1735,6 +1813,9 @@ ProfStatus prof_codegen_train(ProfCodegenContext* ctx) {
             "    TrainContext* ctx = (TrainContext*)context;\n"
             "    if (ctx == 0) return -1;\n"
             "#if GENERATED_LEAF_COUNT == 1U\n"
+            "    (void)g_topology_order;\n"
+            "    (void)g_incoming_counts;\n"
+            "    (void)g_outgoing_counts;\n"
             "    if (ctx->leaves[0U].contract == 0 || ctx->leaves[0U].contract->step_with_data == 0 || ctx->leaves[0U].train_ctx == 0) return -1;\n"
             "    if (ctx->leaves[0U].contract->step_with_data(ctx->leaves[0U].train_ctx, input, target) != 0) return -1;\n"
             "#else\n"
@@ -1774,7 +1855,8 @@ ProfStatus prof_codegen_train(ProfCodegenContext* ctx) {
             "    }\n"
             "#endif\n"
             "    ctx->step_count += 1U;\n"
-            "    return 0;\n}\n\n"
+            "    return 0;\n}\n\n") != 0 ||
+        append_format(content, CODE_BUFFER_CAPACITY, &pos,
             "int train_epoch(void* context, int epoch) {\n"
             "    TrainContext* ctx = (TrainContext*)context;\n"
             "    (void)epoch;\n"
