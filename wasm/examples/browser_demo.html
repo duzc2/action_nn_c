@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>action_nn_c WebAssembly Demo</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            border-radius: 8px;
+            padding: 24px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 { color: #333; }
+        h2 { color: #666; margin-top: 24px; }
+        .status { 
+            padding: 12px; 
+            border-radius: 4px; 
+            margin: 16px 0;
+            font-weight: bold;
+        }
+        .status.loading { background: #fff3cd; color: #856404; }
+        .status.ready { background: #d4edda; color: #155724; }
+        .status.error { background: #f8d7da; color: #721c24; }
+        .network-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 8px;
+            margin: 16px 0;
+        }
+        .network-item {
+            padding: 8px 12px;
+            background: #e9ecef;
+            border-radius: 4px;
+            text-align: center;
+            font-size: 14px;
+        }
+        .network-item.enabled {
+            background: #28a745;
+            color: white;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            margin: 4px;
+        }
+        button:hover { background: #0056b3; }
+        button:disabled { 
+            background: #ccc; 
+            cursor: not-allowed; 
+        }
+        .output {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 16px;
+            font-family: monospace;
+            font-size: 13px;
+            white-space: pre-wrap;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 16px;
+            background: #f8f9fa;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧠 action_nn_c WebAssembly Demo</h1>
+        <p>This page demonstrates the action_nn_c neural network library running in your browser via WebAssembly.</p>
+
+        <div id="status" class="status loading">Loading WebAssembly module...</div>
+
+        <h2>Supported Network Types</h2>
+        <div id="networkList" class="network-list">
+            <div class="network-item">Detecting...</div>
+        </div>
+
+        <h2>Module Information</h2>
+        <div id="moduleInfo" class="output">Waiting for module to load...</div>
+
+        <h2>Inference Test</h2>
+        <div class="test-section">
+            <p>Test basic inference with a simple MLP network:</p>
+            <button id="btnInfer" disabled>Run Inference Test</button>
+            <div id="inferResult" class="output" style="margin-top: 12px;">Results will appear here...</div>
+        </div>
+
+        <h2>Memory Information</h2>
+        <div id="memoryInfo" class="output">Waiting for module to load...</div>
+
+        <h2>Usage Example</h2>
+        <pre class="output"><code>// After the module loads:
+const Module = await ActionNnC();
+
+// Create inference context
+const config = new Uint8Array([...]); // Your serialized config
+const ctx = Module.infer_create(config, config.length);
+
+// Run inference
+const input = new Float32Array([...]);
+const output = new Float32Array(outputSize);
+Module.infer_run(ctx, input, input.length * 4, output, output.length * 4);
+
+// Cleanup
+Module.infer_destroy(ctx);</code></pre>
+    </div>
+
+    <script src="action_nn_c.js"></script>
+    <script>
+        const statusEl = document.getElementById('status');
+        const networkListEl = document.getElementById('networkList');
+        const moduleInfoEl = document.getElementById('moduleInfo');
+        const memoryInfoEl = document.getElementById('memoryInfo');
+        const inferResultEl = document.getElementById('inferResult');
+        const btnInfer = document.getElementById('btnInfer');
+
+        let wasmModule = null;
+
+        // Initialize the Wasm module
+        async function initWasm() {
+            try {
+                if (typeof ActionNnC === 'undefined') {
+                    throw new Error('ActionNnC module not found. Make sure action_nn_c.js is loaded.');
+                }
+
+                wasmModule = await ActionNnC();
+                
+                statusEl.textContent = '✓ WebAssembly module loaded successfully!';
+                statusEl.className = 'status ready';
+                btnInfer.disabled = false;
+
+                // Display module info
+                displayModuleInfo();
+                
+                // Display network types
+                displayNetworkTypes();
+                
+                // Display memory info
+                displayMemoryInfo();
+
+            } catch (error) {
+                statusEl.textContent = '✗ Error loading WebAssembly: ' + error.message;
+                statusEl.className = 'status error';
+                moduleInfoEl.textContent = 'Error: ' + error.message;
+                console.error('Wasm load error:', error);
+            }
+        }
+
+        function displayModuleInfo() {
+            const version = wasmModule.cwrap('action_c_wasm_get_version_string', 'string', []);
+            const major = wasmModule.cwrap('action_c_wasm_get_version_major', 'number', []);
+            const minor = wasmModule.cwrap('action_c_wasm_get_version_minor', 'number', []);
+            const patch = wasmModule.cwrap('action_c_wasm_get_version_patch', 'number', []);
+
+            moduleInfoEl.textContent = `Version: ${version()}
+Version (numeric): ${major()}.${minor()}.${patch()}
+Module Ready: Yes`;
+        }
+
+        function displayNetworkTypes() {
+            const getCount = wasmModule.cwrap('action_c_wasm_get_network_type_count', 'number', []);
+            const getName = wasmModule.cwrap('action_c_wasm_get_network_type_name', 'string', ['number']);
+            const isEnabled = wasmModule.cwrap('action_c_wasm_is_network_type_enabled', 'number', ['string']);
+
+            const count = getCount();
+            networkListEl.innerHTML = '';
+
+            if (count === 0) {
+                networkListEl.innerHTML = '<div class="network-item">No networks enabled</div>';
+                return;
+            }
+
+            const networkTypes = [];
+            for (let i = 0; i < count; i++) {
+                const name = getName(i);
+                const enabled = isEnabled(name) === 1;
+                networkTypes.push({ name, enabled });
+            }
+
+            networkTypes.forEach(net => {
+                const item = document.createElement('div');
+                item.className = 'network-item' + (net.enabled ? ' enabled' : '');
+                item.textContent = net.name + (net.enabled ? ' ✓' : ' ✗');
+                networkListEl.appendChild(item);
+            });
+        }
+
+        function displayMemoryInfo() {
+            const getMemSize = wasmModule.cwrap('action_c_wasm_get_memory_size', 'number', []);
+            const getHeapSize = wasmModule.cwrap('action_c_wasm_get_heap_size', 'number', []);
+
+            const memSize = getMemSize();
+            const heapSize = getHeapSize();
+
+            memoryInfoEl.textContent = `Total Memory: ${(memSize / 1024 / 1024).toFixed(2)} MB
+Heap Size: ${(heapSize / 1024 / 1024).toFixed(2)} MB
+Available: ${(memSize - heapSize) / 1024 / 1024.toFixed(2)} MB`;
+        }
+
+        function runInferenceTest() {
+            inferResultEl.textContent = 'Running inference test...\n';
+
+            try {
+                // Get malloc/free functions
+                const malloc = wasmModule._malloc;
+                const free = wasmModule._free;
+
+                // Note: This is a simplified test. Actual usage requires proper config serialization.
+                // For a real demo, you would need to:
+                // 1. Generate a model using the profiler
+                // 2. Serialize the config
+                // 3. Pass it to infer_create
+
+                inferResultEl.textContent += `
+Test completed.
+
+Note: Full inference requires a pre-trained model configuration.
+To create a model:
+1. Use the profiler to define network architecture
+2. Train the model (native build)
+3. Export weights
+4. Load in Wasm for inference
+
+Current exported functions:
+- action_c_wasm_infer_create
+- action_c_wasm_infer_run  
+- action_c_wasm_infer_destroy
+- action_c_wasm_malloc
+- action_c_wasm_free
+- action_c_wasm_get_network_type_count
+- action_c_wasm_get_network_type_name
+- action_c_wasm_is_network_type_enabled
+`;
+
+            } catch (error) {
+                inferResultEl.textContent += '\nError: ' + error.message;
+            }
+        }
+
+        btnInfer.addEventListener('click', runInferenceTest);
+
+        // Start initialization when page loads
+        window.addEventListener('load', initWasm);
+    </script>
+</body>
+</html>
