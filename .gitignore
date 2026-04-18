@@ -19,6 +19,36 @@ vendor/
 .env.local
 *.env.*
 
+# Source files (always track)
+!src/
+!demo/
+!docs/
+
+# Build artifacts in demo (these should be in build/ now)
+# Keeping old paths for compatibility
+demo/move/generate/
+demo/move/train/
+demo/move/infer/
+demo/sevenseg/generate/
+demo/sevenseg/train/
+demo/sevenseg/infer/
+demo/target/generate/
+demo/target/train/
+demo/target/infer/
+demo/transformer/generate/
+demo/transformer/train/
+demo/transformer/infer/
+
+# Generated files
+*.bin
+demo_*_export.c
+demo_network_*_functions.c
+test_weights_export.c
+
+# Test artifacts
+test/logs/
+test/data/tmp/
+
 # Editors
 .vscode/
 .idea/
