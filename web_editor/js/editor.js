@@ -61,10 +61,10 @@ class NetworkEditor {
         // 使用 Rete.js 1.x API - ID 必须是 name@version 格式
         this.editor = new Rete.Engine('demo@1.0.0');
         
-        // 注册插件
-        const render = new Rete.RenderPlugin();
-        const connectionPlugin = new Rete.ConnectionPlugin();
-        const area = new Rete.AreaPlugin();
+        // 注册插件 - 插件作为独立的全局对象加载
+        const render = new ReteRenderPlugin();
+        const connectionPlugin = new ReteConnectionPlugin();
+        const area = new ReteAreaPlugin();
         
         this.editor.use(render);
         this.editor.use(connectionPlugin);
