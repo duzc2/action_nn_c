@@ -1,5 +1,23 @@
-# Build output
+```
+# Build artifacts
 build/
+dist/
+*.o
+*.obj
+*.a
+*.lib
+*.dll
+*.so
+*.dylib
+
+# Dependencies
+node_modules/
+vendor/
+
+# Environment
+.env
+.env.local
+*.env.*
 
 # Source files (always track)
 !src/
@@ -21,12 +39,36 @@ demo/transformer/generate/
 demo/transformer/train/
 demo/transformer/infer/
 
-# Test artifacts
-test/logs/
-test/data/tmp/
-
 # Generated files
 *.bin
 demo_*_export.c
 demo_network_*_functions.c
 test_weights_export.c
+
+# Test artifacts
+test/logs/
+test/data/tmp/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# CMake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+# Web artifacts
+*.wasm
+*.js.map
+```
