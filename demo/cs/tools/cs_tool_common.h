@@ -4,13 +4,15 @@
 /*
  * Shared helper declarations for the Version 1 CS demo tools.
  *
- * The current implementation only covers the first three foundational tasks:
+ * The toolchain has been migrated from manual label segments to a
+ * capture/session + state_trace pipeline:
  * 1. fixed place dictionary;
  * 2. capture session tool;
- * 3. label session tool.
+ * 3. teacher state trace tool;
+ * 4. dataset build/report tools.
  *
- * The helpers stay intentionally small and explicit so they are easy to
- * inspect, test and evolve during the early versions of the demo.
+ * The helpers intentionally stay explicit and small so every stage of the
+ * training data path is easy to inspect and debug.
  */
 
 #include <stddef.h>
@@ -23,6 +25,7 @@
 #define CS_TOOL_MAX_TEXT 256
 #define CS_TOOL_MAX_PLACES 64
 #define CS_TOOL_MAX_SEGMENTS 2048
+#define CS_TOOL_MAX_TRACE_LINE 512
 
 typedef struct CsPlaceEntryTag {
     int place_id;
@@ -40,6 +43,11 @@ typedef struct CsPlaceDictionaryTag {
     size_t entry_count;
 } CsPlaceDictionary;
 
+/*
+ * Legacy segment structs remain temporarily in the shared header until every
+ * source file has been migrated off the old pipeline. They are no longer part
+ * of the intended public Version 1 workflow.
+ */
 typedef struct CsLabelSegmentTag {
     int segment_id;
     int start_frame;
@@ -54,13 +62,28 @@ typedef struct CsLabelSegmentsFileTag {
     size_t segment_count;
 } CsLabelSegmentsFile;
 
+typedef struct CsStateTraceRecordTag {
+    int frame_index;
+    char timestamp[64];
+    double pos_x;
+    double pos_y;
+    double pos_z;
+    double yaw;
+    double pitch;
+    double velocity_x;
+    double velocity_y;
+    double velocity_z;
+} CsStateTraceRecord;
+
 typedef struct CsCaptureStateTag {
     char session_id[64];
     char status[32];
     int captured_frame_count;
     int last_frame_index;
-    char current_place_token[64];
-    int current_place_id;
+    int state_trace_count;
+    char last_state_timestamp[64];
+    char teacher_source[32];
+    char state_trace_status[32];
 } CsCaptureState;
 
 typedef struct CsCaptureOptionsTag {
@@ -72,6 +95,7 @@ typedef struct CsCaptureOptionsTag {
     int capture_fps;
     char team[32];
     char notes[128];
+    char teacher_source[32];
 } CsCaptureOptions;
 
 void cs_tool_set_error(char* buffer, size_t buffer_size, const char* fmt, ...);
@@ -96,12 +120,13 @@ int cs_tool_get_session_file_path(const char* session_root, const char* session_
 int cs_tool_find_default_dictionary(char* out_path, size_t out_size, char* error_buffer, size_t error_buffer_size);
 int cs_tool_load_dictionary(const char* path, CsPlaceDictionary* dictionary, char* error_buffer, size_t error_buffer_size);
 const CsPlaceEntry* cs_tool_find_place_by_token(const CsPlaceDictionary* dictionary, const char* token);
+const CsPlaceEntry* cs_tool_find_place_by_id(const CsPlaceDictionary* dictionary, int place_id);
 
 int cs_tool_write_capture_state(const char* path, const CsCaptureState* state, char* error_buffer, size_t error_buffer_size);
 int cs_tool_read_capture_state(const char* path, CsCaptureState* state, char* error_buffer, size_t error_buffer_size);
 
-int cs_tool_write_label_segments(const char* path, const CsLabelSegmentsFile* segments, char* error_buffer, size_t error_buffer_size);
-int cs_tool_read_label_segments(const char* path, CsLabelSegmentsFile* segments, char* error_buffer, size_t error_buffer_size);
+int cs_tool_append_state_trace_record(const char* path, const CsStateTraceRecord* record, char* error_buffer, size_t error_buffer_size);
+int cs_tool_parse_state_trace_line(const char* line, CsStateTraceRecord* record, char* error_buffer, size_t error_buffer_size);
 
 int cs_tool_write_session_json(const char* path, const CsCaptureOptions* options, const char* start_time, const char* end_time, char* error_buffer, size_t error_buffer_size);
 int cs_tool_read_session_json(const char* path,
@@ -115,9 +140,18 @@ int cs_tool_read_session_json(const char* path,
 
 #ifdef _WIN32
 HWND cs_tool_find_counter_strike_window(void);
+void cs_tool_enable_dpi_awareness(void);
 int cs_tool_get_window_client_size(HWND hwnd, int* out_width, int* out_height, char* error_buffer, size_t error_buffer_size);
+int cs_tool_get_window_capture_region(HWND hwnd,
+                                      int* out_left,
+                                      int* out_top,
+                                      int* out_width,
+                                      int* out_height,
+                                      char* error_buffer,
+                                      size_t error_buffer_size);
 int cs_tool_capture_window_client_to_bmp(HWND hwnd, const char* output_path, int expected_width, int expected_height, char* error_buffer, size_t error_buffer_size);
 int cs_tool_spawn_capture_worker(const char* exe_path, const char* session_root, const char* session_id, int capture_fps, int width, int height, char* error_buffer, size_t error_buffer_size);
+int cs_tool_spawn_state_trace_worker(const char* exe_path, const char* session_root, const char* session_id, char* error_buffer, size_t error_buffer_size);
 #endif
 
 #endif

@@ -25,6 +25,22 @@ typedef struct CsDictionaryCountTag {
     int sample_count;
 } CsSessionCoverage;
 
+typedef struct CsBuildReportInfoTag {
+    int raw_session_count;
+    int raw_frame_count;
+    int state_trace_count;
+    int filtered_frame_count;
+    int dedup_removed_count;
+    int blur_removed_count;
+    int teacher_alignment_drop_count;
+    int projection_outside_count;
+    int projection_ambiguous_count;
+    int projection_disabled_count;
+    int train_count;
+    int val_count;
+    int test_count;
+} CsBuildReportInfo;
+
 static int cs_arg_is_option(const char* value, const char* expected) {
     return value != NULL && expected != NULL && strcmp(value, expected) == 0;
 }
@@ -168,6 +184,50 @@ static int cs_extract_int_after_key(const char* text, const char* key, int* out_
     }
 
     *out_value = scanned_value;
+    return 1;
+}
+
+static int cs_report_read_build_report(const char* dataset_root,
+                                       CsBuildReportInfo* report,
+                                       char* error_buffer,
+                                       size_t error_buffer_size) {
+    char path[CS_TOOL_MAX_PATH];
+    char* text;
+    size_t text_size;
+
+    memset(report, 0, sizeof(*report));
+    text = NULL;
+    text_size = 0U;
+
+    if (snprintf(path, sizeof(path), "%s\\build_report.json", dataset_root) < 0) {
+        cs_tool_set_error(error_buffer, error_buffer_size, "build_report.json path is too long.");
+        return 0;
+    }
+
+    if (!cs_tool_read_text_file(path, &text, &text_size, error_buffer, error_buffer_size)) {
+        return 0;
+    }
+
+    (void)text_size;
+    if (!cs_extract_int_after_key(text, "raw_session_count", &report->raw_session_count) ||
+        !cs_extract_int_after_key(text, "raw_frame_count", &report->raw_frame_count) ||
+        !cs_extract_int_after_key(text, "state_trace_count", &report->state_trace_count) ||
+        !cs_extract_int_after_key(text, "filtered_frame_count", &report->filtered_frame_count) ||
+        !cs_extract_int_after_key(text, "dedup_removed_count", &report->dedup_removed_count) ||
+        !cs_extract_int_after_key(text, "blur_removed_count", &report->blur_removed_count) ||
+        !cs_extract_int_after_key(text, "teacher_alignment_drop_count", &report->teacher_alignment_drop_count) ||
+        !cs_extract_int_after_key(text, "projection_outside_count", &report->projection_outside_count) ||
+        !cs_extract_int_after_key(text, "projection_ambiguous_count", &report->projection_ambiguous_count) ||
+        !cs_extract_int_after_key(text, "projection_disabled_count", &report->projection_disabled_count) ||
+        !cs_extract_int_after_key(text, "train_count", &report->train_count) ||
+        !cs_extract_int_after_key(text, "val_count", &report->val_count) ||
+        !cs_extract_int_after_key(text, "test_count", &report->test_count)) {
+        free(text);
+        cs_tool_set_error(error_buffer, error_buffer_size, "build_report.json is malformed: %s", path);
+        return 0;
+    }
+
+    free(text);
     return 1;
 }
 
@@ -344,6 +404,7 @@ static int cs_report_write_session_coverage(const char* output_root,
 
 static int cs_report_write_markdown(const char* output_root,
                                     const CsPlaceDictionary* dictionary,
+                                    const CsBuildReportInfo* report,
                                     const CsSplitCounts* train_counts,
                                     const CsSplitCounts* val_counts,
                                     const CsSplitCounts* test_counts,
@@ -365,6 +426,17 @@ static int cs_report_write_markdown(const char* output_root,
     }
 
     fprintf(file_handle, "# Version 1 Dataset Report\n\n");
+    fprintf(file_handle, "## Build Summary\n\n");
+    fprintf(file_handle, "- raw_session_count: %d\n", report->raw_session_count);
+    fprintf(file_handle, "- raw_frame_count: %d\n", report->raw_frame_count);
+    fprintf(file_handle, "- state_trace_count: %d\n", report->state_trace_count);
+    fprintf(file_handle, "- filtered_frame_count: %d\n", report->filtered_frame_count);
+    fprintf(file_handle, "- teacher_alignment_drop_count: %d\n", report->teacher_alignment_drop_count);
+    fprintf(file_handle, "- projection_outside_count: %d\n", report->projection_outside_count);
+    fprintf(file_handle, "- projection_ambiguous_count: %d\n", report->projection_ambiguous_count);
+    fprintf(file_handle, "- projection_disabled_count: %d\n", report->projection_disabled_count);
+    fprintf(file_handle, "- dedup_removed_count: %d\n", report->dedup_removed_count);
+    fprintf(file_handle, "- blur_removed_count: %d\n\n", report->blur_removed_count);
     fprintf(file_handle, "| place_token | train | val | test |\n");
     fprintf(file_handle, "|---|---:|---:|---:|\n");
     for (index = 0U; index < dictionary->entry_count; ++index) {
@@ -386,6 +458,7 @@ static int cs_report_run(const CsReportOptions* options, char* error_buffer, siz
     char val_path[CS_TOOL_MAX_PATH];
     char test_path[CS_TOOL_MAX_PATH];
     CsPlaceDictionary dictionary;
+    CsBuildReportInfo report;
     CsSplitCounts train_counts;
     CsSplitCounts val_counts;
     CsSplitCounts test_counts;
@@ -393,6 +466,7 @@ static int cs_report_run(const CsReportOptions* options, char* error_buffer, siz
     size_t coverage_count;
 
     memset(&dictionary, 0, sizeof(dictionary));
+    memset(&report, 0, sizeof(report));
     memset(&train_counts, 0, sizeof(train_counts));
     memset(&val_counts, 0, sizeof(val_counts));
     memset(&test_counts, 0, sizeof(test_counts));
@@ -400,7 +474,8 @@ static int cs_report_run(const CsReportOptions* options, char* error_buffer, siz
     coverage_count = 0U;
 
     if (!cs_tool_find_default_dictionary(dictionary_path, sizeof(dictionary_path), error_buffer, error_buffer_size) ||
-        !cs_tool_load_dictionary(dictionary_path, &dictionary, error_buffer, error_buffer_size)) {
+        !cs_tool_load_dictionary(dictionary_path, &dictionary, error_buffer, error_buffer_size) ||
+        !cs_report_read_build_report(options->dataset_root, &report, error_buffer, error_buffer_size)) {
         return 0;
     }
 
@@ -419,7 +494,7 @@ static int cs_report_run(const CsReportOptions* options, char* error_buffer, siz
 
     if (!cs_report_write_class_balance(options->output_root, &dictionary, &train_counts, &val_counts, &test_counts, error_buffer, error_buffer_size) ||
         !cs_report_write_session_coverage(options->output_root, coverage, coverage_count, error_buffer, error_buffer_size) ||
-        !cs_report_write_markdown(options->output_root, &dictionary, &train_counts, &val_counts, &test_counts, error_buffer, error_buffer_size)) {
+        !cs_report_write_markdown(options->output_root, &dictionary, &report, &train_counts, &val_counts, &test_counts, error_buffer, error_buffer_size)) {
         return 0;
     }
 

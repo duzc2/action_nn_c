@@ -28,11 +28,31 @@ add_executable(cs_capture_session
 target_link_libraries(cs_capture_session PRIVATE cs_v1_tool_common)
 action_c_apply_strict_warnings(cs_capture_session)
 
-add_executable(cs_label_session
-    cs_label_session.c
+add_executable(cs_state_trace
+    cs_state_trace.c
 )
-target_link_libraries(cs_label_session PRIVATE cs_v1_tool_common)
-action_c_apply_strict_warnings(cs_label_session)
+target_link_libraries(cs_state_trace PRIVATE cs_v1_tool_common)
+action_c_apply_strict_warnings(cs_state_trace)
+
+set(CS_RUNTIME_PROBE32_DLL "${CMAKE_CURRENT_BINARY_DIR}/cs_runtime_probe32.dll")
+set(CS_RUNTIME_PROBE32_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_cs_runtime_probe32.bat")
+string(CONCAT CS_RUNTIME_PROBE32_SCRIPT_CONTENT
+    "@echo off\r\n"
+    "call \"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Auxiliary\\Build\\vcvars32.bat\"\r\n"
+    "if errorlevel 1 exit /b 1\r\n"
+    "clang-cl /nologo /TC /LD --target=i686-pc-windows-msvc /W4 /WX /I \"${CMAKE_CURRENT_LIST_DIR}\" /Fe:\"${CS_RUNTIME_PROBE32_DLL}\" \"${CMAKE_CURRENT_LIST_DIR}/cs_runtime_probe32.c\"\r\n"
+)
+file(GENERATE OUTPUT "${CS_RUNTIME_PROBE32_SCRIPT}" CONTENT "${CS_RUNTIME_PROBE32_SCRIPT_CONTENT}")
+add_custom_command(
+    OUTPUT "${CS_RUNTIME_PROBE32_DLL}"
+    COMMAND "${CS_RUNTIME_PROBE32_SCRIPT}"
+    DEPENDS
+        "${CMAKE_CURRENT_LIST_DIR}/cs_runtime_probe32.c"
+        "${CMAKE_CURRENT_LIST_DIR}/cs_runtime_probe_shared.h"
+    VERBATIM
+)
+add_custom_target(cs_runtime_probe32 ALL DEPENDS "${CS_RUNTIME_PROBE32_DLL}")
+add_dependencies(cs_state_trace cs_runtime_probe32)
 
 add_executable(cs_dataset_build
     cs_dataset_build.c

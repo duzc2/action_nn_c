@@ -513,6 +513,35 @@ static int cs_tool_extract_int_after_key(const char* text, const char* key, int*
     return 1;
 }
 
+static int cs_tool_extract_double_after_key(const char* text, const char* key, double* out_value) {
+    const char* key_position;
+    const char* colon;
+    const char* value_position;
+    double scanned_value;
+
+    key_position = cs_tool_find_key(text, key);
+    if (key_position == NULL) {
+        return 0;
+    }
+
+    colon = strchr(key_position, ':');
+    if (colon == NULL) {
+        return 0;
+    }
+
+    value_position = cs_tool_skip_spaces(colon + 1);
+    if (value_position == NULL) {
+        return 0;
+    }
+
+    if (sscanf(value_position, "%lf", &scanned_value) != 1) {
+        return 0;
+    }
+
+    *out_value = scanned_value;
+    return 1;
+}
+
 static int cs_tool_extract_bool_after_key(const char* text, const char* key, int* out_value) {
     const char* key_position;
     const char* colon;
@@ -686,6 +715,22 @@ const CsPlaceEntry* cs_tool_find_place_by_token(const CsPlaceDictionary* diction
     return NULL;
 }
 
+const CsPlaceEntry* cs_tool_find_place_by_id(const CsPlaceDictionary* dictionary, int place_id) {
+    size_t index;
+
+    if (dictionary == NULL) {
+        return NULL;
+    }
+
+    for (index = 0U; index < dictionary->entry_count; ++index) {
+        if (dictionary->entries[index].place_id == place_id) {
+            return &dictionary->entries[index];
+        }
+    }
+
+    return NULL;
+}
+
 int cs_tool_write_capture_state(const char* path, const CsCaptureState* state, char* error_buffer, size_t error_buffer_size) {
     char json_text[1024];
     int written_size;
@@ -697,15 +742,19 @@ int cs_tool_write_capture_state(const char* path, const CsCaptureState* state, c
                             "  \"status\": \"%s\",\n"
                             "  \"captured_frame_count\": %d,\n"
                             "  \"last_frame_index\": %d,\n"
-                            "  \"current_place_token\": \"%s\",\n"
-                            "  \"current_place_id\": %d\n"
+                            "  \"state_trace_count\": %d,\n"
+                            "  \"last_state_timestamp\": \"%s\",\n"
+                            "  \"teacher_source\": \"%s\",\n"
+                            "  \"state_trace_status\": \"%s\"\n"
                             "}\n",
                             state->session_id,
                             state->status,
                             state->captured_frame_count,
                             state->last_frame_index,
-                            state->current_place_token,
-                            state->current_place_id);
+                            state->state_trace_count,
+                            state->last_state_timestamp,
+                            state->teacher_source,
+                            state->state_trace_status);
 
     if (written_size < 0 || (size_t)written_size >= sizeof(json_text)) {
         cs_tool_set_error(error_buffer, error_buffer_size, "Capture state JSON buffer overflow.");
@@ -738,14 +787,79 @@ int cs_tool_read_capture_state(const char* path, CsCaptureState* state, char* er
         !cs_tool_extract_string_after_key(text, "status", state->status, sizeof(state->status)) ||
         !cs_tool_extract_int_after_key(text, "captured_frame_count", &state->captured_frame_count) ||
         !cs_tool_extract_int_after_key(text, "last_frame_index", &state->last_frame_index) ||
-        !cs_tool_extract_string_after_key(text, "current_place_token", state->current_place_token, sizeof(state->current_place_token)) ||
-        !cs_tool_extract_int_after_key(text, "current_place_id", &state->current_place_id)) {
+        !cs_tool_extract_int_after_key(text, "state_trace_count", &state->state_trace_count) ||
+        !cs_tool_extract_string_after_key(text, "last_state_timestamp", state->last_state_timestamp, sizeof(state->last_state_timestamp)) ||
+        !cs_tool_extract_string_after_key(text, "teacher_source", state->teacher_source, sizeof(state->teacher_source)) ||
+        !cs_tool_extract_string_after_key(text, "state_trace_status", state->state_trace_status, sizeof(state->state_trace_status))) {
         free(text);
         cs_tool_set_error(error_buffer, error_buffer_size, "Capture state file is malformed: %s", path);
         return 0;
     }
 
     free(text);
+    return 1;
+}
+
+int cs_tool_append_state_trace_record(const char* path, const CsStateTraceRecord* record, char* error_buffer, size_t error_buffer_size) {
+    FILE* file_handle;
+
+    if (path == NULL || record == NULL) {
+        cs_tool_set_error(error_buffer, error_buffer_size, "State trace path or record is null.");
+        return 0;
+    }
+
+    file_handle = fopen(path, "ab");
+    if (file_handle == NULL) {
+        cs_tool_set_error(error_buffer, error_buffer_size, "Failed to open state trace for append: %s", path);
+        return 0;
+    }
+
+    if (fprintf(file_handle,
+                "{\"frame_index\":%d,\"timestamp\":\"%s\",\"pos_x\":%.6f,\"pos_y\":%.6f,\"pos_z\":%.6f,\"yaw\":%.6f,\"pitch\":%.6f,\"velocity_x\":%.6f,\"velocity_y\":%.6f,\"velocity_z\":%.6f}\n",
+                record->frame_index,
+                record->timestamp,
+                record->pos_x,
+                record->pos_y,
+                record->pos_z,
+                record->yaw,
+                record->pitch,
+                record->velocity_x,
+                record->velocity_y,
+                record->velocity_z) < 0) {
+        fclose(file_handle);
+        cs_tool_set_error(error_buffer, error_buffer_size, "Failed to write state trace record: %s", path);
+        return 0;
+    }
+
+    if (fclose(file_handle) != 0) {
+        cs_tool_set_error(error_buffer, error_buffer_size, "Failed to close state trace file: %s", path);
+        return 0;
+    }
+
+    return 1;
+}
+
+int cs_tool_parse_state_trace_line(const char* line, CsStateTraceRecord* record, char* error_buffer, size_t error_buffer_size) {
+    if (line == NULL || record == NULL) {
+        cs_tool_set_error(error_buffer, error_buffer_size, "State trace line output is null.");
+        return 0;
+    }
+
+    memset(record, 0, sizeof(*record));
+    if (!cs_tool_extract_int_after_key(line, "frame_index", &record->frame_index) ||
+        !cs_tool_extract_string_after_key(line, "timestamp", record->timestamp, sizeof(record->timestamp)) ||
+        !cs_tool_extract_double_after_key(line, "pos_x", &record->pos_x) ||
+        !cs_tool_extract_double_after_key(line, "pos_y", &record->pos_y) ||
+        !cs_tool_extract_double_after_key(line, "pos_z", &record->pos_z) ||
+        !cs_tool_extract_double_after_key(line, "yaw", &record->yaw) ||
+        !cs_tool_extract_double_after_key(line, "pitch", &record->pitch) ||
+        !cs_tool_extract_double_after_key(line, "velocity_x", &record->velocity_x) ||
+        !cs_tool_extract_double_after_key(line, "velocity_y", &record->velocity_y) ||
+        !cs_tool_extract_double_after_key(line, "velocity_z", &record->velocity_z)) {
+        cs_tool_set_error(error_buffer, error_buffer_size, "State trace line is malformed.");
+        return 0;
+    }
+
     return 1;
 }
 
@@ -882,6 +996,7 @@ int cs_tool_write_session_json(const char* path, const CsCaptureOptions* options
                             "  },\n"
                             "  \"capture_fps\": %d,\n"
                             "  \"team\": \"%s\",\n"
+                            "  \"teacher_source\": \"%s\",\n"
                             "  \"start_time\": \"%s\",\n"
                             "  \"end_time\": \"%s\",\n"
                             "  \"notes\": \"%s\"\n"
@@ -892,6 +1007,7 @@ int cs_tool_write_session_json(const char* path, const CsCaptureOptions* options
                             options->height,
                             options->capture_fps,
                             options->team,
+                            options->teacher_source,
                             start_time,
                             end_time,
                             options->notes);
@@ -938,6 +1054,7 @@ int cs_tool_read_session_json(const char* path,
         !cs_tool_extract_int_after_key(text, "height", &options->height) ||
         !cs_tool_extract_int_after_key(text, "capture_fps", &options->capture_fps) ||
         !cs_tool_extract_string_after_key(text, "team", options->team, sizeof(options->team)) ||
+        !cs_tool_extract_string_after_key(text, "teacher_source", options->teacher_source, sizeof(options->teacher_source)) ||
         !cs_tool_extract_string_after_key(text, "start_time", start_time, start_time_size) ||
         !cs_tool_extract_string_after_key(text, "end_time", end_time, end_time_size) ||
         !cs_tool_extract_string_after_key(text, "notes", options->notes, sizeof(options->notes))) {
@@ -954,6 +1071,17 @@ int cs_tool_read_session_json(const char* path,
 typedef struct CsWindowSearchTag {
     HWND hwnd;
 } CsWindowSearch;
+
+void cs_tool_enable_dpi_awareness(void) {
+    /*
+     * Version 1 capture stays DPI-unaware on purpose.
+     *
+     * Counter-Strike is currently running in a legacy Win32 window and the
+     * user expects the logical client size reported by the window manager.
+     * For this toolchain we capture directly from the window client DC, so
+     * forcing per-monitor DPI awareness would only distort the expected size.
+     */
+}
 
 static int cs_tool_contains_text(const char* haystack, const char* needle) {
     return haystack != NULL && needle != NULL && strstr(haystack, needle) != NULL;
@@ -996,6 +1124,8 @@ HWND cs_tool_find_counter_strike_window(void) {
 int cs_tool_get_window_client_size(HWND hwnd, int* out_width, int* out_height, char* error_buffer, size_t error_buffer_size) {
     RECT client_rect;
 
+    cs_tool_enable_dpi_awareness();
+
     if (hwnd == NULL || out_width == NULL || out_height == NULL) {
         cs_tool_set_error(error_buffer, error_buffer_size, "Window handle or size outputs are invalid.");
         return 0;
@@ -1011,12 +1141,70 @@ int cs_tool_get_window_client_size(HWND hwnd, int* out_width, int* out_height, c
     return 1;
 }
 
-int cs_tool_capture_window_client_to_bmp(HWND hwnd, const char* output_path, int expected_width, int expected_height, char* error_buffer, size_t error_buffer_size) {
+int cs_tool_get_window_capture_region(HWND hwnd,
+                                      int* out_left,
+                                      int* out_top,
+                                      int* out_width,
+                                      int* out_height,
+                                      char* error_buffer,
+                                      size_t error_buffer_size) {
     RECT client_rect;
     POINT top_left;
+    HMODULE user32_module;
+    HANDLE old_context;
+    int restore_context;
+
+    typedef HANDLE(WINAPI* CsSetThreadDpiAwarenessContextFn)(HANDLE);
+    CsSetThreadDpiAwarenessContextFn set_thread_dpi_awareness_context_fn;
+
+    if (hwnd == NULL || out_left == NULL || out_top == NULL || out_width == NULL || out_height == NULL) {
+        cs_tool_set_error(error_buffer, error_buffer_size, "Window capture region outputs are invalid.");
+        return 0;
+    }
+
+    user32_module = GetModuleHandleA("user32.dll");
+    set_thread_dpi_awareness_context_fn = NULL;
+    old_context = NULL;
+    restore_context = 0;
+
+    if (user32_module != NULL) {
+        set_thread_dpi_awareness_context_fn =
+            (CsSetThreadDpiAwarenessContextFn)(void*)GetProcAddress(user32_module, "SetThreadDpiAwarenessContext");
+    }
+    if (set_thread_dpi_awareness_context_fn != NULL) {
+        old_context = set_thread_dpi_awareness_context_fn((HANDLE)-4);
+        restore_context = 1;
+    }
+
+    top_left.x = 0;
+    top_left.y = 0;
+    if (!GetClientRect(hwnd, &client_rect) || !ClientToScreen(hwnd, &top_left)) {
+        if (restore_context) {
+            (void)set_thread_dpi_awareness_context_fn(old_context);
+        }
+        cs_tool_set_error(error_buffer, error_buffer_size, "Failed to query game window capture region.");
+        return 0;
+    }
+
+    if (restore_context) {
+        (void)set_thread_dpi_awareness_context_fn(old_context);
+    }
+
+    *out_left = top_left.x;
+    *out_top = top_left.y;
+    *out_width = client_rect.right - client_rect.left;
+    *out_height = client_rect.bottom - client_rect.top;
+    return 1;
+}
+
+int cs_tool_capture_window_client_to_bmp(HWND hwnd, const char* output_path, int expected_width, int expected_height, char* error_buffer, size_t error_buffer_size) {
+    int capture_left;
+    int capture_top;
     int width;
     int height;
-    HDC screen_dc;
+    int logical_width;
+    int logical_height;
+    HDC window_dc;
     HDC memory_dc;
     HBITMAP bitmap_handle;
     HGDIOBJ old_bitmap;
@@ -1031,49 +1219,43 @@ int cs_tool_capture_window_client_to_bmp(HWND hwnd, const char* output_path, int
         return 0;
     }
 
-    if (!GetClientRect(hwnd, &client_rect)) {
-        cs_tool_set_error(error_buffer, error_buffer_size, "Failed to read game window client rect.");
+    cs_tool_enable_dpi_awareness();
+    capture_left = 0;
+    capture_top = 0;
+
+    if (!cs_tool_get_window_client_size(hwnd, &logical_width, &logical_height, error_buffer, error_buffer_size) ||
+        !cs_tool_get_window_capture_region(hwnd, &capture_left, &capture_top, &width, &height, error_buffer, error_buffer_size)) {
         return 0;
     }
 
-    width = client_rect.right - client_rect.left;
-    height = client_rect.bottom - client_rect.top;
-
-    if (width != expected_width || height != expected_height) {
+    if (logical_width != expected_width || logical_height != expected_height) {
         cs_tool_set_error(error_buffer,
                           error_buffer_size,
-                          "Game window size mismatch. Expected %dx%d, got %dx%d.",
+                          "Game window logical size mismatch. Expected %dx%d, got %dx%d.",
                           expected_width,
                           expected_height,
-                          width,
-                          height);
+                          logical_width,
+                          logical_height);
         return 0;
     }
 
-    top_left.x = 0;
-    top_left.y = 0;
-    if (!ClientToScreen(hwnd, &top_left)) {
-        cs_tool_set_error(error_buffer, error_buffer_size, "Failed to translate client coordinates.");
+    window_dc = GetDC(hwnd);
+    if (window_dc == NULL) {
+        cs_tool_set_error(error_buffer, error_buffer_size, "Failed to get game window device context.");
         return 0;
     }
 
-    screen_dc = GetDC(NULL);
-    if (screen_dc == NULL) {
-        cs_tool_set_error(error_buffer, error_buffer_size, "Failed to get screen device context.");
-        return 0;
-    }
-
-    memory_dc = CreateCompatibleDC(screen_dc);
+    memory_dc = CreateCompatibleDC(window_dc);
     if (memory_dc == NULL) {
-        ReleaseDC(NULL, screen_dc);
+        ReleaseDC(hwnd, window_dc);
         cs_tool_set_error(error_buffer, error_buffer_size, "Failed to create memory device context.");
         return 0;
     }
 
-    bitmap_handle = CreateCompatibleBitmap(screen_dc, width, height);
+    bitmap_handle = CreateCompatibleBitmap(window_dc, width, height);
     if (bitmap_handle == NULL) {
         DeleteDC(memory_dc);
-        ReleaseDC(NULL, screen_dc);
+        ReleaseDC(hwnd, window_dc);
         cs_tool_set_error(error_buffer, error_buffer_size, "Failed to create capture bitmap.");
         return 0;
     }
@@ -1082,17 +1264,17 @@ int cs_tool_capture_window_client_to_bmp(HWND hwnd, const char* output_path, int
     if (old_bitmap == NULL) {
         DeleteObject(bitmap_handle);
         DeleteDC(memory_dc);
-        ReleaseDC(NULL, screen_dc);
+        ReleaseDC(hwnd, window_dc);
         cs_tool_set_error(error_buffer, error_buffer_size, "Failed to select capture bitmap.");
         return 0;
     }
 
-    if (!BitBlt(memory_dc, 0, 0, width, height, screen_dc, top_left.x, top_left.y, SRCCOPY | CAPTUREBLT)) {
+    if (!BitBlt(memory_dc, 0, 0, width, height, window_dc, 0, 0, SRCCOPY | CAPTUREBLT)) {
         SelectObject(memory_dc, old_bitmap);
         DeleteObject(bitmap_handle);
         DeleteDC(memory_dc);
-        ReleaseDC(NULL, screen_dc);
-        cs_tool_set_error(error_buffer, error_buffer_size, "Failed to copy game window pixels.");
+        ReleaseDC(hwnd, window_dc);
+        cs_tool_set_error(error_buffer, error_buffer_size, "Failed to copy game window client pixels.");
         return 0;
     }
 
@@ -1110,7 +1292,7 @@ int cs_tool_capture_window_client_to_bmp(HWND hwnd, const char* output_path, int
         SelectObject(memory_dc, old_bitmap);
         DeleteObject(bitmap_handle);
         DeleteDC(memory_dc);
-        ReleaseDC(NULL, screen_dc);
+        ReleaseDC(hwnd, window_dc);
         cs_tool_set_error(error_buffer, error_buffer_size, "Out of memory while capturing bitmap.");
         return 0;
     }
@@ -1126,7 +1308,7 @@ int cs_tool_capture_window_client_to_bmp(HWND hwnd, const char* output_path, int
         SelectObject(memory_dc, old_bitmap);
         DeleteObject(bitmap_handle);
         DeleteDC(memory_dc);
-        ReleaseDC(NULL, screen_dc);
+        ReleaseDC(hwnd, window_dc);
         cs_tool_set_error(error_buffer, error_buffer_size, "Failed to read bitmap bits.");
         return 0;
     }
@@ -1142,7 +1324,7 @@ int cs_tool_capture_window_client_to_bmp(HWND hwnd, const char* output_path, int
         SelectObject(memory_dc, old_bitmap);
         DeleteObject(bitmap_handle);
         DeleteDC(memory_dc);
-        ReleaseDC(NULL, screen_dc);
+        ReleaseDC(hwnd, window_dc);
         cs_tool_set_error(error_buffer, error_buffer_size, "Failed to open bitmap output file: %s", output_path);
         return 0;
     }
@@ -1155,7 +1337,7 @@ int cs_tool_capture_window_client_to_bmp(HWND hwnd, const char* output_path, int
         SelectObject(memory_dc, old_bitmap);
         DeleteObject(bitmap_handle);
         DeleteDC(memory_dc);
-        ReleaseDC(NULL, screen_dc);
+        ReleaseDC(hwnd, window_dc);
         cs_tool_set_error(error_buffer, error_buffer_size, "Failed to write bitmap file: %s", output_path);
         return 0;
     }
@@ -1165,7 +1347,7 @@ int cs_tool_capture_window_client_to_bmp(HWND hwnd, const char* output_path, int
     SelectObject(memory_dc, old_bitmap);
     DeleteObject(bitmap_handle);
     DeleteDC(memory_dc);
-    ReleaseDC(NULL, screen_dc);
+    ReleaseDC(hwnd, window_dc);
     return 1;
 }
 
@@ -1204,6 +1386,46 @@ int cs_tool_spawn_capture_worker(const char* exe_path, const char* session_root,
                         &startup_info,
                         &process_info)) {
         cs_tool_set_error(error_buffer, error_buffer_size, "Failed to spawn capture worker process.");
+        return 0;
+    }
+
+    CloseHandle(process_info.hThread);
+    CloseHandle(process_info.hProcess);
+    return 1;
+}
+
+int cs_tool_spawn_state_trace_worker(const char* exe_path, const char* session_root, const char* session_id, char* error_buffer, size_t error_buffer_size) {
+    char command_line[2048];
+    STARTUPINFOA startup_info;
+    PROCESS_INFORMATION process_info;
+    int written_size;
+
+    written_size = snprintf(command_line,
+                            sizeof(command_line),
+                            "\"%s\" __state_trace_loop --session-root \"%s\" --session-id \"%s\"",
+                            exe_path,
+                            session_root,
+                            session_id);
+    if (written_size < 0 || (size_t)written_size >= sizeof(command_line)) {
+        cs_tool_set_error(error_buffer, error_buffer_size, "State trace worker command line is too long.");
+        return 0;
+    }
+
+    ZeroMemory(&startup_info, sizeof(startup_info));
+    ZeroMemory(&process_info, sizeof(process_info));
+    startup_info.cb = sizeof(startup_info);
+
+    if (!CreateProcessA(exe_path,
+                        command_line,
+                        NULL,
+                        NULL,
+                        FALSE,
+                        DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
+                        NULL,
+                        NULL,
+                        &startup_info,
+                        &process_info)) {
+        cs_tool_set_error(error_buffer, error_buffer_size, "Failed to spawn state trace worker process.");
         return 0;
     }
 

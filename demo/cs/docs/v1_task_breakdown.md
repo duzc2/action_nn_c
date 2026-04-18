@@ -98,33 +98,33 @@ Version 1 只做：
 
 - 可用的 `cs_capture_session`
 
-## 5.2 `cs_label_session`
+## 5.2 `cs_state_trace`
 
 ### 基础能力
 
-- [ ] 能读取 `place_dictionary.json`
-- [ ] 能校验 `place_token`
-- [ ] 能设置当前标签段
-- [ ] 能关闭上一个标签段
-- [ ] 能写入 `label_segments.json`
-- [ ] 能查询当前标签状态
+- [ ] 能持续读取程序精确状态
+- [ ] 能写入 `state_trace.jsonl`
+- [ ] 能记录位置、朝向、速度等字段
+- [ ] 能和 `frame_index` 对齐
+- [ ] 能查询当前状态采集状态
 
 ### 稳定性
 
-- [ ] 非法 token 正确报错
 - [ ] session 不存在时正确报错
-- [ ] 重复切换时不写坏文件
+- [ ] 状态读取失败时正确报错
+- [ ] 对齐失败时不写坏文件
 
 产物：
 
-- 可用的 `cs_label_session`
+- 可用的 `cs_state_trace`
 
 ## 5.3 `cs_dataset_build`
 
 ### 基础能力
 
 - [ ] 能读取 raw session
-- [ ] 能读取 `label_segments.json`
+- [ ] 能读取 `state_trace.jsonl`
+- [ ] 能自动投影区域标签
 - [ ] 能生成样本清单
 - [ ] 能生成 `train_list.json`
 - [ ] 能生成 `val_list.json`
@@ -162,13 +162,13 @@ Version 1 只做：
 
 - [ ] 完成 1 个最小 session 采集
 - [ ] session 中至少有 2 个区域标签
-- [ ] 帧与标签段能正确对齐
+- [ ] 帧与状态轨迹能正确对齐
 
 ### 6.2 重复联调
 
 - [ ] 至少完成 3 个 session
 - [ ] 每个 session 都能正确生成原始数据
-- [ ] 每个 session 都能正确生成标签段
+- [ ] 每个 session 都能正确生成状态轨迹
 
 产物：
 
@@ -268,14 +268,14 @@ Version 1 只做：
 ### 11.1 工具测试
 
 - [ ] `cs_capture_session` 测试完成
-- [ ] `cs_label_session` 测试完成
+- [ ] `cs_state_trace` 测试完成
 - [ ] `cs_dataset_build` 测试完成
 - [ ] `cs_dataset_report` 测试完成
 
 ### 11.2 数据测试
 
 - [ ] 字典一致性测试完成
-- [ ] 标签段合法性测试完成
+- [ ] 状态轨迹合法性测试完成
 - [ ] 样本路径测试完成
 - [ ] 类别覆盖测试完成
 
@@ -323,7 +323,7 @@ Version 1 只做：
 
 - [ ] 固定 `place_dictionary.json`
 - [ ] 完成 `cs_capture_session`
-- [ ] 完成 `cs_label_session`
+- [ ] 完成 `cs_state_trace`
 
 原因：
 

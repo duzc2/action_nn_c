@@ -32,7 +32,7 @@ Version 1 必须继续遵守单模块串行原则：
 只有满足以下条件，才算 Version 1 完成：
 
 1. 采集工具能稳定产出原始 session
-2. 标注工具能稳定产出分段标签
+2. 状态采集工具能稳定产出精确状态轨迹
 3. 数据构建工具能稳定生成 train / val / test
 4. 训练程序能基于该数据集完成训练
 5. 推理程序能对单帧或实时截图输出区域标签
@@ -69,6 +69,7 @@ Version 1 必须继续遵守单模块串行原则：
 - 能附着窗口
 - 能持续截图
 - 能保存 session
+- 能驱动状态采集同步开始
 
 最小成功标准：
 
@@ -78,23 +79,23 @@ Version 1 必须继续遵守单模块串行原则：
 
 此阶段不要求：
 
-- 标签功能
+- 自动投影功能
 - 数据切分功能
 
-## Step 3：做 `cs_label_session`
+## Step 3：做 `cs_state_trace`
 
 目标：
 
-- 能按用户切换记录 `place_token`
-- 能输出 `label_segments.json`
+- 能持续读取程序精确状态
+- 能输出 `state_trace.jsonl`
 
 最小成功标准：
 
-- `set` 能开启新标签段
-- 切换 token 能正确关闭上一个段
-- session 结束后标签文件结构正确
+- 能记录位置、朝向、速度等字段
+- 与 `frame_index` 可对齐
+- session 结束后状态轨迹结构正确
 
-## Step 4：联调采集 + 分段标注
+## Step 4：联调采集 + 状态轨迹
 
 目标：
 
@@ -104,7 +105,7 @@ Version 1 必须继续遵守单模块串行原则：
 
 - 至少 1 个 session 可完整采下来
 - 至少覆盖 2~3 个区域
-- 标签段和帧号可对上
+- 截图和状态轨迹可对上
 
 这一步非常重要，因为它是后续所有开发的真实输入基础。
 
@@ -117,7 +118,8 @@ Version 1 必须继续遵守单模块串行原则：
 最小成功标准：
 
 - 能读 `session.json`
-- 能读 `label_segments.json`
+- 能读 `state_trace.jsonl`
+- 能自动投影出区域标签
 - 能产出 `train_list.json`
 - 能产出 `val_list.json`
 - 能产出 `test_list.json`
@@ -253,12 +255,13 @@ Version 1 必须继续遵守单模块串行原则：
 - 能稳定截图 1 个 session
 - session 文件结构正确
 
-### Gate 2：标注器门禁
+### Gate 2：状态轨迹门禁
 
 通过条件：
 
-- 标签段切换正确
-- 段边界可追溯
+- 状态轨迹稳定
+- 截图与状态可对齐
+- 字段完整且可追溯
 
 ### Gate 3：数据构建门禁
 
@@ -298,12 +301,12 @@ Version 1 必须继续遵守单模块串行原则：
 范围：
 
 - `cs_capture_session`
-- `cs_label_session`
+- `cs_state_trace`
 
 标志：
 
 - 能采 session
-- 能写标签段
+- 能写状态轨迹
 
 ### M2：数据集链路打通
 
@@ -346,7 +349,7 @@ Version 1 必须继续遵守单模块串行原则：
 
 最推荐先做：
 
-> **先做 `cs_capture_session` 和 `cs_label_session`。**
+> **先做 `cs_capture_session` 和 `cs_state_trace`。**
 
 原因：
 

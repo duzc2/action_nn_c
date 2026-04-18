@@ -1,0 +1,104 @@
+{
+  "projection_name": "de_dust2_v1_teacher_projection",
+  "map_name": "de_dust2",
+  "dictionary_name": "de_dust2_v1_places",
+  "version": 1,
+  "boundary_margin": 24.0,
+  "zones": [
+    {
+      "place_id": 0,
+      "place_token": "t_spawn",
+      "enabled_in_v1": true,
+      "priority": 100,
+      "z_min": -16.0,
+      "z_max": 176.0,
+      "min_x": -2250.0,
+      "min_y": -1000.0,
+      "max_x": -650.0,
+      "max_y": 475.0,
+      "shape": {
+        "type": "aabb_2d",
+        "min_x": -2250.0,
+        "min_y": -1000.0,
+        "max_x": -650.0,
+        "max_y": 475.0
+      }
+    },
+    {
+      "place_id": 1,
+      "place_token": "ct_spawn",
+      "enabled_in_v1": true,
+      "priority": 100,
+      "z_min": -160.0,
+      "z_max": -16.0,
+      "min_x": -700.0,
+      "min_y": 1975.0,
+      "max_x": 250.0,
+      "max_y": 2525.0,
+      "shape": {
+        "type": "aabb_2d",
+        "min_x": -700.0,
+        "min_y": 1975.0,
+        "max_x": 250.0,
+        "max_y": 2525.0
+      }
+    },
+    {
+      "place_id": 2,
+      "place_token": "mid",
+      "enabled_in_v1": true,
+      "priority": 100,
+      "z_min": -160.0,
+      "z_max": 128.0,
+      "min_x": -725.0,
+      "min_y": -550.0,
+      "max_x": 250.0,
+      "max_y": 1750.0,
+      "shape": {
+        "type": "aabb_2d",
+        "min_x": -725.0,
+        "min_y": -550.0,
+        "max_x": 250.0,
+        "max_y": 1750.0
+      }
+    },
+    {
+      "place_id": 3,
+      "place_token": "a_site",
+      "enabled_in_v1": true,
+      "priority": 100,
+      "z_min": -16.0,
+      "z_max": 200.0,
+      "min_x": 350.0,
+      "min_y": 1950.0,
+      "max_x": 1625.0,
+      "max_y": 3075.0,
+      "shape": {
+        "type": "aabb_2d",
+        "min_x": 350.0,
+        "min_y": 1950.0,
+        "max_x": 1625.0,
+        "max_y": 3075.0
+      }
+    },
+    {
+      "place_id": 4,
+      "place_token": "b_site",
+      "enabled_in_v1": true,
+      "priority": 100,
+      "z_min": -160.0,
+      "z_max": 200.0,
+      "min_x": -2100.0,
+      "min_y": 1600.0,
+      "max_x": -850.0,
+      "max_y": 3125.0,
+      "shape": {
+        "type": "aabb_2d",
+        "min_x": -2100.0,
+        "min_y": 1600.0,
+        "max_x": -850.0,
+        "max_y": 3125.0
+      }
+    }
+  ]
+}

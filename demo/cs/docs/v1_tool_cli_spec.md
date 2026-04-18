@@ -8,7 +8,7 @@
 本文档覆盖 4 个工具：
 
 - `cs_capture_session`
-- `cs_label_session`
+- `cs_state_trace`
 - `cs_dataset_build`
 - `cs_dataset_report`
 
@@ -49,7 +49,8 @@ cs_capture_session start `
   --width 1280 `
   --height 720 `
   --capture-fps 8 `
-  --team t
+  --team t `
+  --teacher-source cs_runtime
 ```
 
 停止命令：
@@ -112,6 +113,7 @@ cs_capture_session status --session-id session_0001
 - `frames/`
 - `session.json`
 - `capture_state.json`
+- `state_trace.jsonl`
 
 ## 3.5 GUI 要求
 
@@ -123,87 +125,84 @@ cs_capture_session status --session-id session_0001
 - 当前窗口状态显示
 - 当前分辨率显示
 - 已采集帧数显示
+- 状态采集状态显示
 - 实时状态显示，例如 `starting / running / stopped / error`
 - 输出目录显示
 - 最近错误信息显示
 
-## 4. 工具 2：`cs_label_session`
+## 4. 工具 2：`cs_state_trace`
 
 ## 4.1 目标
 
-记录“当前区域 token 在某一段时间内生效”的标签分段。
+记录截图对齐的程序精确状态轨迹。
 
 ## 4.2 建议命令
 
-设置当前标签：
+启动状态采集：
 
 ```powershell
-cs_label_session set `
-  --session-root demo/cs/data/v1_area/raw `
-  --session-id session_0001 `
-  --place-token mid
-```
-
-查看当前标签：
-
-```powershell
-cs_label_session current `
+cs_state_trace start `
   --session-root demo/cs/data/v1_area/raw `
   --session-id session_0001
 ```
 
-结束当前标签段：
+查看状态采集情况：
 
 ```powershell
-cs_label_session close `
+cs_state_trace status `
+  --session-root demo/cs/data/v1_area/raw `
+  --session-id session_0001
+```
+
+停止状态采集：
+
+```powershell
+cs_state_trace stop `
   --session-root demo/cs/data/v1_area/raw `
   --session-id session_0001
 ```
 
 ## 4.3 子命令
 
-### `set`
+### `start`
 
 作用：
 
-- 结束上一个标签段
-- 开启新的标签段
+- 开始读取程序内部状态
+- 输出状态轨迹
 
 必要参数：
 
 - `--session-root`
 - `--session-id`
-- `--place-token`
 
-### `current`
-
-作用：
-
-- 输出当前激活标签
-
-### `close`
+### `status`
 
 作用：
 
-- 结束当前激活标签段，但不新开标签
+- 输出当前状态采集状态
+
+### `stop`
+
+作用：
+
+- 停止状态采集
 
 ## 4.4 主要输出
 
 更新：
 
-- `label_segments.json`
+- `state_trace.jsonl`
 
 ## 4.5 GUI 要求
 
-`cs_label_session` GUI 至少需要：
+`cs_state_trace` GUI 至少需要：
 
 - 当前 session 显示
-- 当前激活 `place_token` 显示
-- 可点击或可选择的 token 列表
-- 设置当前 token 按钮
-- 关闭当前标签段按钮
 - 当前帧号显示
-- 最近一次标签切换结果显示
+- 最近一次状态采样结果显示
+- 当前状态读取状态显示
+- 最近错误信息显示
 
 ## 5. 工具 3：`cs_dataset_build`
 
@@ -230,7 +229,8 @@ cs_dataset_build run `
 作用：
 
 - 读取所有 session
-- 读取标签段
+- 读取状态轨迹
+- 自动投影区域标签
 - 构建样本列表
 - 去重
 - 切分数据集
@@ -256,6 +256,12 @@ cs_dataset_build run `
 - `val_list.json`
 - `test_list.json`
 - `build_report.json`
+
+补充要求：
+
+- 必须校验每个样本都能找到对齐状态
+- 必须记录标签来源为 `teacher_projected`
+- 对齐失败样本必须丢弃并计入报告
 
 ## 5.5 GUI 要求
 
@@ -321,13 +327,13 @@ cs_dataset_report run `
 - 缺类或失衡提示显示
 - 报告文件路径显示
 
-## 7. place token 校验规则
+## 7. 标签投影规则校验
 
-所有工具中涉及 `--place-token` 的地方，都必须：
+所有工具中涉及自动区域投影的地方，都必须：
 
-- 仅接受字典内 token
-- 严格区分大小写
-- 非法 token 立即报错
+- 使用统一的 `place_token -> place_id` 字典
+- 使用统一的区域投影规则
+- 对投影失败样本立即标记并丢弃
 
 建议统一使用：
 
@@ -349,8 +355,9 @@ cs_dataset_report run `
 - 分辨率不匹配
 - 地图不匹配
 - session 不存在
-- token 非法
-- 标签段未关闭
+- 状态读取失败
+- 状态与截图无法对齐
+- 标签投影失败
 - 输出目录不可写
 
 ## 9. 推荐退出码
@@ -361,7 +368,7 @@ cs_dataset_report run `
 - `1`：参数错误
 - `2`：运行时状态错误
 - `3`：I/O 错误
-- `4`：字典或标签错误
+- `4`：字典、投影或标签错误
 
 ## 10. 未来扩展
 

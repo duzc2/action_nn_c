@@ -38,21 +38,68 @@ typedef struct CsSampleRecordTag {
     char image_rel_path[CS_TOOL_MAX_PATH];
     char session_id[64];
     int frame_index;
+    char timestamp[64];
+    double pos_x;
+    double pos_y;
+    double pos_z;
+    double yaw;
+    double pitch;
     char place_token[64];
     int place_id;
+    char label_source[32];
     int split_kind;
 } CsSampleRecord;
 
 typedef struct CsBuildSummaryTag {
     int raw_session_count;
     int raw_frame_count;
+    int state_trace_count;
     int filtered_frame_count;
     int dedup_removed_count;
     int blur_removed_count;
+    int teacher_alignment_drop_count;
+    int projection_outside_count;
+    int projection_ambiguous_count;
+    int projection_disabled_count;
     int train_count;
     int val_count;
     int test_count;
 } CsBuildSummary;
+
+typedef struct CsTraceFrameTag {
+    int frame_index;
+    char frame_path[CS_TOOL_MAX_PATH];
+} CsTraceFrame;
+
+typedef struct CsProjectionZoneTag {
+    int place_id;
+    char place_token[64];
+    int enabled_in_v1;
+    int priority;
+    double z_min;
+    double z_max;
+    double min_x;
+    double min_y;
+    double max_x;
+    double max_y;
+} CsProjectionZone;
+
+typedef struct CsProjectionConfigTag {
+    char projection_name[64];
+    char map_name[64];
+    char dictionary_name[64];
+    int version;
+    double boundary_margin;
+    CsProjectionZone zones[CS_TOOL_MAX_PLACES];
+    size_t zone_count;
+} CsProjectionConfig;
+
+enum {
+    CS_PROJECTION_OK = 0,
+    CS_PROJECTION_OUTSIDE = 1,
+    CS_PROJECTION_AMBIGUOUS = 2,
+    CS_PROJECTION_DISABLED = 3
+};
 
 enum {
     CS_SPLIT_TRAIN = 0,
@@ -333,6 +380,553 @@ static int cs_build_collect_sessions(const char* raw_root,
 #endif
 }
 
+static const char* cs_skip_spaces(const char* cursor) {
+    while (cursor != NULL &&
+           *cursor != '\0' &&
+           (*cursor == ' ' || *cursor == '\n' || *cursor == '\r' || *cursor == '\t')) {
+        cursor++;
+    }
+    return cursor;
+}
+
+static const char* cs_find_key(const char* text, const char* key) {
+    char pattern[128];
+    int written_size;
+
+    written_size = snprintf(pattern, sizeof(pattern), "\"%s\"", key);
+    if (written_size < 0 || (size_t)written_size >= sizeof(pattern)) {
+        return NULL;
+    }
+    return strstr(text, pattern);
+}
+
+static int cs_extract_string_after_key(const char* text, const char* key, char* out_value, size_t out_size) {
+    const char* key_position;
+    const char* colon;
+    const char* first_quote;
+    const char* second_quote;
+    size_t value_length;
+
+    key_position = cs_find_key(text, key);
+    if (key_position == NULL) {
+        return 0;
+    }
+
+    colon = strchr(key_position, ':');
+    if (colon == NULL) {
+        return 0;
+    }
+
+    first_quote = strchr(colon, '"');
+    if (first_quote == NULL) {
+        return 0;
+    }
+
+    second_quote = strchr(first_quote + 1, '"');
+    if (second_quote == NULL) {
+        return 0;
+    }
+
+    value_length = (size_t)(second_quote - (first_quote + 1));
+    if (value_length + 1U > out_size) {
+        return 0;
+    }
+
+    memcpy(out_value, first_quote + 1, value_length);
+    out_value[value_length] = '\0';
+    return 1;
+}
+
+static int cs_extract_int_after_key(const char* text, const char* key, int* out_value) {
+    const char* key_position;
+    const char* colon;
+    const char* value_position;
+    int scanned_value;
+
+    key_position = cs_find_key(text, key);
+    if (key_position == NULL) {
+        return 0;
+    }
+
+    colon = strchr(key_position, ':');
+    if (colon == NULL) {
+        return 0;
+    }
+
+    value_position = cs_skip_spaces(colon + 1);
+    if (value_position == NULL) {
+        return 0;
+    }
+
+    if (sscanf(value_position, "%d", &scanned_value) != 1) {
+        return 0;
+    }
+
+    *out_value = scanned_value;
+    return 1;
+}
+
+static int cs_extract_double_after_key(const char* text, const char* key, double* out_value) {
+    const char* key_position;
+    const char* colon;
+    const char* value_position;
+    double scanned_value;
+
+    key_position = cs_find_key(text, key);
+    if (key_position == NULL) {
+        return 0;
+    }
+
+    colon = strchr(key_position, ':');
+    if (colon == NULL) {
+        return 0;
+    }
+
+    value_position = cs_skip_spaces(colon + 1);
+    if (value_position == NULL) {
+        return 0;
+    }
+
+    if (sscanf(value_position, "%lf", &scanned_value) != 1) {
+        return 0;
+    }
+
+    *out_value = scanned_value;
+    return 1;
+}
+
+static int cs_extract_bool_after_key(const char* text, const char* key, int* out_value) {
+    const char* key_position;
+    const char* colon;
+    const char* value_position;
+
+    key_position = cs_find_key(text, key);
+    if (key_position == NULL) {
+        return 0;
+    }
+
+    colon = strchr(key_position, ':');
+    if (colon == NULL) {
+        return 0;
+    }
+
+    value_position = cs_skip_spaces(colon + 1);
+    if (value_position == NULL) {
+        return 0;
+    }
+
+    if (strncmp(value_position, "true", 4U) == 0) {
+        *out_value = 1;
+        return 1;
+    }
+    if (strncmp(value_position, "false", 5U) == 0) {
+        *out_value = 0;
+        return 1;
+    }
+    return 0;
+}
+
+static int cs_build_find_default_projection(char* out_path, size_t out_size, char* error_buffer, size_t error_buffer_size) {
+    char current_directory[CS_TOOL_MAX_PATH];
+    char executable_directory[CS_TOOL_MAX_PATH];
+    char probe_base[CS_TOOL_MAX_PATH];
+    char* roots[2];
+    size_t root_index;
+
+    if (!cs_tool_get_current_directory(current_directory, sizeof(current_directory), error_buffer, error_buffer_size)) {
+        return 0;
+    }
+
+    if (!cs_tool_get_executable_path(executable_directory, sizeof(executable_directory), error_buffer, error_buffer_size)) {
+        return 0;
+    }
+
+    {
+        char* last_slash;
+
+        last_slash = strrchr(executable_directory, '\\');
+        if (last_slash != NULL) {
+            *last_slash = '\0';
+        }
+    }
+
+    roots[0] = current_directory;
+    roots[1] = executable_directory;
+
+    for (root_index = 0U; root_index < 2U; ++root_index) {
+        int level;
+
+        if (!cs_tool_copy_string(probe_base, sizeof(probe_base), roots[root_index])) {
+            continue;
+        }
+
+        for (level = 0; level < 8; ++level) {
+            char candidate[CS_TOOL_MAX_PATH];
+
+            if (snprintf(candidate,
+                         sizeof(candidate),
+                         "%s\\demo\\cs\\config\\de_dust2_v1_teacher_projection.json",
+                         probe_base) >= 0 &&
+                cs_tool_file_exists(candidate)) {
+                return cs_tool_copy_string(out_path, out_size, candidate);
+            }
+
+            {
+                char* last_slash;
+
+                last_slash = strrchr(probe_base, '\\');
+                if (last_slash == NULL) {
+                    break;
+                }
+                *last_slash = '\0';
+            }
+        }
+    }
+
+    cs_tool_set_error(error_buffer, error_buffer_size, "Failed to locate demo/cs/config/de_dust2_v1_teacher_projection.json");
+    return 0;
+}
+
+static int cs_build_collect_trace_frames(const char* frames_dir,
+                                         CsTraceFrame** out_frames,
+                                         size_t* out_frame_count,
+                                         char* error_buffer,
+                                         size_t error_buffer_size) {
+#ifdef _WIN32
+    char search_pattern[CS_TOOL_MAX_PATH];
+    WIN32_FIND_DATAA find_data;
+    HANDLE find_handle;
+    CsTraceFrame* frames;
+    size_t frame_capacity;
+    size_t frame_count;
+
+    frames = NULL;
+    frame_capacity = 0U;
+    frame_count = 0U;
+
+    if (snprintf(search_pattern, sizeof(search_pattern), "%s\\frame_*.bmp", frames_dir) < 0) {
+        cs_tool_set_error(error_buffer, error_buffer_size, "Frame search pattern is too long.");
+        return 0;
+    }
+
+    find_handle = FindFirstFileA(search_pattern, &find_data);
+    if (find_handle == INVALID_HANDLE_VALUE) {
+        *out_frames = NULL;
+        *out_frame_count = 0U;
+        return 1;
+    }
+
+    do {
+        int frame_index;
+
+        if ((find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0U) {
+            continue;
+        }
+        if (sscanf(find_data.cFileName, "frame_%d.bmp", &frame_index) != 1) {
+            continue;
+        }
+
+        if (frame_count == frame_capacity) {
+            size_t new_capacity;
+            CsTraceFrame* new_frames;
+
+            new_capacity = (frame_capacity == 0U) ? 128U : frame_capacity * 2U;
+            new_frames = (CsTraceFrame*)realloc(frames, new_capacity * sizeof(CsTraceFrame));
+            if (new_frames == NULL) {
+                FindClose(find_handle);
+                free(frames);
+                cs_tool_set_error(error_buffer, error_buffer_size, "Out of memory while collecting trace frames.");
+                return 0;
+            }
+            frames = new_frames;
+            frame_capacity = new_capacity;
+        }
+
+        memset(&frames[frame_count], 0, sizeof(CsTraceFrame));
+        frames[frame_count].frame_index = frame_index;
+        if (snprintf(frames[frame_count].frame_path, sizeof(frames[frame_count].frame_path), "%s\\%s", frames_dir, find_data.cFileName) < 0) {
+            FindClose(find_handle);
+            free(frames);
+            cs_tool_set_error(error_buffer, error_buffer_size, "Frame path is too long.");
+            return 0;
+        }
+        frame_count++;
+    } while (FindNextFileA(find_handle, &find_data));
+
+    FindClose(find_handle);
+    *out_frames = frames;
+    *out_frame_count = frame_count;
+    return 1;
+#else
+    (void)frames_dir;
+    (void)out_frames;
+    (void)out_frame_count;
+    cs_tool_set_error(error_buffer, error_buffer_size, "Frame enumeration is only implemented on Windows.");
+    return 0;
+#endif
+}
+
+static int cs_build_load_state_trace(const char* path,
+                                     CsStateTraceRecord** out_records,
+                                     size_t* out_record_count,
+                                     char* error_buffer,
+                                     size_t error_buffer_size) {
+    char* text;
+    size_t text_size;
+    char* line_start;
+    CsStateTraceRecord* records;
+    size_t record_capacity;
+    size_t record_count;
+
+    text = NULL;
+    text_size = 0U;
+    records = NULL;
+    record_capacity = 0U;
+    record_count = 0U;
+
+    if (!cs_tool_file_exists(path)) {
+        *out_records = NULL;
+        *out_record_count = 0U;
+        return 1;
+    }
+
+    if (!cs_tool_read_text_file(path, &text, &text_size, error_buffer, error_buffer_size)) {
+        return 0;
+    }
+
+    line_start = text;
+    while (line_start != NULL && *line_start != '\0') {
+        char* line_end;
+        char saved_character;
+
+        line_end = strchr(line_start, '\n');
+        if (line_end != NULL) {
+            saved_character = *line_end;
+            *line_end = '\0';
+        } else {
+            saved_character = '\0';
+        }
+
+        if (line_start[0] != '\0') {
+            if (record_count == record_capacity) {
+                size_t new_capacity;
+                CsStateTraceRecord* new_records;
+
+                new_capacity = (record_capacity == 0U) ? 128U : record_capacity * 2U;
+                new_records = (CsStateTraceRecord*)realloc(records, new_capacity * sizeof(CsStateTraceRecord));
+                if (new_records == NULL) {
+                    free(records);
+                    free(text);
+                    cs_tool_set_error(error_buffer, error_buffer_size, "Out of memory while loading state trace.");
+                    return 0;
+                }
+                records = new_records;
+                record_capacity = new_capacity;
+            }
+
+            if (!cs_tool_parse_state_trace_line(line_start, &records[record_count], error_buffer, error_buffer_size)) {
+                free(records);
+                free(text);
+                return 0;
+            }
+            record_count++;
+        }
+
+        if (line_end == NULL) {
+            break;
+        }
+
+        *line_end = saved_character;
+        line_start = line_end + 1;
+    }
+
+    free(text);
+    *out_records = records;
+    *out_record_count = record_count;
+    return 1;
+}
+
+static const CsStateTraceRecord* cs_build_find_trace_record(const CsStateTraceRecord* records, size_t record_count, int frame_index) {
+    size_t index;
+
+    for (index = 0U; index < record_count; ++index) {
+        if (records[index].frame_index == frame_index) {
+            return &records[index];
+        }
+    }
+    return NULL;
+}
+
+static int cs_build_load_projection(const char* path,
+                                    CsProjectionConfig* projection,
+                                    char* error_buffer,
+                                    size_t error_buffer_size) {
+    char* text;
+    size_t text_size;
+    const char* cursor;
+
+    memset(projection, 0, sizeof(*projection));
+    text = NULL;
+    text_size = 0U;
+
+    if (!cs_tool_read_text_file(path, &text, &text_size, error_buffer, error_buffer_size)) {
+        return 0;
+    }
+
+    (void)text_size;
+    if (!cs_extract_string_after_key(text, "projection_name", projection->projection_name, sizeof(projection->projection_name)) ||
+        !cs_extract_string_after_key(text, "map_name", projection->map_name, sizeof(projection->map_name)) ||
+        !cs_extract_string_after_key(text, "dictionary_name", projection->dictionary_name, sizeof(projection->dictionary_name)) ||
+        !cs_extract_int_after_key(text, "version", &projection->version) ||
+        !cs_extract_double_after_key(text, "boundary_margin", &projection->boundary_margin)) {
+        free(text);
+        cs_tool_set_error(error_buffer, error_buffer_size, "Projection file is missing top-level fields: %s", path);
+        return 0;
+    }
+
+    cursor = text;
+    while ((cursor = cs_find_key(cursor, "place_id")) != NULL) {
+        CsProjectionZone* zone;
+
+        if (projection->zone_count >= CS_TOOL_MAX_PLACES) {
+            free(text);
+            cs_tool_set_error(error_buffer, error_buffer_size, "Projection file has too many zones: %s", path);
+            return 0;
+        }
+
+        zone = &projection->zones[projection->zone_count];
+        memset(zone, 0, sizeof(*zone));
+        if (!cs_extract_int_after_key(cursor, "place_id", &zone->place_id) ||
+            !cs_extract_string_after_key(cursor, "place_token", zone->place_token, sizeof(zone->place_token)) ||
+            !cs_extract_bool_after_key(cursor, "enabled_in_v1", &zone->enabled_in_v1) ||
+            !cs_extract_int_after_key(cursor, "priority", &zone->priority) ||
+            !cs_extract_double_after_key(cursor, "z_min", &zone->z_min) ||
+            !cs_extract_double_after_key(cursor, "z_max", &zone->z_max) ||
+            !cs_extract_double_after_key(cursor, "min_x", &zone->min_x) ||
+            !cs_extract_double_after_key(cursor, "min_y", &zone->min_y) ||
+            !cs_extract_double_after_key(cursor, "max_x", &zone->max_x) ||
+            !cs_extract_double_after_key(cursor, "max_y", &zone->max_y)) {
+            free(text);
+            cs_tool_set_error(error_buffer, error_buffer_size, "Projection zone is malformed or not using aabb_2d: %s", path);
+            return 0;
+        }
+
+        projection->zone_count++;
+        cursor += 8;
+    }
+
+    free(text);
+    return 1;
+}
+
+static int cs_build_validate_projection(const CsProjectionConfig* projection,
+                                        const CsPlaceDictionary* dictionary,
+                                        const CsCaptureOptions* session_options,
+                                        const char* session_id,
+                                        char* error_buffer,
+                                        size_t error_buffer_size) {
+    size_t index;
+
+    if (strcmp(session_options->map_name, "de_dust2") != 0 || strcmp(projection->map_name, "de_dust2") != 0) {
+        cs_tool_set_error(error_buffer, error_buffer_size, "Only de_dust2 is supported in Version 1.");
+        return 0;
+    }
+    if (strcmp(projection->map_name, session_options->map_name) != 0) {
+        cs_tool_set_error(error_buffer, error_buffer_size, "Projection map_name does not match session %s.", session_id);
+        return 0;
+    }
+    if (strcmp(projection->dictionary_name, dictionary->dictionary_name) != 0 || projection->version != dictionary->version) {
+        cs_tool_set_error(error_buffer, error_buffer_size, "Projection dictionary metadata does not match place dictionary.");
+        return 0;
+    }
+
+    for (index = 0U; index < projection->zone_count; ++index) {
+        const CsPlaceEntry* entry;
+
+        entry = cs_tool_find_place_by_id(dictionary, projection->zones[index].place_id);
+        if (entry == NULL || strcmp(entry->place_token, projection->zones[index].place_token) != 0) {
+            cs_tool_set_error(error_buffer, error_buffer_size, "Projection zone metadata does not match place dictionary.");
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
+static double cs_build_normalize_yaw(double yaw_value) {
+    while (yaw_value < 0.0) {
+        yaw_value += 360.0;
+    }
+    while (yaw_value >= 360.0) {
+        yaw_value -= 360.0;
+    }
+    return yaw_value;
+}
+
+static int cs_build_project_record(const CsProjectionConfig* projection,
+                                   const CsStateTraceRecord* record,
+                                   const CsProjectionZone** out_zone) {
+    const CsProjectionZone* best_zone;
+    int best_priority;
+    int best_priority_count;
+    size_t index;
+
+    best_zone = NULL;
+    best_priority = 0;
+    best_priority_count = 0;
+
+    for (index = 0U; index < projection->zone_count; ++index) {
+        const CsProjectionZone* zone;
+        double boundary_distance;
+        double x_margin;
+        double y_margin;
+
+        zone = &projection->zones[index];
+        if (record->pos_z < zone->z_min || record->pos_z > zone->z_max) {
+            continue;
+        }
+        if (record->pos_x < zone->min_x || record->pos_x > zone->max_x ||
+            record->pos_y < zone->min_y || record->pos_y > zone->max_y) {
+            continue;
+        }
+
+        x_margin = record->pos_x - zone->min_x;
+        if ((zone->max_x - record->pos_x) < x_margin) {
+            x_margin = zone->max_x - record->pos_x;
+        }
+        y_margin = record->pos_y - zone->min_y;
+        if ((zone->max_y - record->pos_y) < y_margin) {
+            y_margin = zone->max_y - record->pos_y;
+        }
+        boundary_distance = (x_margin < y_margin) ? x_margin : y_margin;
+        if (boundary_distance < projection->boundary_margin) {
+            return CS_PROJECTION_AMBIGUOUS;
+        }
+
+        if (best_zone == NULL || zone->priority < best_priority) {
+            best_zone = zone;
+            best_priority = zone->priority;
+            best_priority_count = 1;
+        } else if (zone->priority == best_priority) {
+            best_priority_count++;
+        }
+    }
+
+    if (best_zone == NULL) {
+        return CS_PROJECTION_OUTSIDE;
+    }
+    if (best_priority_count > 1) {
+        return CS_PROJECTION_AMBIGUOUS;
+    }
+    if (!best_zone->enabled_in_v1) {
+        *out_zone = best_zone;
+        return CS_PROJECTION_DISABLED;
+    }
+
+    *out_zone = best_zone;
+    return CS_PROJECTION_OK;
+}
+
 static int cs_build_write_split_list(const char* output_root,
                                      const char* split_name,
                                      const CsSampleRecord* samples,
@@ -382,15 +976,31 @@ static int cs_build_write_split_list(const char* output_root,
                 "      \"image_path\": \"%s\",\n"
                 "      \"session_id\": \"%s\",\n"
                 "      \"frame_index\": %d,\n"
+                "      \"timestamp\": \"%s\",\n"
+                "      \"teacher_pose\": {\n"
+                "        \"pos_x\": %.6f,\n"
+                "        \"pos_y\": %.6f,\n"
+                "        \"pos_z\": %.6f,\n"
+                "        \"yaw\": %.6f,\n"
+                "        \"pitch\": %.6f\n"
+                "      },\n"
                 "      \"place_token\": \"%s\",\n"
-                "      \"place_id\": %d\n"
+                "      \"place_id\": %d,\n"
+                "      \"label_source\": \"%s\"\n"
                 "    }",
                 sample->sample_id,
                 sample->image_rel_path,
                 sample->session_id,
                 sample->frame_index,
+                sample->timestamp,
+                sample->pos_x,
+                sample->pos_y,
+                sample->pos_z,
+                sample->yaw,
+                sample->pitch,
                 sample->place_token,
-                sample->place_id);
+                sample->place_id,
+                sample->label_source);
     }
 
     fprintf(file_handle, "\n  ]\n}\n");
@@ -403,7 +1013,7 @@ static int cs_build_write_report(const char* output_root,
                                  char* error_buffer,
                                  size_t error_buffer_size) {
     char path[CS_TOOL_MAX_PATH];
-    char json_text[2048];
+    char json_text[3072];
     int written_size;
 
     if (snprintf(path, sizeof(path), "%s\\build_report.json", output_root) < 0) {
@@ -416,18 +1026,28 @@ static int cs_build_write_report(const char* output_root,
                             "{\n"
                             "  \"raw_session_count\": %d,\n"
                             "  \"raw_frame_count\": %d,\n"
+                            "  \"state_trace_count\": %d,\n"
                             "  \"filtered_frame_count\": %d,\n"
                             "  \"dedup_removed_count\": %d,\n"
                             "  \"blur_removed_count\": %d,\n"
+                            "  \"teacher_alignment_drop_count\": %d,\n"
+                            "  \"projection_outside_count\": %d,\n"
+                            "  \"projection_ambiguous_count\": %d,\n"
+                            "  \"projection_disabled_count\": %d,\n"
                             "  \"train_count\": %d,\n"
                             "  \"val_count\": %d,\n"
                             "  \"test_count\": %d\n"
                             "}\n",
                             summary->raw_session_count,
                             summary->raw_frame_count,
+                            summary->state_trace_count,
                             summary->filtered_frame_count,
                             summary->dedup_removed_count,
                             summary->blur_removed_count,
+                            summary->teacher_alignment_drop_count,
+                            summary->projection_outside_count,
+                            summary->projection_ambiguous_count,
+                            summary->projection_disabled_count,
                             summary->train_count,
                             summary->val_count,
                             summary->test_count);
@@ -441,6 +1061,10 @@ static int cs_build_write_report(const char* output_root,
 }
 
 static int cs_build_run(const CsBuildOptions* options, char* error_buffer, size_t error_buffer_size) {
+    char dictionary_path[CS_TOOL_MAX_PATH];
+    char projection_path[CS_TOOL_MAX_PATH];
+    CsPlaceDictionary dictionary;
+    CsProjectionConfig projection;
     CsSessionInfo* sessions;
     size_t session_count;
     CsSampleRecord* samples;
@@ -452,6 +1076,8 @@ static int cs_build_run(const CsBuildOptions* options, char* error_buffer, size_
     size_t session_index;
     CsBuildSummary summary;
 
+    memset(&dictionary, 0, sizeof(dictionary));
+    memset(&projection, 0, sizeof(projection));
     sessions = NULL;
     session_count = 0U;
     samples = NULL;
@@ -462,21 +1088,40 @@ static int cs_build_run(const CsBuildOptions* options, char* error_buffer, size_
     hash_capacity = 0U;
     memset(&summary, 0, sizeof(summary));
 
-    if (!cs_build_collect_sessions(options->raw_root, &sessions, &session_count, options, error_buffer, error_buffer_size)) {
+    if (!cs_tool_find_default_dictionary(dictionary_path, sizeof(dictionary_path), error_buffer, error_buffer_size) ||
+        !cs_tool_load_dictionary(dictionary_path, &dictionary, error_buffer, error_buffer_size) ||
+        !cs_build_find_default_projection(projection_path, sizeof(projection_path), error_buffer, error_buffer_size) ||
+        !cs_build_load_projection(projection_path, &projection, error_buffer, error_buffer_size) ||
+        !cs_build_collect_sessions(options->raw_root, &sessions, &session_count, options, error_buffer, error_buffer_size)) {
         return 0;
     }
 
     summary.raw_session_count = (int)session_count;
 
     for (session_index = 0U; session_index < session_count; ++session_index) {
-        char segments_path[CS_TOOL_MAX_PATH];
+        char session_path[CS_TOOL_MAX_PATH];
+        char trace_path[CS_TOOL_MAX_PATH];
         char frames_dir[CS_TOOL_MAX_PATH];
-        CsLabelSegmentsFile segments;
-        size_t segment_index;
+        char start_time[64];
+        char end_time[64];
+        CsCaptureOptions session_options;
+        CsTraceFrame* frames;
+        size_t frame_count;
+        CsStateTraceRecord* records;
+        size_t record_count;
+        size_t frame_list_index;
+        int last_kept_frame;
 
-        memset(&segments, 0, sizeof(segments));
+        memset(&session_options, 0, sizeof(session_options));
+        memset(start_time, 0, sizeof(start_time));
+        memset(end_time, 0, sizeof(end_time));
+        frames = NULL;
+        frame_count = 0U;
+        records = NULL;
+        record_count = 0U;
 
-        if (!cs_tool_get_session_file_path(options->raw_root, sessions[session_index].session_id, "label_segments.json", segments_path, sizeof(segments_path)) ||
+        if (!cs_tool_get_session_file_path(options->raw_root, sessions[session_index].session_id, "session.json", session_path, sizeof(session_path)) ||
+            !cs_tool_get_session_file_path(options->raw_root, sessions[session_index].session_id, "state_trace.jsonl", trace_path, sizeof(trace_path)) ||
             !cs_tool_get_frames_dir(options->raw_root, sessions[session_index].session_id, frames_dir, sizeof(frames_dir))) {
             free(sessions);
             free(samples);
@@ -485,139 +1130,157 @@ static int cs_build_run(const CsBuildOptions* options, char* error_buffer, size_
             return 0;
         }
 
-        if (!cs_tool_read_label_segments(segments_path, &segments, error_buffer, error_buffer_size)) {
+        if (!cs_tool_read_session_json(session_path,
+                                       &session_options,
+                                       start_time,
+                                       sizeof(start_time),
+                                       end_time,
+                                       sizeof(end_time),
+                                       error_buffer,
+                                       error_buffer_size) ||
+            !cs_build_validate_projection(&projection, &dictionary, &session_options, sessions[session_index].session_id, error_buffer, error_buffer_size) ||
+            !cs_build_collect_trace_frames(frames_dir, &frames, &frame_count, error_buffer, error_buffer_size) ||
+            !cs_build_load_state_trace(trace_path, &records, &record_count, error_buffer, error_buffer_size)) {
             free(sessions);
             free(samples);
             free(hashes);
+            free(frames);
+            free(records);
             return 0;
         }
 
-        for (segment_index = 0U; segment_index < segments.segment_count; ++segment_index) {
-            const CsLabelSegment* segment;
-            int frame_index;
-            int last_kept_frame;
+        summary.raw_frame_count += (int)frame_count;
+        summary.state_trace_count += (int)record_count;
+        last_kept_frame = -1000000000;
 
-            segment = &segments.segments[segment_index];
-            if (segment->end_frame < segment->start_frame) {
-                free(sessions);
-                free(samples);
-                free(hashes);
-                cs_tool_set_error(error_buffer,
-                                  error_buffer_size,
-                                  "Open or invalid label segment found in session %s.",
-                                  sessions[session_index].session_id);
-                return 0;
+        for (frame_list_index = 0U; frame_list_index < frame_count; ++frame_list_index) {
+            const CsTraceFrame* frame_info;
+            const CsStateTraceRecord* record;
+            const CsProjectionZone* projected_zone;
+            int projection_status;
+
+            frame_info = &frames[frame_list_index];
+            if (frame_info->frame_index - last_kept_frame < options->min_frame_step) {
+                continue;
             }
 
-            last_kept_frame = -1000000000;
-            for (frame_index = segment->start_frame; frame_index <= segment->end_frame; ++frame_index) {
-                char src_path[CS_TOOL_MAX_PATH];
-                char dst_dir[CS_TOOL_MAX_PATH];
-                char dst_path[CS_TOOL_MAX_PATH];
-                char rel_path[CS_TOOL_MAX_PATH];
+            record = cs_build_find_trace_record(records, record_count, frame_info->frame_index);
+            if (record == NULL) {
+                summary.teacher_alignment_drop_count++;
+                continue;
+            }
+
+            projection_status = cs_build_project_record(&projection, record, &projected_zone);
+            if (projection_status == CS_PROJECTION_OUTSIDE) {
+                summary.projection_outside_count++;
+                continue;
+            }
+            if (projection_status == CS_PROJECTION_AMBIGUOUS) {
+                summary.projection_ambiguous_count++;
+                continue;
+            }
+            if (projection_status == CS_PROJECTION_DISABLED) {
+                summary.projection_disabled_count++;
+                continue;
+            }
+
+            if (options->blur_filter_enabled && cs_build_is_bad_frame(frame_info->frame_path)) {
+                summary.blur_removed_count++;
+                continue;
+            }
+
+            if (options->dedup_enabled) {
                 unsigned long long file_hash;
                 int duplicate_found;
                 size_t hash_index;
 
-                summary.raw_frame_count++;
-
-                if (frame_index - last_kept_frame < options->min_frame_step) {
-                    continue;
-                }
-
-                if (snprintf(src_path, sizeof(src_path), "%s\\frame_%06d.bmp", frames_dir, frame_index) < 0) {
+                file_hash = cs_build_hash_file(frame_info->frame_path, error_buffer, error_buffer_size);
+                if (file_hash == 0ULL) {
                     free(sessions);
                     free(samples);
                     free(hashes);
-                    cs_tool_set_error(error_buffer, error_buffer_size, "Source frame path is too long.");
+                    free(frames);
+                    free(records);
                     return 0;
                 }
 
-                if (!cs_tool_file_exists(src_path)) {
-                    continue;
-                }
-
-                if (options->blur_filter_enabled && cs_build_is_bad_frame(src_path)) {
-                    summary.blur_removed_count++;
-                    continue;
-                }
-
-                file_hash = 0ULL;
                 duplicate_found = 0;
-                if (options->dedup_enabled) {
-                    file_hash = cs_build_hash_file(src_path, error_buffer, error_buffer_size);
-                    if (file_hash == 0ULL) {
-                        free(sessions);
-                        free(samples);
-                        free(hashes);
-                        return 0;
-                    }
-
-                    for (hash_index = 0U; hash_index < hash_count; ++hash_index) {
-                        if (hashes[hash_index] == file_hash) {
-                            duplicate_found = 1;
-                            break;
-                        }
-                    }
-
-                    if (duplicate_found) {
-                        summary.dedup_removed_count++;
-                        continue;
+                for (hash_index = 0U; hash_index < hash_count; ++hash_index) {
+                    if (hashes[hash_index] == file_hash) {
+                        duplicate_found = 1;
+                        break;
                     }
                 }
 
-                if (sample_count == sample_capacity) {
+                if (duplicate_found) {
+                    summary.dedup_removed_count++;
+                    continue;
+                }
+
+                if (hash_count == hash_capacity) {
                     size_t new_capacity;
-                    CsSampleRecord* new_samples;
+                    unsigned long long* new_hashes;
 
-                    new_capacity = (sample_capacity == 0U) ? 128U : sample_capacity * 2U;
-                    new_samples = (CsSampleRecord*)realloc(samples, new_capacity * sizeof(CsSampleRecord));
-                    if (new_samples == NULL) {
+                    new_capacity = (hash_capacity == 0U) ? 128U : hash_capacity * 2U;
+                    new_hashes = (unsigned long long*)realloc(hashes, new_capacity * sizeof(unsigned long long));
+                    if (new_hashes == NULL) {
                         free(sessions);
                         free(samples);
                         free(hashes);
-                        cs_tool_set_error(error_buffer, error_buffer_size, "Out of memory while growing sample list.");
+                        free(frames);
+                        free(records);
+                        cs_tool_set_error(error_buffer, error_buffer_size, "Out of memory while growing dedup table.");
                         return 0;
                     }
-                    samples = new_samples;
-                    sample_capacity = new_capacity;
+                    hashes = new_hashes;
+                    hash_capacity = new_capacity;
                 }
+                hashes[hash_count++] = file_hash;
+            }
 
-                if (options->dedup_enabled) {
-                    if (hash_count == hash_capacity) {
-                        size_t new_capacity;
-                        unsigned long long* new_hashes;
+            if (sample_count == sample_capacity) {
+                size_t new_capacity;
+                CsSampleRecord* new_samples;
 
-                        new_capacity = (hash_capacity == 0U) ? 128U : hash_capacity * 2U;
-                        new_hashes = (unsigned long long*)realloc(hashes, new_capacity * sizeof(unsigned long long));
-                        if (new_hashes == NULL) {
-                            free(sessions);
-                            free(samples);
-                            free(hashes);
-                            cs_tool_set_error(error_buffer, error_buffer_size, "Out of memory while growing dedup table.");
-                            return 0;
-                        }
-                        hashes = new_hashes;
-                        hash_capacity = new_capacity;
-                    }
-                    hashes[hash_count++] = file_hash;
-                }
-
-                if (snprintf(dst_dir, sizeof(dst_dir), "%s\\samples\\%s", options->output_root, sessions[session_index].session_id) < 0 ||
-                    snprintf(dst_path, sizeof(dst_path), "%s\\frame_%06d.bmp", dst_dir, frame_index) < 0 ||
-                    snprintf(rel_path, sizeof(rel_path), "samples\\%s\\frame_%06d.bmp", sessions[session_index].session_id, frame_index) < 0) {
+                new_capacity = (sample_capacity == 0U) ? 128U : sample_capacity * 2U;
+                new_samples = (CsSampleRecord*)realloc(samples, new_capacity * sizeof(CsSampleRecord));
+                if (new_samples == NULL) {
                     free(sessions);
                     free(samples);
                     free(hashes);
+                    free(frames);
+                    free(records);
+                    cs_tool_set_error(error_buffer, error_buffer_size, "Out of memory while growing sample list.");
+                    return 0;
+                }
+                samples = new_samples;
+                sample_capacity = new_capacity;
+            }
+
+            {
+                char dst_dir[CS_TOOL_MAX_PATH];
+                char dst_path[CS_TOOL_MAX_PATH];
+                char rel_path[CS_TOOL_MAX_PATH];
+
+                if (snprintf(dst_dir, sizeof(dst_dir), "%s\\samples\\%s", options->output_root, sessions[session_index].session_id) < 0 ||
+                    snprintf(dst_path, sizeof(dst_path), "%s\\frame_%06d.bmp", dst_dir, frame_info->frame_index) < 0 ||
+                    snprintf(rel_path, sizeof(rel_path), "samples\\%s\\frame_%06d.bmp", sessions[session_index].session_id, frame_info->frame_index) < 0) {
+                    free(sessions);
+                    free(samples);
+                    free(hashes);
+                    free(frames);
+                    free(records);
                     cs_tool_set_error(error_buffer, error_buffer_size, "Destination frame path is too long.");
                     return 0;
                 }
 
                 if (!cs_tool_make_dirs(dst_dir, error_buffer, error_buffer_size) ||
-                    !cs_tool_copy_binary_file(src_path, dst_path, error_buffer, error_buffer_size)) {
+                    !cs_tool_copy_binary_file(frame_info->frame_path, dst_path, error_buffer, error_buffer_size)) {
                     free(sessions);
                     free(samples);
                     free(hashes);
+                    free(frames);
+                    free(records);
                     return 0;
                 }
 
@@ -626,12 +1289,19 @@ static int cs_build_run(const CsBuildOptions* options, char* error_buffer, size_
                                sizeof(samples[sample_count].sample_id),
                                "%s_%06d",
                                sessions[session_index].session_id,
-                               frame_index);
+                               frame_info->frame_index);
                 (void)cs_tool_copy_string(samples[sample_count].image_rel_path, sizeof(samples[sample_count].image_rel_path), rel_path);
                 (void)cs_tool_copy_string(samples[sample_count].session_id, sizeof(samples[sample_count].session_id), sessions[session_index].session_id);
-                (void)cs_tool_copy_string(samples[sample_count].place_token, sizeof(samples[sample_count].place_token), segment->place_token);
-                samples[sample_count].frame_index = frame_index;
-                samples[sample_count].place_id = segment->place_id;
+                (void)cs_tool_copy_string(samples[sample_count].timestamp, sizeof(samples[sample_count].timestamp), record->timestamp);
+                (void)cs_tool_copy_string(samples[sample_count].place_token, sizeof(samples[sample_count].place_token), projected_zone->place_token);
+                (void)cs_tool_copy_string(samples[sample_count].label_source, sizeof(samples[sample_count].label_source), "teacher_projected");
+                samples[sample_count].frame_index = frame_info->frame_index;
+                samples[sample_count].pos_x = record->pos_x;
+                samples[sample_count].pos_y = record->pos_y;
+                samples[sample_count].pos_z = record->pos_z;
+                samples[sample_count].yaw = cs_build_normalize_yaw(record->yaw);
+                samples[sample_count].pitch = record->pitch;
+                samples[sample_count].place_id = projected_zone->place_id;
                 samples[sample_count].split_kind = sessions[session_index].split_kind;
 
                 if (samples[sample_count].split_kind == CS_SPLIT_TRAIN) {
@@ -643,10 +1313,13 @@ static int cs_build_run(const CsBuildOptions* options, char* error_buffer, size_
                 }
 
                 summary.filtered_frame_count++;
-                last_kept_frame = frame_index;
+                last_kept_frame = frame_info->frame_index;
                 sample_count++;
             }
         }
+
+        free(frames);
+        free(records);
     }
 
     if (!cs_build_write_split_list(options->output_root, "train", samples, sample_count, CS_SPLIT_TRAIN, error_buffer, error_buffer_size) ||
@@ -660,7 +1333,13 @@ static int cs_build_run(const CsBuildOptions* options, char* error_buffer, size_
     }
 
     printf("Built dataset from %d sessions.\n", summary.raw_session_count);
+    printf("Raw frames/state trace: %d / %d\n", summary.raw_frame_count, summary.state_trace_count);
     printf("Filtered samples: %d\n", summary.filtered_frame_count);
+    printf("Alignment drops: %d\n", summary.teacher_alignment_drop_count);
+    printf("Projection outside/ambiguous/disabled: %d / %d / %d\n",
+           summary.projection_outside_count,
+           summary.projection_ambiguous_count,
+           summary.projection_disabled_count);
     printf("Train/Val/Test: %d / %d / %d\n", summary.train_count, summary.val_count, summary.test_count);
 
     free(sessions);

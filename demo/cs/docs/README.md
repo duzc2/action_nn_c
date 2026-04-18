@@ -17,6 +17,8 @@
 - `v1_data_collection_tooling.md`：Version 1 数据采集工具与用户操作流程
 - `v1_tool_cli_spec.md`：Version 1 数据采集工具的 CLI 规格
 - `v1_label_schema.md`：Version 1 采集与数据集文件结构定义
+- `v1_teacher_projection_spec.md`：Version 1 中 teacher 状态到区域标签的自动投影规则
+- `v1_tools_migration_checklist.md`：Version 1 工具链从 label_segments 迁移到 state_trace 的最小改造清单
 - `v1_user_workflow.md`：Version 1 从打开 CS 到得到数据集的用户操作流程
 - `v1_dev_plan.md`：Version 1 的实际开发顺序、里程碑与测试门禁
 - `place_dictionary.json.spec.md`：`place_token -> place_id` 正式字典格式规范
@@ -38,11 +40,20 @@
 
 - 不面向公开多人对战
 - 不讨论反作弊绕过
-- 不讨论注入、内存读取、封包操控
+- 不讨论公开对战环境中的注入、内存读取、封包操控
 - 第一阶段只聚焦“视觉感知 + 地点标识目标 + 移动控制”
 - 开发推进采用单功能串行版本制：一个版本只做一个模块，测试通过后再进入下一个版本
 
-## 4. 文档依据
+## 4. 训练与推理双通道原则
+
+为解决 `demo/cs` 训练数据无法依赖人工高效标注的问题，方案补充如下总原则：
+
+- 训练阶段允许在**用户自有、离线、私有测试环境**中使用程序直读状态作为 `teacher` 通道
+- `teacher` 通道只用于自动生成监督标签、数据清洗与离线评估
+- 推理阶段仍以截图和时序状态为主，不允许依赖 `teacher` 通道闭环运行
+- 换言之：**训练用程序状态教视觉，推理再只用视觉工作**
+
+## 5. 文档依据
 
 本方案对齐了仓库现有约束，主要依据：
 

@@ -12,7 +12,7 @@
 
 它是以下模块的共同输入：
 
-- `cs_label_session`
+- `cs_state_trace`
 - `cs_dataset_build`
 - `cs_dataset_report`
 - Version 1 train
@@ -252,17 +252,17 @@ demo/cs/config/place_dictionary.json
 2. `place_id` 不允许重复
 3. `place_token` 不允许重复
 4. `enabled_in_v1=true` 的条目必须可用于 Version 1
-5. `label_segments.json` 中的 token 和 id 必须来自此字典
+5. 自动投影生成的 token 和 id 必须来自此字典
 6. `train_list.json` / `val_list.json` / `test_list.json` 中的 token 和 id 必须来自此字典
 
 ## 8. 对各工具的使用方式
 
-## 8.1 `cs_label_session`
+## 8.1 `cs_state_trace`
 
 用途：
 
-- 校验用户输入的 `place_token` 是否合法
-- 自动补出对应 `place_id`
+- 为自动投影阶段提供稳定的精确状态来源
+- 不直接产出 token，但其输出必须可映射到此字典
 
 ## 8.2 `cs_dataset_build`
 

@@ -16,7 +16,7 @@ Version 1 建议固定以下文件：
 
 - `session.json`
 - `capture_state.json`
-- `label_segments.json`
+- `state_trace.jsonl`
 - `train_list.json`
 - `val_list.json`
 - `test_list.json`
@@ -61,38 +61,21 @@ Version 1 建议固定以下文件：
   "status": "running",
   "captured_frame_count": 1450,
   "last_frame_index": 1449,
-  "current_place_token": "mid"
+  "last_state_timestamp": "2026-04-02T10:03:21.240+08:00"
 }
 ```
 
-## 5. `label_segments.json`
+## 5. `state_trace.jsonl`
 
 ## 5.1 作用
 
-记录标签按时间段或帧段的生效区间。
+记录截图对应的程序精确状态轨迹，供后续自动派生标签使用。
 
 ## 5.2 示例结构
 
 ```json
-{
-  "session_id": "session_0001",
-  "segments": [
-    {
-      "segment_id": 0,
-      "start_frame": 0,
-      "end_frame": 220,
-      "place_token": "t_spawn",
-      "place_id": 0
-    },
-    {
-      "segment_id": 1,
-      "start_frame": 221,
-      "end_frame": 540,
-      "place_token": "mid",
-      "place_id": 2
-    }
-  ]
-}
+{"frame_index":0,"timestamp":"2026-04-02T10:00:01.120+08:00","pos_x":128.0,"pos_y":64.0,"pos_z":-32.0,"yaw":90.0,"pitch":0.0,"velocity_x":0.0,"velocity_y":0.0,"velocity_z":0.0}
+{"frame_index":1,"timestamp":"2026-04-02T10:00:01.245+08:00","pos_x":129.5,"pos_y":64.2,"pos_z":-32.0,"yaw":92.0,"pitch":0.0,"velocity_x":12.0,"velocity_y":1.6,"velocity_z":0.0}
 ```
 
 ## 6. `train_list.json` / `val_list.json` / `test_list.json`
@@ -109,8 +92,17 @@ Version 1 建议固定以下文件：
   "image_path": "samples/session_0001/frame_000321.png",
   "session_id": "session_0001",
   "frame_index": 321,
+  "timestamp": "2026-04-02T10:04:20.015+08:00",
+  "teacher_pose": {
+    "pos_x": 512.0,
+    "pos_y": 384.0,
+    "pos_z": -24.0,
+    "yaw": 135.0,
+    "pitch": 0.0
+  },
   "place_token": "mid",
-  "place_id": 2
+  "place_id": 2,
+  "label_source": "teacher_projected"
 }
 ```
 
@@ -126,8 +118,17 @@ Version 1 建议固定以下文件：
       "image_path": "samples/session_0001/frame_000321.png",
       "session_id": "session_0001",
       "frame_index": 321,
+      "timestamp": "2026-04-02T10:04:20.015+08:00",
+      "teacher_pose": {
+        "pos_x": 512.0,
+        "pos_y": 384.0,
+        "pos_z": -24.0,
+        "yaw": 135.0,
+        "pitch": 0.0
+      },
       "place_token": "mid",
-      "place_id": 2
+      "place_id": 2,
+      "label_source": "teacher_projected"
     }
   ]
 }
@@ -145,9 +146,11 @@ Version 1 建议固定以下文件：
 {
   "raw_session_count": 4,
   "raw_frame_count": 12000,
+  "state_trace_count": 12000,
   "filtered_frame_count": 4300,
   "dedup_removed_count": 2200,
   "blur_removed_count": 800,
+  "teacher_alignment_drop_count": 120,
   "train_count": 3440,
   "val_count": 430,
   "test_count": 430
@@ -185,10 +188,11 @@ Version 1 建议固定以下文件：
 
 所有文件都必须满足：
 
-- `place_token` 与 `place_id` 来自同一份字典
+- `place_token` 与 `place_id` 来自同一份字典或同一套投影规则
 - `session_id` 必须可追溯
 - `image_path` 必须存在
-- `label_segments.json` 不允许区间重叠
+- `state_trace.jsonl` 与 `frame_index` 必须可对齐
+- 每条样本的 `label_source` 必须明确
 - `train/val/test` 不允许样本重复
 
 ## 10. 对用户和工具的意义

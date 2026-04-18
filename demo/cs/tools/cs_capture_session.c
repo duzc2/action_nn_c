@@ -8,8 +8,8 @@
  * - stop
  * - status
  *
- * A private "__capture_loop" worker keeps capture running in the background so
- * the user can control the session from short CLI commands.
+ * A private "__capture_loop" worker keeps screenshot capture running in the
+ * background so short CLI calls can manage a long capture session.
  */
 
 #include <stdio.h>
@@ -30,12 +30,13 @@ typedef struct CsCaptureCommandTag {
     char team[32];
     char notes[128];
     char dictionary_path[CS_TOOL_MAX_PATH];
+    char teacher_source[32];
 } CsCaptureCommand;
 
 /*
- * The worker and the label tool both update capture_state.json.
- * Re-reading the file before every worker write keeps label ownership on the
- * current place fields and avoids stale in-memory state clobbering labels.
+ * Both background workers update capture_state.json.
+ * Re-loading before each write lets capture updates preserve the trace fields
+ * and lets the trace worker preserve capture progress fields.
  */
 static int cs_capture_reload_state(const char* state_path, CsCaptureState* state, char* error_buffer, size_t error_buffer_size) {
     CsCaptureState latest_state;
@@ -79,23 +80,24 @@ static int cs_capture_default_session_root(char* out_root, size_t out_size, char
 }
 
 static int cs_capture_parse_options(int argc, char** argv, int start_index, CsCaptureCommand* command, char* error_buffer, size_t error_buffer_size) {
+    int index;
+
     memset(command, 0, sizeof(*command));
     command->width = -1;
     command->height = -1;
     command->capture_fps = -1;
+    (void)cs_tool_copy_string(command->teacher_source, sizeof(command->teacher_source), "cs_runtime");
 
     if (!cs_capture_default_session_root(command->session_root, sizeof(command->session_root), error_buffer, error_buffer_size)) {
         return 0;
     }
 
-    {
-        int index;
-
-        index = start_index;
-        while (index < argc) {
-        const char* option_name = argv[index];
+    index = start_index;
+    while (index < argc) {
+        const char* option_name;
         const char* option_value;
 
+        option_name = argv[index];
         if (index + 1 >= argc) {
             cs_tool_set_error(error_buffer, error_buffer_size, "Missing value after option: %s", option_name);
             return 0;
@@ -148,13 +150,17 @@ static int cs_capture_parse_options(int argc, char** argv, int start_index, CsCa
                 cs_tool_set_error(error_buffer, error_buffer_size, "Dictionary path is too long.");
                 return 0;
             }
+        } else if (cs_arg_is_option(option_name, "--teacher-source")) {
+            if (!cs_tool_copy_string(command->teacher_source, sizeof(command->teacher_source), option_value)) {
+                cs_tool_set_error(error_buffer, error_buffer_size, "Teacher source is too long.");
+                return 0;
+            }
         } else {
             cs_tool_set_error(error_buffer, error_buffer_size, "Unsupported option: %s", option_name);
             return 0;
         }
 
-            index += 2;
-        }
+        index += 2;
     }
 
     return 1;
@@ -181,6 +187,10 @@ static int cs_capture_validate_start_options(const CsCaptureCommand* command, ch
         cs_tool_set_error(error_buffer, error_buffer_size, "Capture FPS must be a positive integer.");
         return 0;
     }
+    if (command->teacher_source[0] == '\0') {
+        cs_tool_set_error(error_buffer, error_buffer_size, "Teacher source must not be empty.");
+        return 0;
+    }
     return 1;
 }
 
@@ -189,25 +199,25 @@ static int cs_capture_prepare_session(const CsCaptureCommand* command, char* err
     char frames_dir[CS_TOOL_MAX_PATH];
     char session_path[CS_TOOL_MAX_PATH];
     char state_path[CS_TOOL_MAX_PATH];
-    char segments_path[CS_TOOL_MAX_PATH];
-    char stop_path[CS_TOOL_MAX_PATH];
+    char trace_path[CS_TOOL_MAX_PATH];
+    char capture_stop_path[CS_TOOL_MAX_PATH];
+    char trace_stop_path[CS_TOOL_MAX_PATH];
     char dictionary_snapshot_path[CS_TOOL_MAX_PATH];
     char dictionary_path[CS_TOOL_MAX_PATH];
     char start_time[64];
     CsCaptureOptions options;
     CsCaptureState state;
-    CsLabelSegmentsFile segments;
 
     memset(&options, 0, sizeof(options));
     memset(&state, 0, sizeof(state));
-    memset(&segments, 0, sizeof(segments));
 
     if (!cs_tool_get_session_dir(command->session_root, command->session_id, session_dir, sizeof(session_dir)) ||
         !cs_tool_get_frames_dir(command->session_root, command->session_id, frames_dir, sizeof(frames_dir)) ||
         !cs_tool_get_session_file_path(command->session_root, command->session_id, "session.json", session_path, sizeof(session_path)) ||
         !cs_tool_get_session_file_path(command->session_root, command->session_id, "capture_state.json", state_path, sizeof(state_path)) ||
-        !cs_tool_get_session_file_path(command->session_root, command->session_id, "label_segments.json", segments_path, sizeof(segments_path)) ||
-        !cs_tool_get_session_file_path(command->session_root, command->session_id, "capture.stop", stop_path, sizeof(stop_path)) ||
+        !cs_tool_get_session_file_path(command->session_root, command->session_id, "state_trace.jsonl", trace_path, sizeof(trace_path)) ||
+        !cs_tool_get_session_file_path(command->session_root, command->session_id, "capture.stop", capture_stop_path, sizeof(capture_stop_path)) ||
+        !cs_tool_get_session_file_path(command->session_root, command->session_id, "state_trace.stop", trace_stop_path, sizeof(trace_stop_path)) ||
         !cs_tool_get_session_file_path(command->session_root, command->session_id, "place_dictionary.snapshot.json", dictionary_snapshot_path, sizeof(dictionary_snapshot_path))) {
         cs_tool_set_error(error_buffer, error_buffer_size, "Session path is too long.");
         return 0;
@@ -218,8 +228,11 @@ static int cs_capture_prepare_session(const CsCaptureCommand* command, char* err
         return 0;
     }
 
-    if (cs_tool_file_exists(stop_path)) {
-        (void)remove(stop_path);
+    if (cs_tool_file_exists(capture_stop_path)) {
+        (void)remove(capture_stop_path);
+    }
+    if (cs_tool_file_exists(trace_stop_path)) {
+        (void)remove(trace_stop_path);
     }
 
     if (command->dictionary_path[0] != '\0') {
@@ -243,6 +256,7 @@ static int cs_capture_prepare_session(const CsCaptureCommand* command, char* err
     (void)cs_tool_copy_string(options.map_name, sizeof(options.map_name), command->map_name);
     (void)cs_tool_copy_string(options.team, sizeof(options.team), command->team[0] == '\0' ? "unknown" : command->team);
     (void)cs_tool_copy_string(options.notes, sizeof(options.notes), command->notes);
+    (void)cs_tool_copy_string(options.teacher_source, sizeof(options.teacher_source), command->teacher_source);
 
     cs_tool_now_iso8601(start_time, sizeof(start_time));
     if (!cs_tool_write_session_json(session_path, &options, start_time, "", error_buffer, error_buffer_size)) {
@@ -251,17 +265,18 @@ static int cs_capture_prepare_session(const CsCaptureCommand* command, char* err
 
     (void)cs_tool_copy_string(state.session_id, sizeof(state.session_id), command->session_id);
     (void)cs_tool_copy_string(state.status, sizeof(state.status), "starting");
-    (void)cs_tool_copy_string(state.current_place_token, sizeof(state.current_place_token), "");
-    state.current_place_id = -1;
-    state.last_frame_index = -1;
     state.captured_frame_count = 0;
+    state.last_frame_index = -1;
+    state.state_trace_count = 0;
+    (void)cs_tool_copy_string(state.last_state_timestamp, sizeof(state.last_state_timestamp), "");
+    (void)cs_tool_copy_string(state.teacher_source, sizeof(state.teacher_source), command->teacher_source);
+    (void)cs_tool_copy_string(state.state_trace_status, sizeof(state.state_trace_status), "idle");
 
     if (!cs_tool_write_capture_state(state_path, &state, error_buffer, error_buffer_size)) {
         return 0;
     }
 
-    (void)cs_tool_copy_string(segments.session_id, sizeof(segments.session_id), command->session_id);
-    return cs_tool_write_label_segments(segments_path, &segments, error_buffer, error_buffer_size);
+    return cs_tool_write_text_file_atomic(trace_path, "", error_buffer, error_buffer_size);
 }
 
 static int cs_capture_command_start(const CsCaptureCommand* command, char* error_buffer, size_t error_buffer_size) {
@@ -371,8 +386,10 @@ static int cs_capture_command_status(const CsCaptureCommand* command, char* erro
     printf("status=%s\n", state.status);
     printf("captured_frame_count=%d\n", state.captured_frame_count);
     printf("last_frame_index=%d\n", state.last_frame_index);
-    printf("current_place_token=%s\n", state.current_place_token);
-    printf("current_place_id=%d\n", state.current_place_id);
+    printf("state_trace_count=%d\n", state.state_trace_count);
+    printf("last_state_timestamp=%s\n", state.last_state_timestamp);
+    printf("teacher_source=%s\n", state.teacher_source);
+    printf("state_trace_status=%s\n", state.state_trace_status);
     return 1;
 }
 
@@ -421,6 +438,9 @@ static int cs_capture_worker_loop(const CsCaptureCommand* command, char* error_b
 
     if (state.session_id[0] == '\0') {
         (void)cs_tool_copy_string(state.session_id, sizeof(state.session_id), command->session_id);
+    }
+    if (state.teacher_source[0] == '\0') {
+        (void)cs_tool_copy_string(state.teacher_source, sizeof(state.teacher_source), options.teacher_source);
     }
     (void)cs_tool_copy_string(state.status, sizeof(state.status), "running");
 
@@ -498,7 +518,7 @@ static int cs_capture_worker_loop(const CsCaptureCommand* command, char* error_b
 
 static void cs_capture_print_usage(void) {
     printf("Usage:\n");
-    printf("  cs_capture_session start --session-id <id> --map de_dust2 --width <w> --height <h> --capture-fps <fps> [--session-root <path>] [--team <team>] [--notes <text>] [--dictionary <path>]\n");
+    printf("  cs_capture_session start --session-id <id> --map de_dust2 --width <w> --height <h> --capture-fps <fps> [--session-root <path>] [--team <team>] [--notes <text>] [--dictionary <path>] [--teacher-source <source>]\n");
     printf("  cs_capture_session stop --session-id <id> [--session-root <path>]\n");
     printf("  cs_capture_session status --session-id <id> [--session-root <path>]\n");
 }
