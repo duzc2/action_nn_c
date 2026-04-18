@@ -58,8 +58,8 @@ class NetworkEditor {
     createEditor() {
         const container = document.getElementById('editor');
         
-        // 使用 Rete.js 1.x API
-        this.editor = new Rete.Engine('demo');
+        // 使用 Rete.js 1.x API - ID 必须是 name@version 格式
+        this.editor = new Rete.Engine('demo@1.0.0');
         
         // 注册插件
         const render = new Rete.RenderPlugin();
