@@ -1,32 +1,44 @@
-# Build output
+```
+# Build artifacts
 build/
+dist/
+*.o
+*.obj
+*.a
+*.lib
+*.dll
+*.so
+*.dylib
 
-# Source files (always track)
-!src/
-!demo/
-!docs/
+# Dependencies
+node_modules/
+vendor/
 
-# Build artifacts in demo (these should be in build/ now)
-# Keeping old paths for compatibility
-demo/move/generate/
-demo/move/train/
-demo/move/infer/
-demo/sevenseg/generate/
-demo/sevenseg/train/
-demo/sevenseg/infer/
-demo/target/generate/
-demo/target/train/
-demo/target/infer/
-demo/transformer/generate/
-demo/transformer/train/
-demo/transformer/infer/
+# Environment
+.env
+.env.local
+*.env.*
 
-# Test artifacts
-test/logs/
-test/data/tmp/
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
 
-# Generated files
-*.bin
-demo_*_export.c
-demo_network_*_functions.c
-test_weights_export.c
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# CMake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+# Web artifacts
+*.wasm
+*.js.map
+```
