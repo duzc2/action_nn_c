@@ -1,0 +1,21 @@
+{
+  "name": "action-nnc-web-editor",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "rete": "^2.0.6",
+    "rete-area-plugin": "^2.1.5",
+    "rete-connection-plugin": "^2.0.5",
+    "rete-vue-plugin": "^2.1.2"
+  },
+  "devDependencies": {
+    "vite": "^6.2.0",
+    "vue": "^3.5.13"
+  }
+}

@@ -41,16 +41,37 @@ class NetworkEditor {
     waitForRete() {
         return new Promise((resolve, reject) => {
             const checkInterval = setInterval(() => {
+                // 检查主库和插件是否加载
                 if (window.Rete && window.Rete.Node) {
-                    clearInterval(checkInterval);
-                    resolve();
+                    // 检查可能的全局变量名称
+                    const hasConnectionPlugin = window.ConnectionPlugin || 
+                                               (window.Rete && window.Rete.ConnectionPlugin);
+                    const hasAreaPlugin = window.AreaPlugin || 
+                                         (window.Rete && window.Rete.AreaPlugin);
+                    const hasVueRenderPlugin = window.VueRenderPlugin || 
+                                               (window.Rete && window.Rete.VueRenderPlugin);
+                    
+                    if (hasConnectionPlugin && hasAreaPlugin && hasVueRenderPlugin) {
+                        clearInterval(checkInterval);
+                        resolve();
+                    }
                 }
             }, 100);
             
             // 超时处理
             setTimeout(() => {
                 clearInterval(checkInterval);
-                reject(new Error('Rete.js library not loaded'));
+                // 输出调试信息
+                console.log('Debug - Available globals:', {
+                    Rete: typeof window.Rete,
+                    ReteNode: window.Rete ? typeof window.Rete.Node : 'undefined',
+                    Vue: typeof window.Vue,
+                    ConnectionPlugin: typeof window.ConnectionPlugin,
+                    AreaPlugin: typeof window.AreaPlugin,
+                    VueRenderPlugin: typeof window.VueRenderPlugin,
+                    ReteVueRenderPlugin: window.Rete ? typeof window.Rete.VueRenderPlugin : 'undefined'
+                });
+                reject(new Error('Rete.js library or plugins not loaded'));
             }, 5000);
         });
     }
@@ -61,22 +82,31 @@ class NetworkEditor {
         // 使用 Rete.js 1.x API - ID 必须是 name@version 格式
         this.editor = new Rete.Engine('demo@1.0.0');
         
-        // 注册插件
-        const render = new Rete.RenderPlugin();
-        const connectionPlugin = new Rete.ConnectionPlugin();
-        const area = new Rete.AreaPlugin();
+        // 获取插件引用 - 支持 .default 和直接引用
+        const getPlugin = (plugin) => plugin.default || plugin;
         
-        this.editor.use(render);
-        this.editor.use(connectionPlugin);
+        const Connection = getPlugin(window.ConnectionPlugin);
+        const Area = getPlugin(window.AreaPlugin);
+        const VueRender = getPlugin(window.VueRenderPlugin);
+        
+        if (!Connection || !Area || !VueRender) {
+            throw new Error('Plugins not available. Check console for details.');
+        }
+        
+        // 注册连接插件
+        this.editor.use(Connection);
+        
+        // 注册区域插件
+        const area = new Area();
         this.editor.use(area);
         
-        // 配置区域插件
-        area.zoomAt(0.8);
+        // 注册 Vue 渲染插件
+        this.editor.use(VueRender);
         
-        // 绑定到容器
-        container.appendChild(this.editor.root);
+        // 配置区域插件缩放
+        area.zoom(0.8);
         
-        console.log('Rete.js 1.x editor created');
+        console.log('Rete.js 1.x editor created with Vue render');
     }
 
     setupDragDrop() {

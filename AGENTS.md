@@ -4,6 +4,69 @@
 使用clang进行编译。
 你在windows里运行，环境是win11 powershell，执行命令要严格遵循 powershell语法。
 
+## 浏览器调试配置
+
+### 调试方式
+使用 Playwright 连接 Chrome 远程调试端口进行页面调试。
+你可以保持浏览器处于开启状态，一直用这一个标签页，重复修改、刷新、调试、修改、刷新、调试，直到正确为止。
+修改的内容要对工作有益，推进进度而不是反复。
+不是为了重复而重复，是为了推进工作进度不断尝试各种办法解决问题。
+尽量不要用截图的方式判断，要用js去读取dom的属性（比如 实际坐标、高度、宽度等）判断显示是否正确。
+### 前置条件
+1. Chrome 浏览器已安装并运行
+2. Chrome 必须启用远程调试模式（默认端口 9222）
+3. Playwright 已安装（`npm install playwright`）
+
+### 验证 Chrome 远程调试可用
+```powershell
+curl http://127.0.0.1:9222/json/version
+```
+成功时会返回 JSON 信息，包含 Browser 版本和 webSocketDebuggerUrl。
+
+### 连接示例
+```javascript
+const { chromium } = require('playwright');
+(async () => {
+  const browser = await chromium.connectOverCDP('http://127.0.0.1:9222');
+  const context = await browser.newContext();
+  const page = await context.newPage();
+
+  // 导航到目标页面
+  await page.goto('http://localhost:5173/');
+
+  // 获取页面标题
+  const title = await page.title();
+  console.log('Title:', title);
+
+  // 获取页面内容
+  const content = await page.content();
+  console.log('Content length:', content.length);
+
+  // 截取截图
+  await page.screenshot({ path: 'debug-screenshot.png' });
+
+  // 使用 CDP 命令
+  const session = await page.context().newCDPSession(page);
+  const doc = await session.send('DOM.getDocument');
+  console.log('DOM root node ID:', doc.root.nodeId);
+
+  // 监听控制台消息
+  page.on('console', msg => console.log('Console:', msg.type(), msg.text()));
+
+  await browser.close();
+})();
+```
+
+### 常用 CDP 命令
+- `DOM.getDocument` - 获取 DOM 文档
+- `DOM.querySelector` - 查询选择器
+- `Runtime.evaluate` - 执行 JavaScript
+- `Page.captureScreenshot` - 截图
+
+### 已知问题
+- bash 环境存在 GBK 编码问题，命令输出会有 UnicodeDecodeError 异常，但实际命令执行成功
+- 解决方案：忽略异常，关注实际输出结果
+
 ## Windows 工具链约束（本机已验证）
 - 本机当前 shell 默认**没有**注入 Visual Studio C/C++ 构建环境；直接运行 `clang` / `clang-cl` + `Ninja` 的 CMake configure 可能卡在 toolchain probe / try-compile 阶段。
 - 本机已经安装：

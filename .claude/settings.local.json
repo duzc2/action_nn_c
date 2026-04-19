@@ -1,0 +1,43 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir:*)",
+      "Bash(npx chrome-devtools-mcp@latest --version)",
+      "Bash(tasklist:*)",
+      "Bash(powershell:*)",
+      "Bash(cmd.exe:*)",
+      "WebFetch(domain:127.0.0.1)",
+      "Bash(npx:*)",
+      "Bash(curl:*)",
+      "Bash(node -e \"\nconst { chromium } = require\\(''playwright''\\);\n\\(async \\(\\) => {\n  const browser = await chromium.connectOverCDP\\(''http://127.0.0.1:9222''\\);\n  const context = await browser.newContext\\(\\);\n  const page = await context.newPage\\(\\);\n  await page.goto\\(''http://localhost:5173/''\\);\n  const title = await page.title\\(\\);\n  const content = await page.content\\(\\);\n  console.log\\(''Title:'', title\\);\n  console.log\\(''Content length:'', content.length\\);\n  console.log\\(''First 2000 chars:'', content.substring\\(0, 2000\\)\\);\n  await browser.close\\(\\);\n}\\)\\(\\);\n\")",
+      "Bash(node -e:*)",
+      "Bash(npm root -g)",
+      "Bash(where playwright)",
+      "Bash(python:*)",
+      "Bash(pip install:*)",
+      "Bash(playwright install chromium)",
+      "WebSearch",
+      "WebFetch(domain:www.npmjs.com)",
+      "Bash(gcc:*)",
+      "Bash(where:*)",
+      "Bash(where clang.exe)",
+      "Bash(clang:*)",
+      "Bash(clang.exe:*)",
+      "Bash(ls:*)",
+      "Bash(cmd:*)",
+      "Bash(echo $HOME)",
+      "Bash(npm install playwright)",
+      "Bash(findstr:*)",
+      "Bash(echo:*)",
+      "Bash(ps:*)",
+      "Bash(py --list)",
+      "WebFetch(domain:www.python.org)",
+      "Bash(node \"C:\\\\Users\\\\ASUS\\\\Desktop\\\\ai-build-ai\\\\action_c\\\\test-mlp-nodes.js\")",
+      "WebFetch(domain:rete.netlify.app)",
+      "Bash(node:*)",
+      "Bash(cd:*)",
+      "Bash(netstat:*)",
+      "WebFetch(domain:localhost)"
+    ]
+  }
+}

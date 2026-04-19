@@ -1,0 +1,175 @@
+/* Action NN-C Network Editor Styles */
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background: #1e1e1e;
+    color: #d4d4d4;
+    overflow: hidden;
+}
+
+/* Toolbar */
+.toolbar {
+    display: flex;
+    align-items: center;
+    padding: 10px 20px;
+    background: #252526;
+    border-bottom: 1px solid #3e3e42;
+    height: 50px;
+}
+
+.logo {
+    font-size: 16px;
+    font-weight: bold;
+    color: #569cd6;
+    margin-right: 30px;
+}
+
+.toolbar-buttons {
+    display: flex;
+    gap: 10px;
+}
+
+.toolbar-btn {
+    padding: 6px 12px;
+    background: #3e3e42;
+    border: none;
+    border-radius: 4px;
+    color: #d4d4d4;
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.toolbar-btn:hover {
+    background: #505050;
+}
+
+.toolbar-btn.primary {
+    background: #0e639c;
+    color: white;
+}
+
+.toolbar-btn.primary:hover {
+    background: #1177bb;
+}
+
+.separator {
+    width: 1px;
+    height: 24px;
+    background: #3e3e42;
+    margin: 0 10px;
+}
+
+/* Editor Container */
+#editor {
+    width: 100vw;
+    height: calc(100vh - 50px);
+    background: #1e1e1e;
+}
+
+/* Rete.js Node Styles */
+.node {
+    background: rgba(110, 136, 255, 0.8);
+    border: 2px solid #4e58bf;
+    border-radius: 10px;
+    min-width: 160px;
+}
+
+.node.selected {
+    background: #ffd92c;
+    border-color: #e3c000;
+}
+
+.socket {
+    display: inline-block;
+    cursor: pointer;
+    border: 1px solid white;
+    border-radius: 12px;
+    width: 16px;
+    height: 16px;
+    background: #96b38a;
+    margin: 0 4px;
+}
+
+.socket:hover {
+    border-width: 2px;
+}
+
+.socket.output {
+    margin-right: -8px;
+}
+
+.socket.input {
+    margin-left: -8px;
+}
+
+.connection .main-path {
+    fill: none;
+    stroke: steelblue;
+    stroke-width: 3px;
+}
+
+/* Rete Background */
+.rete-background {
+    background-size: 32px 32px;
+    background-image: 
+        linear-gradient(to right, #2d2d30 1px, transparent 1px),
+        linear-gradient(to bottom, #2d2d30 1px, transparent 1px);
+}
+
+/* Output Panel */
+.output-panel {
+    position: fixed;
+    top: 60px;
+    right: 10px;
+    width: 600px;
+    max-height: 80vh;
+    background: #252526;
+    border: 1px solid #3e3e42;
+    border-radius: 8px;
+    padding: 20px;
+    z-index: 1000;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+}
+
+.output-panel h3 {
+    color: #569cd6;
+    margin-bottom: 15px;
+}
+
+.output-panel pre {
+    background: #1e1e1e;
+    padding: 15px;
+    border-radius: 6px;
+    overflow: auto;
+    max-height: 60vh;
+    font-family: 'Consolas', 'Monaco', monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: #1e1e1e;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #3e3e42;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #505050;
+}
