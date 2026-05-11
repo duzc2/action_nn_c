@@ -46,7 +46,7 @@ static FILE* prof_fopen_write_text(const char* path) {
  * family of focused modules that mirror the documented workflow: tokenizer,
  * runtime initialization, inference, training, save, load, and shared metadata.
  * This file is therefore less about machine-learning math and more about safely
- * translating a validated network definition into deterministic C99 source.
+ * translating a validated network definition into deterministic C11 source.
  *
  * Several design choices are worth calling out because they explain many of the
  * helpers below:
@@ -882,7 +882,7 @@ ProfStatus prof_codegen_network_init(ProfCodegenContext* ctx) {
  *
  * The inference stage emits both reusable helper code and the public runtime
  * entry points that generated applications call. The surrounding comments focus
- * on how validated graph facts are translated into self-contained C99 source.
+ * on how validated graph facts are translated into self-contained C11 source.
  */
 
 /**
@@ -898,7 +898,7 @@ static int append_generated_infer_structs(
     size_t buffer_capacity,
     size_t* position
 ) {
-    /* Emit plain old data structs so generated infer.c remains self-contained C99. */
+    /* Emit plain old data structs so generated infer.c remains self-contained C11. */
     return append_format(
         buffer,
         buffer_capacity,

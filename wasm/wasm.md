@@ -17,7 +17,7 @@ Users must ensure the following tools are available in their deployment environm
 
 2. **CMake** (version 3.20 or later)
 
-3. **A C99-compatible compiler** (for native builds)
+3. **A C11-compatible compiler** (for native builds)
 
 ## Directory Structure
 

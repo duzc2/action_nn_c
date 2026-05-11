@@ -10,7 +10,7 @@
  * - Activation function strategy
  *
  * Constraints:
- * - All types must comply with C99 standard
+ * - All types must comply with C11 standard
  * - Network types use semantic naming (not numeric codes)
  * - Must support 0 hidden layers configuration
  * - Activation function uses "default + per-node override" mechanism

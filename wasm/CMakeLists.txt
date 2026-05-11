@@ -14,7 +14,7 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
         "Or source the Emscripten environment and re-run cmake.")
 endif()
 
-set(CMAKE_C_STANDARD 99)
+set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 

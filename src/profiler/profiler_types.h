@@ -11,7 +11,7 @@
  * - Metadata structure
  *
  * Constraints:
- * - All types must comply with C99 standard
+ * - All types must comply with C11 standard
  * - Error descriptions use English only
  * - Error buffer recommended capacity >= 256 bytes
  */

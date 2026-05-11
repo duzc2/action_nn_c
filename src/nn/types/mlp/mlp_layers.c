@@ -16,7 +16,7 @@
  *
  * This file provides the scalar and layer-level primitives shared by both MLP
  * inference and MLP training. The implementation is intentionally explicit so
- * generated code can rely on predictable C99 behaviour and deterministic weight
+ * generated code can rely on predictable C11 behaviour and deterministic weight
  * initialization.
  */
 
