@@ -9,27 +9,27 @@ typedef struct {
     size_t         used;
 } Arena;
 
-/* 创建 arena。cap 为初始容量（字节） */
+/* Create an arena with initial capacity in bytes. */
 Arena* arena_create(size_t cap);
 
-/* 销毁 arena */
+/* Destroy an arena and free its memory. */
 void arena_destroy(Arena* a);
 
-/* 记录当前水位线，返回标记 */
+/* Record current watermark, return a mark for later restore. */
 size_t arena_snapshot(const Arena* a);
 
-/* 回卷到之前的水位线 */
+/* Restore arena used pointer to a previous mark. */
 void arena_restore(Arena* a, size_t mark);
 
-/* 从 arena 分配 n 个类型 T 的元素，返回未初始化内存 */
+/* Allocate n elements of type T from arena, returns uninitialized memory. */
 #define ARENA_ALLOC(a, T, n) \
     ((T*)_arena_alloc((a), (n) * sizeof(T)))
 
-/* 从 arena 分配 n 个类型 T 的元素，并清零 */
+/* Allocate n elements of type T from arena and zero-initialize. */
 #define ARENA_CALLOC(a, T, n) \
     ((T*)_arena_calloc((a), (n) * sizeof(T)))
 
-/* 内部函数，不直接调用 */
+/* Internal: do not call directly. */
 void* _arena_alloc(Arena* a, size_t size);
 void* _arena_calloc(Arena* a, size_t size);
 

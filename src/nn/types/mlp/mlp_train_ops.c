@@ -390,6 +390,7 @@ static int train_backward_pass(
     const float* prev_activation;
     size_t max_size;
     size_t layer_cursor;
+    size_t _arena_mark;
 
     if (ctx == NULL || ctx->infer_ctx == NULL || output_gradient == NULL) {
         return ACTION_C_ERR_NULL_POINTER;
@@ -397,12 +398,13 @@ static int train_backward_pass(
 
     infer_ctx = (MlpInferContext*)ctx->infer_ctx;
     max_size = infer_ctx->max_buffer_size;
-    /* Two scratch buffers are enough because backprop only needs adjacent layer deltas. */
-    current_delta = (float*)calloc(max_size, sizeof(float));
-    next_delta = (float*)calloc(max_size, sizeof(float));
+    /* Two scratch buffers are enough because backprop only needs adjacent layer deltas.
+     * Use arena snapshot/restore to stay off the heap inside the training hot path. */
+    _arena_mark = arena_snapshot(ctx->arena);
+    current_delta = ARENA_CALLOC(ctx->arena, float, max_size);
+    next_delta = ARENA_CALLOC(ctx->arena, float, max_size);
     if (current_delta == NULL || next_delta == NULL) {
-        free(current_delta);
-        free(next_delta);
+        arena_restore(ctx->arena, _arena_mark);
         return ACTION_C_ERR_NO_MEMORY;
     }
 
@@ -446,8 +448,7 @@ static int train_backward_pass(
         memcpy(current_delta, next_delta, input_size * sizeof(float));
     }
 
-    free(current_delta);
-    free(next_delta);
+    arena_restore(ctx->arena, _arena_mark);
     return 0;
 }
 
@@ -625,6 +626,14 @@ MlpTrainContext* nn_mlp_train_create(void* infer_ctx, const MlpTrainConfig* conf
         }
     }
 
+    /* Create scratch arena for hot-path temporary allocations (backward_pass deltas).
+     * 4x max_buffer_size covers: current_delta + next_delta + dummy input/target. */
+    ctx->arena = arena_create(mlp_ctx->max_buffer_size * sizeof(float) * 4);
+    if (ctx->arena == NULL) {
+        nn_mlp_train_destroy(ctx);
+        return NULL;
+    }
+
     return ctx;
 }
 
@@ -640,6 +649,9 @@ void nn_mlp_train_destroy(MlpTrainContext* ctx) {
     if (ctx == NULL) {
         return;
     }
+
+    /* Release the scratch arena first; it has no dependencies on the other allocations. */
+    arena_destroy(ctx->arena);
 
     /* Free per-layer optimizer state before dropping shared arrays. */
     for (i = 0; i < ctx->layer_count; i++) {
@@ -1069,6 +1081,7 @@ int nn_mlp_train_step(void* context) {
     MlpInferContext* infer_ctx;
     float* dummy_input;
     float* dummy_target;
+    size_t _arena_mark;
     int rc;
 
     if (context == NULL) {
@@ -1081,17 +1094,17 @@ int nn_mlp_train_step(void* context) {
         return ACTION_C_ERR_NULL_POINTER;
     }
 
-    dummy_input = (float*)calloc(infer_ctx->config->input_size, sizeof(float));
-    dummy_target = (float*)calloc(infer_ctx->config->output_size, sizeof(float));
+    /* Arena-allocated zero buffers for the registry-compat zero-sample. */
+    _arena_mark = arena_snapshot(ctx->arena);
+    dummy_input = ARENA_CALLOC(ctx->arena, float, infer_ctx->config->input_size);
+    dummy_target = ARENA_CALLOC(ctx->arena, float, infer_ctx->config->output_size);
     if (dummy_input == NULL || dummy_target == NULL) {
-        free(dummy_input);
-        free(dummy_target);
+        arena_restore(ctx->arena, _arena_mark);
         return ACTION_C_ERR_NO_MEMORY;
     }
 
     rc = nn_mlp_train_step_with_data(ctx, dummy_input, dummy_target);
-    free(dummy_input);
-    free(dummy_target);
+    arena_restore(ctx->arena, _arena_mark);
     return rc;
 }
 

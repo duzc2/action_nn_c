@@ -27,3 +27,8 @@ action_c_add_test(test_safe_math utils/test_safe_math.c)
 action_c_add_test(test_arena utils/test_arena.c
     ${CMAKE_SOURCE_DIR}/src/utils/arena.c
     ${CMAKE_SOURCE_DIR}/src/utils/log.c)
+
+# nn tests
+action_c_add_test(test_mlp_arena_integration nn/test_mlp_arena_integration.c
+    ${CMAKE_SOURCE_DIR}/src/utils/arena.c
+    ${CMAKE_SOURCE_DIR}/src/utils/log.c)
