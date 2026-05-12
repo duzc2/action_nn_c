@@ -507,3 +507,45 @@ uint64_t nn_mlp_get_network_hash(const void* context) {
 
     return compute_layout_hash(ctx->config);
 }
+
+/* ─── VTable backend ─── */
+
+#include "../../nn_backend.h"
+
+static uint32_t mlp_infer_abi_version(void) {
+    return ABI_VERSION;
+}
+
+static uint64_t mlp_infer_layout_hash(const void* context) {
+    const MlpInferContext* ctx = (const MlpInferContext*)context;
+    if (ctx == NULL || ctx->config == NULL) return 0;
+    return compute_layout_hash(ctx->config);
+}
+
+static int mlp_infer_get_output_int(const void* context, float* out, size_t out_size) {
+    nn_mlp_infer_get_output((void*)context, out, out_size);
+    return 0;
+}
+
+static void* mlp_infer_create_vtable(const void* config_blob, size_t config_size,
+                                      struct Arena* arena) {
+    (void)arena;
+    return nn_mlp_infer_create_with_config_blob(config_blob, config_size, 0);
+}
+
+static int mlp_infer_save_weights_vtable(const void* context, FILE* fp) {
+    return nn_mlp_save_weights((void*)context, fp) ? 0 : -1;
+}
+
+const NNInferBackend g_mlp_infer_backend = {
+    .type_name        = "mlp",
+    .create           = mlp_infer_create_vtable,
+    .destroy          = nn_mlp_infer_destroy,
+    .step             = nn_mlp_infer_step,
+    .get_output       = mlp_infer_get_output_int,
+    .save_weights     = mlp_infer_save_weights_vtable,
+    .load_weights     = nn_mlp_load_weights,
+    .get_network_hash = nn_mlp_get_network_hash,
+    .get_layout_hash  = mlp_infer_layout_hash,
+    .get_abi_version  = mlp_infer_abi_version,
+};

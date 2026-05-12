@@ -54,3 +54,9 @@ action_c_add_test(test_infer_registry nn/test_infer_registry.c
     ${CMAKE_SOURCE_DIR}/src/nn/nn_infer_registry.c
     ${CMAKE_SOURCE_DIR}/src/utils/log.c)
 target_compile_definitions(test_infer_registry PRIVATE NN_REGISTRY_BUILD_TEST)
+
+# Track B: MLP VTable tests
+action_c_add_test(test_mlp_vtable nn/test_mlp_vtable.c
+    ${CMAKE_SOURCE_DIR}/src/utils/log.c
+    ${CMAKE_SOURCE_DIR}/src/utils/arena.c)
+target_link_libraries(test_mlp_vtable nn_train_core)

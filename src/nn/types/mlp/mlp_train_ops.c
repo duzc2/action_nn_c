@@ -1108,3 +1108,73 @@ int nn_mlp_train_step(void* context) {
     return rc;
 }
 
+/* ─── VTable backend ─── */
+
+#include "../../nn_backend.h"
+#include "mlp_infer_ops.h"
+
+static void* mlp_train_create_vtable(const void* config_blob, size_t config_size,
+                                      const void* infer_config_blob, size_t infer_config_size,
+                                      struct Arena* arena) {
+    MlpInferContext* infer_ctx;
+    MlpTrainConfig train_cfg;
+
+    (void)arena;
+
+    /* Decode training config blob. */
+    if (config_blob == NULL || config_size < sizeof(MlpTrainConfig)) {
+        return NULL;
+    }
+    train_cfg = *(const MlpTrainConfig*)config_blob;
+
+    /* Create inference context. */
+    infer_ctx = nn_mlp_infer_create_with_config_blob(infer_config_blob, infer_config_size, train_cfg.seed);
+    if (infer_ctx == NULL) {
+        return NULL;
+    }
+
+    return nn_mlp_train_create(infer_ctx, &train_cfg);
+}
+
+static int mlp_train_step_vtable(void* context, const float* input, const float* target) {
+    MlpTrainContext* ctx = (MlpTrainContext*)context;
+    if (ctx == NULL || input == NULL || target == NULL) {
+        return ACTION_C_ERR_NULL_POINTER;
+    }
+    return nn_mlp_train_step_with_data(ctx, input, target);
+}
+
+static int mlp_train_step_with_data_vtable(void* context, const float* input,
+                                            const float* target, float* out_grad) {
+    MlpTrainContext* ctx = (MlpTrainContext*)context;
+    (void)out_grad;
+    if (ctx == NULL || input == NULL || target == NULL) {
+        return ACTION_C_ERR_NULL_POINTER;
+    }
+    return nn_mlp_train_step_with_data(ctx, input, target);
+}
+
+static int mlp_train_save_checkpoint_vtable(void* context, FILE* fp) {
+    MlpTrainContext* ctx = (MlpTrainContext*)context;
+    if (ctx == NULL || fp == NULL) return -1;
+    return nn_mlp_train_save_checkpoint(ctx, fp, ctx->last_loss) ? 0 : -1;
+}
+
+static int mlp_train_load_checkpoint_vtable(void* context, FILE* fp) {
+    MlpTrainContext* ctx = (MlpTrainContext*)context;
+    if (ctx == NULL || fp == NULL) return -1;
+    return nn_mlp_train_load_checkpoint(ctx, fp,
+        ctx->checkpoint_network_hash,
+        ctx->checkpoint_layout_hash) ? 0 : -1;
+}
+
+const NNTrainBackend g_mlp_train_backend = {
+    .type_name        = "mlp",
+    .create           = mlp_train_create_vtable,
+    .destroy          = (void (*)(void*))nn_mlp_train_destroy,
+    .step             = mlp_train_step_vtable,
+    .step_with_data   = mlp_train_step_with_data_vtable,
+    .save_checkpoint  = mlp_train_save_checkpoint_vtable,
+    .load_checkpoint  = mlp_train_load_checkpoint_vtable,
+};
+
