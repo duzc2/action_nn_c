@@ -19,6 +19,7 @@
 #ifndef PROFILER_TYPES_H
 #define PROFILER_TYPES_H
 
+#include <assert.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -115,6 +116,15 @@ typedef struct {
     uint64_t layout_hash;
     uint32_t abi_version;
 } NNGeneratedMetadata;
+
+/* Guard against layout changes that would break metadata-file
+ * compatibility with previously generated code. */
+static_assert(offsetof(NNGeneratedMetadata, network_hash) == 0,
+              "NNGeneratedMetadata network_hash offset changed");
+static_assert(offsetof(NNGeneratedMetadata, layout_hash) == 8,
+              "NNGeneratedMetadata layout_hash offset changed");
+static_assert(offsetof(NNGeneratedMetadata, abi_version) == 16,
+              "NNGeneratedMetadata abi_version offset changed");
 
 /**
  * @brief Convert error code to description string

@@ -96,6 +96,11 @@ typedef struct {
     float best_loss;
 } MlpCheckpointHeader;
 
+/* Guard against accidental layout changes that would break checkpoint
+ * binary compatibility (existing checkpoint files depend on this layout). */
+static_assert(sizeof(MlpCheckpointHeader) == offsetof(MlpCheckpointHeader, best_loss) + sizeof(float),
+              "MlpCheckpointHeader layout changed; existing checkpoint files will be broken");
+
 /**
  * @brief Create MLP training context
  *

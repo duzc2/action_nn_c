@@ -23,7 +23,7 @@ add_executable(move_infer
     "${GENERATED_WEIGHTS_LOAD_C}"
 )
 action_c_apply_strict_warnings(move_infer)
-if(MSVC)
+if(MSVC OR (CMAKE_C_COMPILER_ID MATCHES "Clang" AND WIN32))
     target_compile_definitions(move_infer PRIVATE _CRT_SECURE_NO_WARNINGS)
 endif()
 

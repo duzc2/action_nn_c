@@ -14,6 +14,7 @@
 #include <emscripten/emscripten.h>
 #include <emscripten/exports.h>
 #endif
+#include <string.h>
 
 /* ============================================================================
  * Feature Toggle Configuration
@@ -155,22 +156,22 @@ static inline int action_c_wasm_is_network_enabled(const char* network_type) {
     if (!network_type) return 0;
     
 #if ACTION_C_WASM_ENABLE_MLP
-    if (__builtin_strcmp(network_type, "mlp") == 0) return 1;
+    if (strcmp(network_type, "mlp") == 0) return 1;
 #endif
 #if ACTION_C_WASM_ENABLE_TRANSFORMER
-    if (__builtin_strcmp(network_type, "transformer") == 0) return 1;
+    if (strcmp(network_type, "transformer") == 0) return 1;
 #endif
 #if ACTION_C_WASM_ENABLE_CNN
-    if (__builtin_strcmp(network_type, "cnn") == 0) return 1;
+    if (strcmp(network_type, "cnn") == 0) return 1;
 #endif
 #if ACTION_C_WASM_ENABLE_CNN_DUAL_POOL
-    if (__builtin_strcmp(network_type, "cnn_dual_pool") == 0) return 1;
+    if (strcmp(network_type, "cnn_dual_pool") == 0) return 1;
 #endif
 #if ACTION_C_WASM_ENABLE_RNN
-    if (__builtin_strcmp(network_type, "rnn") == 0) return 1;
+    if (strcmp(network_type, "rnn") == 0) return 1;
 #endif
 #if ACTION_C_WASM_ENABLE_GNN
-    if (__builtin_strcmp(network_type, "gnn") == 0) return 1;
+    if (strcmp(network_type, "gnn") == 0) return 1;
 #endif
     
     return 0;

@@ -37,7 +37,14 @@
       "Bash(node:*)",
       "Bash(cd:*)",
       "Bash(netstat:*)",
-      "WebFetch(domain:localhost)"
+      "WebFetch(domain:localhost)",
+      "Bash(cmake:*)",
+      "Bash(ninja:*)",
+      "Bash(Remove-Item:*)",
+      "Bash(Write-Host:*)",
+      "Bash($env:CC = \"clang\")",
+      "Bash($env:CXX = \"clang++\")",
+      "Bash(Get-ChildItem:*)"
     ]
   }
 }

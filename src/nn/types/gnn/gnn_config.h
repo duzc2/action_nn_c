@@ -10,6 +10,7 @@
 #ifndef GNN_CONFIG_H
 #define GNN_CONFIG_H
 
+#include <assert.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -64,6 +65,12 @@ typedef struct {
     uint32_t seed;                                         /**< Deterministic seed for reproducible init. */
     int neighbor_index[];                                  /**< Flattened [node_count * slot_count] neighbor table. */
 } GnnConfig;
+
+/* sizeof(GnnConfig) must cover all fixed fields; the gnn_config_size_for_topology()
+ * formula relies on this for the trailing flexible array member offset. Natural
+ * alignment padding after the last fixed field is expected and accounted for. */
+static_assert(offsetof(GnnConfig, neighbor_index) >= offsetof(GnnConfig, seed) + sizeof(uint32_t),
+              "GnnConfig seed must be the last fixed field before neighbor_index");
 
 /**
  * @brief Return the exact byte size required for one GNN config blob.

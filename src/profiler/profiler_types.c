@@ -10,6 +10,8 @@
 
 #include "profiler_types.h"
 
+#include <assert.h>
+
 /**
  * @brief Error code to string mapping table.
  *
@@ -27,6 +29,10 @@ static const char* g_status_strings[] = {
     "Layout mismatch - metadata or parameter layout inconsistent",
     "Internal error"
 };
+
+/* Verify that the string table covers all sequential ProfStatus values (0..7). */
+static_assert((sizeof(g_status_strings) / sizeof(g_status_strings[0])) >= 9,
+              "g_status_strings entry count mismatch: must cover ProfStatus 0..8");
 
 /**
  * @brief Convert a public status code into a stable English description.

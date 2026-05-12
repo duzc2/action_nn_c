@@ -8,6 +8,7 @@
 
 #include "mlp_layers.h"
 
+#include <assert.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -42,6 +43,11 @@ typedef struct {
     MlpActivationType hidden_activation;
     MlpActivationType output_activation;
 } MlpConfig;
+
+/* The trailing hidden-size array is accessed via pointer arithmetic from
+ * sizeof(MlpConfig); any trailing padding would break that offset. */
+static_assert(sizeof(MlpConfig) == offsetof(MlpConfig, output_activation) + sizeof(MlpActivationType),
+              "MlpConfig must not have trailing padding");
 
 /**
  * @brief Return the exact byte size required for one MLP config blob.
