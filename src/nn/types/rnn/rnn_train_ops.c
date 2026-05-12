@@ -161,7 +161,12 @@ static int rnn_backpropagate(
             (context->hidden_cache + ((step_index - 1U) * config->hidden_size));
         size_t current_index;
 
-        (void)memcpy(dh_current, dh_next, config->hidden_size * sizeof(float));
+        /* Pointer swap avoids O(n) memcpy in the BPTT inner loop. */
+        {
+            float* tmp = dh_current;
+            dh_current = dh_next;
+            dh_next = tmp;
+        }
         (void)memset(dh_next, 0, config->hidden_size * sizeof(float));
 
         for (current_index = 0U; current_index < config->hidden_size; ++current_index) {

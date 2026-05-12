@@ -7,10 +7,14 @@
 #define TRANSFORMER_INFER_OPS_H
 
 #include "transformer_config.h"
+#include "../../../utils/arena.h"
 
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+
+/* Forward declaration: the full cache type lives in the .c file. */
+typedef struct TransformerForwardCache TransformerForwardCache;
 
 /**
  * @brief Inference context for the dynamically sized transformer backend.
@@ -42,6 +46,8 @@ typedef struct {
     char* fallback_answer;             /**< Stable fallback answer buffer. */
     float* graph_projection_weight;    /**< [graph_input_size][graph_output_size] graph-mode weights. */
     float* graph_projection_bias;      /**< [graph_output_size] graph-mode bias. */
+    Arena* arena;                      /**< Scratch arena for forward cache + training temp buffers. */
+    TransformerForwardCache* forward_cache; /**< Pre-allocated scratch cache; allocated from arena once. */
 } TransformerInferContext;
 
 int nn_transformer_init_parameters(

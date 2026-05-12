@@ -36,3 +36,9 @@ action_c_add_test(test_mlp_arena_integration nn/test_mlp_arena_integration.c
 action_c_add_test(test_gnn_arena_integration nn/test_gnn_arena_integration.c
     ${CMAKE_SOURCE_DIR}/src/utils/arena.c
     ${CMAKE_SOURCE_DIR}/src/utils/log.c)
+
+action_c_add_test(test_rnn_pointer_swap nn/test_rnn_pointer_swap.c)
+
+action_c_add_test(test_transformer_arena nn/test_transformer_arena.c
+    ${CMAKE_SOURCE_DIR}/src/utils/arena.c
+    ${CMAKE_SOURCE_DIR}/src/utils/log.c)

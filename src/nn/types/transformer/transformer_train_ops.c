@@ -301,7 +301,7 @@ static int transformer_run_training_forward(
 int nn_transformer_train_step(void* context) {
     TransformerTrainContext* train_ctx = (TransformerTrainContext*)context;
     TransformerInferContext* infer_ctx;
-    TransformerTrainCache cache;
+    TransformerTrainCache* cache = 0;
     float* classifier_gradient = 0;
     float* classifier_bias_gradient = 0;
     float* dlogits = 0;
@@ -309,8 +309,8 @@ int nn_transformer_train_step(void* context) {
     float pooled_norm;
     size_t class_index;
     size_t feature_index;
+    size_t _arena_mark;
     int target_class;
-    int rc;
 
     if (train_ctx == 0 || train_ctx->infer_ctx == 0 ||
         train_ctx->current_question == 0 || train_ctx->current_answer == 0) {
@@ -323,34 +323,30 @@ int nn_transformer_train_step(void* context) {
         return ACTION_C_ERR_NOT_FOUND;
     }
 
-    rc = transformer_train_cache_init(&cache, infer_ctx);
-    if (rc != 0) {
-        return rc;
+    /* Reuse the pre-allocated forward cache and arena for all scratch buffers. */
+    cache = (TransformerTrainCache*)(uintptr_t)infer_ctx->forward_cache;
+    if (cache == 0) {
+        return ACTION_C_ERR_NULL_POINTER;
+    }
+    _arena_mark = arena_snapshot(infer_ctx->arena);
+
+    if (transformer_run_training_forward(infer_ctx, train_ctx->current_question, cache) != 0) {
+        arena_restore(infer_ctx->arena, _arena_mark);
+        return ACTION_C_ERR_INTERNAL;
     }
 
-    rc = transformer_run_training_forward(infer_ctx, train_ctx->current_question, &cache);
-    if (rc != 0) {
-        transformer_train_cache_destroy(&cache);
-        return rc;
-    }
-
-    classifier_gradient = (float*)calloc(
-        infer_ctx->class_count * infer_ctx->model_dim,
-        sizeof(float)
-    );
-    classifier_bias_gradient = (float*)calloc(infer_ctx->class_count, sizeof(float));
-    dlogits = (float*)calloc(infer_ctx->class_count, sizeof(float));
+    classifier_gradient = ARENA_CALLOC(infer_ctx->arena, float,
+                                       infer_ctx->class_count * infer_ctx->model_dim);
+    classifier_bias_gradient = ARENA_CALLOC(infer_ctx->arena, float, infer_ctx->class_count);
+    dlogits = ARENA_CALLOC(infer_ctx->arena, float, infer_ctx->class_count);
     if (classifier_gradient == 0 || classifier_bias_gradient == 0 || dlogits == 0) {
-        free(classifier_gradient);
-        free(classifier_bias_gradient);
-        free(dlogits);
-        transformer_train_cache_destroy(&cache);
+        arena_restore(infer_ctx->arena, _arena_mark);
         return ACTION_C_ERR_NULL_POINTER;
     }
 
-    loss = -logf(cache.probabilities[(size_t)target_class] + 1.0e-6f);
+    loss = -logf(cache->probabilities[(size_t)target_class] + 1.0e-6f);
     for (class_index = 0U; class_index < infer_ctx->class_count; ++class_index) {
-        dlogits[class_index] = cache.probabilities[class_index];
+        dlogits[class_index] = cache->probabilities[class_index];
     }
     dlogits[(size_t)target_class] -= 1.0f;
 
@@ -360,7 +356,7 @@ int nn_transformer_train_step(void* context) {
         for (feature_index = 0U; feature_index < infer_ctx->model_dim; ++feature_index) {
             classifier_gradient[
                 transformer_index(class_index, feature_index, infer_ctx->model_dim)
-            ] = dlogits[class_index] * cache.pooled[feature_index];
+            ] = dlogits[class_index] * cache->pooled[feature_index];
         }
     }
 
@@ -382,14 +378,14 @@ int nn_transformer_train_step(void* context) {
         }
     }
 
-    pooled_norm = transformer_vector_norm(cache.pooled, infer_ctx->model_dim);
+    pooled_norm = transformer_vector_norm(cache->pooled, infer_ctx->model_dim);
     for (feature_index = 0U; feature_index < infer_ctx->model_dim; ++feature_index) {
         size_t weight_index = transformer_index(
             (size_t)target_class,
             feature_index,
             infer_ctx->model_dim
         );
-        float normalized_feature = cache.pooled[feature_index] / pooled_norm;
+        float normalized_feature = cache->pooled[feature_index] / pooled_norm;
 
         infer_ctx->classifier_weight[weight_index] =
             (0.85f * infer_ctx->classifier_weight[weight_index]) + (0.15f * normalized_feature);
@@ -401,10 +397,7 @@ int nn_transformer_train_step(void* context) {
     train_ctx->cumulative_loss += loss;
     train_ctx->average_loss = train_ctx->cumulative_loss / (float)train_ctx->total_steps;
 
-    free(classifier_gradient);
-    free(classifier_bias_gradient);
-    free(dlogits);
-    transformer_train_cache_destroy(&cache);
+    arena_restore(infer_ctx->arena, _arena_mark);
     return 0;
 }
 
@@ -417,6 +410,7 @@ int nn_transformer_train_step_with_output_gradient(
     TransformerInferContext* infer_ctx;
     float* output_cache;
     size_t output_index;
+    size_t _arena_mark;
 
     if (train_ctx == 0 || train_ctx->infer_ctx == 0 || input == 0 || output_gradient == 0) {
         return ACTION_C_ERR_NULL_POINTER;
@@ -427,13 +421,15 @@ int nn_transformer_train_step_with_output_gradient(
         return ACTION_C_ERR_DIM_MISMATCH;
     }
 
-    output_cache = (float*)calloc(infer_ctx->graph_output_size, sizeof(float));
+    _arena_mark = arena_snapshot(infer_ctx->arena);
+    output_cache = ARENA_CALLOC(infer_ctx->arena, float, infer_ctx->graph_output_size);
     if (output_cache == 0) {
+        arena_restore(infer_ctx->arena, _arena_mark);
         return ACTION_C_ERR_NO_MEMORY;
     }
 
     if (nn_transformer_graph_run(infer_ctx, input, output_cache) != 0) {
-        free(output_cache);
+        arena_restore(infer_ctx->arena, _arena_mark);
         return ACTION_C_ERR_INTERNAL;
     }
 
@@ -476,6 +472,6 @@ int nn_transformer_train_step_with_output_gradient(
     }
 
     train_ctx->total_steps += 1U;
-    free(output_cache);
+    arena_restore(infer_ctx->arena, _arena_mark);
     return 0;
 }

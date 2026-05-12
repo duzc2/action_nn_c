@@ -27,7 +27,7 @@ typedef struct {
     uint32_t rng_state;
 } TransformerWeightHeader;
 
-typedef struct {
+struct TransformerForwardCache {
     size_t seq_length;
     size_t* tokens;
     float* input_states;
@@ -41,7 +41,7 @@ typedef struct {
     float* pooled;
     float* logits;
     float* probabilities;
-} TransformerForwardCache;
+};
 
 static size_t transformer_index(size_t row, size_t column, size_t column_count) {
     return (row * column_count) + column;
@@ -94,6 +94,10 @@ static void transformer_release_parameters(TransformerInferContext* context) {
         return;
     }
 
+    arena_destroy(context->arena);
+    context->arena = NULL;
+    context->forward_cache = NULL;
+
     free(context->token_embedding);
     free(context->position_embedding);
     free(context->query_weight);
@@ -133,12 +137,13 @@ void nn_transformer_infer_destroy(void* ctx) {
 
 static int transformer_forward_cache_init(
     TransformerForwardCache* cache,
-    const TransformerInferContext* context
+    const TransformerInferContext* context,
+    Arena* arena
 ) {
     size_t state_count;
     size_t attention_count;
 
-    if (cache == 0 || context == 0) {
+    if (cache == 0 || context == 0 || arena == 0) {
         return ACTION_C_ERR_NULL_POINTER;
     }
 
@@ -146,58 +151,28 @@ static int transformer_forward_cache_init(
     state_count = context->max_seq_length * context->model_dim;
     attention_count = context->max_seq_length * context->max_seq_length;
 
-    cache->tokens = (size_t*)calloc(context->max_seq_length, sizeof(size_t));
-    cache->input_states = (float*)calloc(state_count, sizeof(float));
-    cache->query = (float*)calloc(state_count, sizeof(float));
-    cache->key = (float*)calloc(state_count, sizeof(float));
-    cache->value = (float*)calloc(state_count, sizeof(float));
-    cache->attention = (float*)calloc(attention_count, sizeof(float));
-    cache->attended = (float*)calloc(state_count, sizeof(float));
-    cache->projected = (float*)calloc(state_count, sizeof(float));
-    cache->hidden = (float*)calloc(state_count, sizeof(float));
-    cache->pooled = (float*)calloc(context->model_dim, sizeof(float));
-    cache->logits = (float*)calloc(context->max_response_classes, sizeof(float));
-    cache->probabilities = (float*)calloc(context->max_response_classes, sizeof(float));
+    cache->tokens = ARENA_CALLOC(arena, size_t, context->max_seq_length);
+    cache->input_states = ARENA_CALLOC(arena, float, state_count);
+    cache->query = ARENA_CALLOC(arena, float, state_count);
+    cache->key = ARENA_CALLOC(arena, float, state_count);
+    cache->value = ARENA_CALLOC(arena, float, state_count);
+    cache->attention = ARENA_CALLOC(arena, float, attention_count);
+    cache->attended = ARENA_CALLOC(arena, float, state_count);
+    cache->projected = ARENA_CALLOC(arena, float, state_count);
+    cache->hidden = ARENA_CALLOC(arena, float, state_count);
+    cache->pooled = ARENA_CALLOC(arena, float, context->model_dim);
+    cache->logits = ARENA_CALLOC(arena, float, context->max_response_classes);
+    cache->probabilities = ARENA_CALLOC(arena, float, context->max_response_classes);
 
     if (cache->tokens == 0 || cache->input_states == 0 || cache->query == 0 ||
         cache->key == 0 || cache->value == 0 || cache->attention == 0 ||
         cache->attended == 0 || cache->projected == 0 || cache->hidden == 0 ||
         cache->pooled == 0 || cache->logits == 0 || cache->probabilities == 0) {
-        free(cache->tokens);
-        free(cache->input_states);
-        free(cache->query);
-        free(cache->key);
-        free(cache->value);
-        free(cache->attention);
-        free(cache->attended);
-        free(cache->projected);
-        free(cache->hidden);
-        free(cache->pooled);
-        free(cache->logits);
-        free(cache->probabilities);
         (void)memset(cache, 0, sizeof(*cache));
         return ACTION_C_ERR_INTERNAL;
     }
 
     return 0;
-}
-
-static void transformer_forward_cache_destroy(TransformerForwardCache* cache) {
-    if (cache == 0) {
-        return;
-    }
-    free(cache->tokens);
-    free(cache->input_states);
-    free(cache->query);
-    free(cache->key);
-    free(cache->value);
-    free(cache->attention);
-    free(cache->attended);
-    free(cache->projected);
-    free(cache->hidden);
-    free(cache->pooled);
-    free(cache->logits);
-    free(cache->probabilities);
 }
 
 size_t nn_transformer_tokenize_text(
@@ -383,6 +358,29 @@ int nn_transformer_init_parameters(
             context->graph_projection_weight[
                 transformer_index(row, column, context->graph_output_size)
             ] = diagonal + transformer_random_weight(&context->rng_state, 0.015f);
+        }
+    }
+
+    /* Allocate forward cache from arena once so per-predict calls skip heap allocation. */
+    {
+        size_t state_count = context->max_seq_length * context->model_dim;
+        size_t attention_count = context->max_seq_length * context->max_seq_length;
+        size_t total_bytes =
+            context->max_seq_length * sizeof(size_t)
+            + (state_count * 5 + attention_count + state_count * 2
+               + context->model_dim
+               + context->max_response_classes * 2) * sizeof(float)
+            + sizeof(TransformerForwardCache);
+        context->arena = arena_create(total_bytes);
+        if (context->arena == NULL) {
+            transformer_release_parameters(context);
+            return ACTION_C_ERR_NO_MEMORY;
+        }
+        context->forward_cache = ARENA_ALLOC(context->arena, TransformerForwardCache, 1);
+        if (context->forward_cache == NULL
+            || transformer_forward_cache_init(context->forward_cache, context, context->arena) != 0) {
+            transformer_release_parameters(context);
+            return ACTION_C_ERR_NO_MEMORY;
         }
     }
 
@@ -573,11 +571,13 @@ int nn_transformer_predict_class(
     size_t probability_capacity,
     float* out_loss_hint
 ) {
-    TransformerForwardCache cache;
+    /* Use the pre-allocated forward cache from the infer context.
+     * Its arena-backed buffers are reused across every predict call. */
+    TransformerForwardCache* cache = (TransformerForwardCache*)(uintptr_t)context->forward_cache;
     size_t class_index;
     size_t best_index = 0U;
 
-    if (context == 0 || question == 0) {
+    if (context == 0 || question == 0 || cache == 0) {
         return ACTION_C_ERR_NULL_POINTER;
     }
     if (context->class_count == 0U) {
@@ -586,16 +586,13 @@ int nn_transformer_predict_class(
         }
         return ACTION_C_ERR_DIM_MISMATCH;
     }
-    if (transformer_forward_cache_init(&cache, context) != 0) {
-        return ACTION_C_ERR_INTERNAL;
-    }
-    if (transformer_run_forward(context, question, &cache) != 0) {
-        transformer_forward_cache_destroy(&cache);
+
+    if (transformer_run_forward(context, question, cache) != 0) {
         return ACTION_C_ERR_INTERNAL;
     }
 
     for (class_index = 1U; class_index < context->class_count; ++class_index) {
-        if (cache.probabilities[class_index] > cache.probabilities[best_index]) {
+        if (cache->probabilities[class_index] > cache->probabilities[best_index]) {
             best_index = class_index;
         }
     }
@@ -604,14 +601,13 @@ int nn_transformer_predict_class(
         size_t copy_count = probability_capacity < context->class_count ?
             probability_capacity : context->class_count;
         for (class_index = 0U; class_index < copy_count; ++class_index) {
-            out_probabilities[class_index] = cache.probabilities[class_index];
+            out_probabilities[class_index] = cache->probabilities[class_index];
         }
     }
     if (out_loss_hint != 0) {
-        *out_loss_hint = 1.0f - cache.probabilities[best_index];
+        *out_loss_hint = 1.0f - cache->probabilities[best_index];
     }
 
-    transformer_forward_cache_destroy(&cache);
     return (int)best_index;
 }
 
