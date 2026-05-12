@@ -3,7 +3,7 @@ enable_testing()
 
 # 添加测试目标辅助宏
 function(action_c_add_test TEST_NAME TEST_SOURCE)
-    add_executable(${TEST_NAME} ${TEST_SOURCE})
+    add_executable(${TEST_NAME} ${TEST_SOURCE} ${ARGN})
     target_include_directories(${TEST_NAME} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_SOURCE_DIR}/src
@@ -22,3 +22,4 @@ action_c_add_test(test_harness_smoke smoke_test.c)
 
 # utils tests
 action_c_add_test(test_error utils/test_error.c)
+action_c_add_test(test_log utils/test_log.c ${CMAKE_SOURCE_DIR}/src/utils/log.c)
