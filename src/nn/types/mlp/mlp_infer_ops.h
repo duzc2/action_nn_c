@@ -12,6 +12,7 @@
 #define MLP_INFER_OPS_H
 
 #include "mlp_config.h"
+#include "../../../utils/arena.h"
 
 #include <stddef.h>
 #include <stdio.h>
@@ -33,6 +34,7 @@ typedef struct {
     float* work_buffer_a;
     float* work_buffer_b;
     uint32_t seed;
+    Arena* arena;
 } MlpInferContext;
 
 /**

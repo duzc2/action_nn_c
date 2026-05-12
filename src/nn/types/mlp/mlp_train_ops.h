@@ -14,6 +14,7 @@
 #define MLP_TRAIN_OPS_H
 
 #include "mlp_config.h"
+#include "../../../utils/arena.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -59,6 +60,7 @@ typedef struct {
     size_t total_steps;
     uint64_t checkpoint_network_hash;
     uint64_t checkpoint_layout_hash;
+    Arena* arena;
 } MlpTrainContext;
 
 /**
