@@ -32,7 +32,6 @@
       "Bash(ps:*)",
       "Bash(py --list)",
       "WebFetch(domain:www.python.org)",
-      "Bash(node \"C:\\\\Users\\\\ASUS\\\\Desktop\\\\ai-build-ai\\\\action_c\\\\test-mlp-nodes.js\")",
       "WebFetch(domain:rete.netlify.app)",
       "Bash(node:*)",
       "Bash(cd:*)",
