@@ -42,3 +42,6 @@ action_c_add_test(test_rnn_pointer_swap nn/test_rnn_pointer_swap.c)
 action_c_add_test(test_transformer_arena nn/test_transformer_arena.c
     ${CMAKE_SOURCE_DIR}/src/utils/arena.c
     ${CMAKE_SOURCE_DIR}/src/utils/log.c)
+
+# Track B: VTable and deduplication tests
+action_c_add_test(test_backend_struct_size nn/test_backend_struct_size.c)
