@@ -19,6 +19,7 @@ typedef struct {
     float* pooled_linear_cache;     /**< Per-step pooled linear responses before activation. */
     float* pooled_activation_cache; /**< Per-step pooled responses after activation. */
     float* output_linear_cache;     /**< Per-step projected feature logits. */
+    size_t* max_index_cache;        /**< Per-step argmax positions (used by dual/max pool backprop). */
     float* pooled_gradient_cache;   /**< Scratch dL/d(pool activation) buffer. */
     float* conv_weight_grad;        /**< Scratch convolution gradient tensor. */
     float* conv_bias_grad;          /**< Scratch convolution bias gradient tensor. */

@@ -9,7 +9,7 @@
 
 #include "profiler.h"
 #include "network_def.h"
-#include "types/cnn_dual_pool/cnn_dual_pool_config.h"
+#include "types/cnn/cnn_config.h"
 #include "types/mlp/mlp_config.h"
 #include "../demo_runtime_paths.h"
 #include "mnist_cnn_dataset.h"
@@ -21,7 +21,7 @@
 #define MNIST_CNN_ENCODER_FEATURE_SIZE 12U
 #define MNIST_CNN_ENCODER_OUTPUT_SIZE (MNIST_CNN_SEQUENCE_LENGTH * MNIST_CNN_ENCODER_FEATURE_SIZE)
 
-static void fill_cnn_infer_config(CnnDualPoolConfig* config) {
+static void fill_cnn_infer_config(CnnConfig* config) {
     (void)memset(config, 0, sizeof(*config));
     config->total_input_size = MNIST_CNN_FEATURE_INPUT_SIZE;
     config->sequence_length = MNIST_CNN_SEQUENCE_LENGTH;
@@ -31,12 +31,13 @@ static void fill_cnn_infer_config(CnnDualPoolConfig* config) {
     config->kernel_size = 3U;
     config->filter_count = 16U;
     config->feature_size = MNIST_CNN_ENCODER_FEATURE_SIZE;
-    config->pooling_activation = CNN_DUAL_POOL_ACT_RELU;
-    config->output_activation = CNN_DUAL_POOL_ACT_RELU;
+    config->pooling_activation = CNN_ACT_RELU;
+    config->output_activation = CNN_ACT_RELU;
+    config->pooling_mode = CNN_POOL_DUAL;
     config->seed = 31U;
 }
 
-static void fill_cnn_train_config(CnnDualPoolTrainConfig* config) {
+static void fill_cnn_train_config(CnnTrainConfig* config) {
     (void)memset(config, 0, sizeof(*config));
     config->learning_rate = 0.0035f;
     config->momentum = 0.0f;
@@ -47,8 +48,8 @@ static void fill_cnn_train_config(CnnDualPoolTrainConfig* config) {
 
 static NNSubnetDef* create_cnn_leaf(void) {
     NNSubnetDef* subnet;
-    CnnDualPoolConfig infer_config;
-    CnnDualPoolTrainConfig train_config;
+    CnnConfig infer_config;
+    CnnTrainConfig train_config;
     size_t hidden_sizes[1] = {16U};
 
     subnet = nn_subnet_def_create(
@@ -73,8 +74,8 @@ static NNSubnetDef* create_cnn_leaf(void) {
             subnet,
             &infer_config,
             sizeof(infer_config),
-            "types/cnn_dual_pool/cnn_dual_pool_config.h",
-            "CnnDualPoolConfig") != 0) {
+            "types/cnn/cnn_config.h",
+            "CnnConfig") != 0) {
         nn_subnet_def_free(subnet);
         return NULL;
     }
@@ -83,8 +84,8 @@ static NNSubnetDef* create_cnn_leaf(void) {
             subnet,
             &train_config,
             sizeof(train_config),
-            "types/cnn_dual_pool/cnn_dual_pool_config.h",
-            "CnnDualPoolTrainConfig") != 0) {
+            "types/cnn/cnn_config.h",
+            "CnnTrainConfig") != 0) {
         nn_subnet_def_free(subnet);
         return NULL;
     }

@@ -148,6 +148,8 @@ static uint64_t cnn_compute_layout_hash(const CnnConfig* config) {
     hash *= prime;
     hash ^= (uint64_t)config->output_activation;
     hash *= prime;
+    hash ^= (uint64_t)config->pooling_mode;
+    hash *= prime;
 
     return hash;
 }
@@ -184,8 +186,14 @@ static size_t cnn_conv_weight_count(const CnnConfig* config) {
 /**
  * @brief Compute the total number of projection weights owned by the context.
  */
+static size_t cnn_pooled_value_count(const CnnConfig* config) {
+    if (config == NULL) return 0;
+    return (config->pooling_mode == CNN_POOL_DUAL) ?
+        (config->filter_count * 2U) : config->filter_count;
+}
+
 static size_t cnn_projection_weight_count(const CnnConfig* config) {
-    return config->feature_size * config->filter_count;
+    return config->feature_size * cnn_pooled_value_count(config);
 }
 
 /**
@@ -202,6 +210,7 @@ CnnInferContext* nn_cnn_infer_create_with_config(const CnnConfig* config, uint32
     CnnInferContext* context;
     size_t conv_weight_count;
     size_t projection_weight_count;
+    size_t pooled_value_count;
     size_t value_index;
 
     if (!cnn_config_is_valid(config)) {
@@ -216,7 +225,9 @@ CnnInferContext* nn_cnn_infer_create_with_config(const CnnConfig* config, uint32
     context->config = *config;
     context->rng_state = seed != 0U ? seed : (config->seed != 0U ? config->seed : 1U);
     conv_weight_count = cnn_conv_weight_count(config);
-    projection_weight_count = cnn_projection_weight_count(config);
+    pooled_value_count = (config->pooling_mode == CNN_POOL_DUAL) ?
+        (config->filter_count * 2U) : config->filter_count;
+    projection_weight_count = config->feature_size * pooled_value_count;
 
     context->conv_weights = (float*)calloc(conv_weight_count, sizeof(float));
     context->conv_bias = (float*)calloc(config->filter_count, sizeof(float));
@@ -227,7 +238,10 @@ CnnInferContext* nn_cnn_infer_create_with_config(const CnnConfig* config, uint32
         config->sequence_length * config->feature_size,
         sizeof(float)
     );
-    context->pooled_values = (float*)calloc(config->filter_count, sizeof(float));
+    context->pooled_values = (float*)calloc(pooled_value_count, sizeof(float));
+    if (config->pooling_mode != CNN_POOL_AVG) {
+        context->max_index_cache = (size_t*)calloc(config->filter_count, sizeof(size_t));
+    }
 
     if (context->conv_weights == NULL || context->conv_bias == NULL ||
         context->projection_weights == NULL || context->projection_bias == NULL ||
@@ -271,6 +285,7 @@ void nn_cnn_infer_destroy(void* ctx) {
     free(context->input_buffer);
     free(context->output_buffer);
     free(context->pooled_values);
+    free(context->max_index_cache);
     free(context);
 }
 
@@ -315,6 +330,7 @@ int nn_cnn_forward_pass(
     float* output,
     float* pooled_linear_cache,
     float* pooled_activation_cache,
+    size_t* max_index_cache,
     float* output_linear_cache
 ) {
     const CnnConfig* config;
@@ -322,6 +338,7 @@ int nn_cnn_forward_pass(
     size_t output_grid_width;
     size_t output_grid_height;
     size_t output_positions;
+    size_t pooled_value_count;
     size_t step_index;
     size_t filter_index;
     size_t feature_index;
@@ -335,6 +352,8 @@ int nn_cnn_forward_pass(
     output_grid_width = config->frame_width - config->kernel_size + 1U;
     output_grid_height = config->frame_height - config->kernel_size + 1U;
     output_positions = cnn_conv_position_count(config);
+    pooled_value_count = (config->pooling_mode == CNN_POOL_DUAL) ?
+        (config->filter_count * 2U) : config->filter_count;
     if (output_positions == 0U) {
         return ACTION_C_ERR_DIM_MISMATCH;
     }
@@ -349,65 +368,130 @@ int nn_cnn_forward_pass(
         }
 
         for (filter_index = 0U; filter_index < config->filter_count; ++filter_index) {
-            float pooled_linear = 0.0f;
-            float pooled_activation;
             size_t out_row;
             size_t out_column;
+            size_t pooled_avg_index;
+            size_t pooled_max_index;
 
-            /* Convolve one filter over the full spatial field, then average positions. */
-            for (out_row = 0U; out_row < output_grid_height; ++out_row) {
-                for (out_column = 0U; out_column < output_grid_width; ++out_column) {
-                    float conv_value = context->conv_bias[filter_index];
-                    size_t channel_index;
+            if (config->pooling_mode == CNN_POOL_AVG) {
+                /* Single average pooling. */
+                float pooled_sum = 0.0f;
+                float pooled_activation;
 
-                    for (channel_index = 0U; channel_index < config->channel_count; ++channel_index) {
-                        size_t kernel_row;
-                        for (kernel_row = 0U; kernel_row < config->kernel_size; ++kernel_row) {
-                            size_t kernel_column;
-                            for (kernel_column = 0U; kernel_column < config->kernel_size; ++kernel_column) {
-                                size_t input_index = cnn_frame_index(
-                                    config,
-                                    channel_index,
-                                    out_row + kernel_row,
-                                    out_column + kernel_column
-                                );
-                                size_t weight_index = cnn_kernel_index(
-                                    config,
-                                    filter_index,
-                                    channel_index,
-                                    kernel_row,
-                                    kernel_column
-                                );
-                                conv_value += frame[input_index] * context->conv_weights[weight_index];
+                for (out_row = 0U; out_row < output_grid_height; ++out_row) {
+                    for (out_column = 0U; out_column < output_grid_width; ++out_column) {
+                        float conv_value = context->conv_bias[filter_index];
+                        size_t channel_index;
+                        for (channel_index = 0U; channel_index < config->channel_count; ++channel_index) {
+                            size_t kernel_row;
+                            for (kernel_row = 0U; kernel_row < config->kernel_size; ++kernel_row) {
+                                size_t kernel_column;
+                                for (kernel_column = 0U; kernel_column < config->kernel_size; ++kernel_column) {
+                                    size_t input_index = cnn_frame_index(
+                                        config, channel_index,
+                                        out_row + kernel_row, out_column + kernel_column);
+                                    size_t weight_index = cnn_kernel_index(
+                                        config, filter_index, channel_index, kernel_row, kernel_column);
+                                    conv_value += frame[input_index] * context->conv_weights[weight_index];
+                                }
                             }
                         }
+                        pooled_sum += conv_value;
                     }
-
-                    pooled_linear += conv_value;
                 }
-            }
 
-            pooled_linear /= (float)output_positions;
-            pooled_activation = cnn_apply_activation(pooled_linear, config->pooling_activation);
-            pooled_values[filter_index] = pooled_activation;
-            if (pooled_linear_cache != NULL) {
-                pooled_linear_cache[(step_index * config->filter_count) + filter_index] = pooled_linear;
-            }
-            if (pooled_activation_cache != NULL) {
-                pooled_activation_cache[(step_index * config->filter_count) + filter_index] =
-                    pooled_activation;
+                pooled_sum /= (float)output_positions;
+                pooled_activation = cnn_apply_activation(pooled_sum, config->pooling_activation);
+                pooled_values[filter_index] = pooled_activation;
+                if (pooled_linear_cache != NULL) {
+                    pooled_linear_cache[(step_index * config->filter_count) + filter_index] = pooled_sum;
+                }
+                if (pooled_activation_cache != NULL) {
+                    pooled_activation_cache[(step_index * config->filter_count) + filter_index] = pooled_activation;
+                }
+            } else {
+                /* MAX or DUAL pooling — track both avg and max within the same convolution loops. */
+                float pooled_sum = 0.0f;
+                float pooled_max = 0.0f;
+                size_t pooled_max_pos = 0U;
+                size_t position_counter = 0U;
+                int have_max = 0;
+
+                pooled_avg_index = (step_index * pooled_value_count) + (filter_index * 2U);
+                pooled_max_index = pooled_avg_index + 1U;
+
+                for (out_row = 0U; out_row < output_grid_height; ++out_row) {
+                    for (out_column = 0U; out_column < output_grid_width; ++out_column) {
+                        float conv_value = context->conv_bias[filter_index];
+                        size_t channel_index;
+                        for (channel_index = 0U; channel_index < config->channel_count; ++channel_index) {
+                            size_t kernel_row;
+                            for (kernel_row = 0U; kernel_row < config->kernel_size; ++kernel_row) {
+                                size_t kernel_column;
+                                for (kernel_column = 0U; kernel_column < config->kernel_size; ++kernel_column) {
+                                    size_t input_index = cnn_frame_index(
+                                        config, channel_index,
+                                        out_row + kernel_row, out_column + kernel_column);
+                                    size_t weight_index = cnn_kernel_index(
+                                        config, filter_index, channel_index, kernel_row, kernel_column);
+                                    conv_value += frame[input_index] * context->conv_weights[weight_index];
+                                }
+                            }
+                        }
+                        pooled_sum += conv_value;
+                        if (!have_max || conv_value > pooled_max) {
+                            pooled_max = conv_value;
+                            pooled_max_pos = position_counter;
+                            have_max = 1;
+                        }
+                        position_counter += 1U;
+                    }
+                }
+
+                if (max_index_cache != NULL) {
+                    max_index_cache[(step_index * config->filter_count) + filter_index] = pooled_max_pos;
+                }
+                if (context->max_index_cache != NULL) {
+                    context->max_index_cache[filter_index] = pooled_max_pos;
+                }
+
+                if (config->pooling_mode == CNN_POOL_MAX) {
+                    float pooled_max_act = cnn_apply_activation(pooled_max, config->pooling_activation);
+                    pooled_values[filter_index] = pooled_max_act;
+                    if (pooled_linear_cache != NULL) {
+                        pooled_linear_cache[(step_index * config->filter_count) + filter_index] = pooled_max;
+                    }
+                    if (pooled_activation_cache != NULL) {
+                        pooled_activation_cache[(step_index * config->filter_count) + filter_index] = pooled_max_act;
+                    }
+                } else {
+                    /* CNN_POOL_DUAL */
+                    float pooled_avg_linear = pooled_sum / (float)output_positions;
+                    float pooled_avg_act = cnn_apply_activation(pooled_avg_linear, config->pooling_activation);
+                    float pooled_max_act = cnn_apply_activation(pooled_max, config->pooling_activation);
+                    pooled_values[filter_index * 2U] = pooled_avg_act;
+                    pooled_values[(filter_index * 2U) + 1U] = pooled_max_act;
+                    if (pooled_linear_cache != NULL) {
+                        pooled_linear_cache[pooled_avg_index] = pooled_avg_linear;
+                        pooled_linear_cache[pooled_max_index] = pooled_max;
+                    }
+                    if (pooled_activation_cache != NULL) {
+                        pooled_activation_cache[pooled_avg_index] = pooled_avg_act;
+                        pooled_activation_cache[pooled_max_index] = pooled_max_act;
+                    }
+                }
             }
         }
 
         /* Project pooled filter responses into a compact feature vector for the RNN leaf. */
         for (feature_index = 0U; feature_index < config->feature_size; ++feature_index) {
             float linear_value = context->projection_bias[feature_index];
-            size_t local_filter_index;
+            size_t pooled_index;
 
-            for (local_filter_index = 0U; local_filter_index < config->filter_count; ++local_filter_index) {
+            for (pooled_index = 0U; pooled_index < pooled_value_count; ++pooled_index) {
                 linear_value += context->projection_weights[
-                    (feature_index * config->filter_count) + local_filter_index
-                ] * pooled_values[local_filter_index];
+                    (feature_index * pooled_value_count) + pooled_index
+                ] * pooled_values[pooled_index];
             }
 
             if (output_linear_cache != NULL) {
@@ -435,6 +519,7 @@ int nn_cnn_infer_step(void* ctx) {
         context,
         context->input_buffer,
         context->output_buffer,
+        NULL,
         NULL,
         NULL,
         NULL
@@ -610,6 +695,31 @@ static int cnn_vtable_save_weights(const void* context, FILE* fp) {
 const NNInferBackend g_cnn_infer_backend = {
     .type_name        = "cnn",
     .create           = cnn_infer_create_vtable,
+    .destroy          = nn_cnn_infer_destroy,
+    .step             = nn_cnn_infer_step,
+    .get_output       = cnn_infer_get_output_int,
+    .save_weights     = cnn_vtable_save_weights,
+    .load_weights     = nn_cnn_load_weights,
+    .get_network_hash = nn_cnn_get_network_hash,
+    .get_layout_hash  = cnn_infer_layout_hash,
+    .get_abi_version  = cnn_infer_abi_version,
+};
+
+/* ─── cnn_dual_pool VTable (forces CNN_POOL_DUAL mode) ─── */
+
+static void* cnn_dual_pool_infer_create_vtable(const void* config_blob, size_t config_size,
+                                                struct Arena* arena) {
+    CnnConfig config;
+    (void)arena;
+    if (config_blob == NULL || config_size < sizeof(CnnConfig)) return NULL;
+    config = *(const CnnConfig*)config_blob;
+    config.pooling_mode = CNN_POOL_DUAL;
+    return nn_cnn_infer_create_with_config(&config, 0);
+}
+
+const NNInferBackend g_cnn_dual_pool_infer_backend = {
+    .type_name        = "cnn_dual_pool",
+    .create           = cnn_dual_pool_infer_create_vtable,
     .destroy          = nn_cnn_infer_destroy,
     .step             = nn_cnn_infer_step,
     .get_output       = cnn_infer_get_output_int,

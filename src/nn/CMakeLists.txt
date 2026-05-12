@@ -38,11 +38,13 @@ endif()
 if(ACTION_C_ENABLE_NN_CNN)
     list(APPEND NN_ENABLED_TYPES cnn)
     action_c_append_type_sources(cnn)
-endif()
 
-if(ACTION_C_ENABLE_NN_CNN_DUAL_POOL)
-    list(APPEND NN_ENABLED_TYPES cnn_dual_pool)
-    action_c_append_type_sources(cnn_dual_pool)
+    # cnn_dual_pool is now aliased inside cnn/ via CnnPoolingMode enum
+    if(ACTION_C_ENABLE_NN_CNN_DUAL_POOL)
+        list(APPEND NN_ENABLED_TYPES cnn_dual_pool)
+        # Dual-pool VTable symbols are in cnn/cnn_infer_ops.c and cnn/cnn_train_ops.c
+        # so no additional source files are needed.
+    endif()
 endif()
 
 if(ACTION_C_ENABLE_NN_RNN)

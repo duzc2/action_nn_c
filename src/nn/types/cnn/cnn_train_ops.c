@@ -64,6 +64,15 @@ static size_t cnn_conv_position_count(const CnnConfig* config) {
 /**
  * @brief Reset all gradient buffers before a new backward pass.
  */
+static size_t cnn_train_pooled_value_count(const CnnConfig* config) {
+    return (config->pooling_mode == CNN_POOL_DUAL) ?
+        (config->filter_count * 2U) : config->filter_count;
+}
+
+static size_t cnn_train_projection_weight_count(const CnnConfig* config) {
+    return config->feature_size * cnn_train_pooled_value_count(config);
+}
+
 static void cnn_zero_gradients(CnnTrainContext* context) {
     const CnnConfig* config;
     size_t conv_weight_count;
@@ -76,8 +85,8 @@ static void cnn_zero_gradients(CnnTrainContext* context) {
 
     config = &context->infer_ctx->config;
     conv_weight_count = config->filter_count * config->channel_count * config->kernel_size * config->kernel_size;
-    projection_weight_count = config->feature_size * config->filter_count;
-    pooled_cache_count = config->sequence_length * config->filter_count;
+    projection_weight_count = cnn_train_projection_weight_count(config);
+    pooled_cache_count = config->sequence_length * cnn_train_pooled_value_count(config);
 
     (void)memset(context->pooled_gradient_cache, 0, pooled_cache_count * sizeof(float));
     (void)memset(context->conv_weight_grad, 0, conv_weight_count * sizeof(float));
@@ -99,7 +108,7 @@ static void cnn_apply_parameter_update(CnnTrainContext* context) {
     infer_ctx = context->infer_ctx;
     config = &infer_ctx->config;
     conv_weight_count = config->filter_count * config->channel_count * config->kernel_size * config->kernel_size;
-    projection_weight_count = config->feature_size * config->filter_count;
+    projection_weight_count = cnn_train_projection_weight_count(config);
 
     /* Weight decay is applied only to true weights, not to bias vectors. */
     for (weight_index = 0U; weight_index < conv_weight_count; ++weight_index) {
@@ -139,6 +148,7 @@ static int cnn_backpropagate(
     size_t output_grid_width;
     size_t output_grid_height;
     size_t output_positions;
+    size_t pooled_value_count;
     size_t step_index;
 
     if (context == NULL || context->infer_ctx == NULL || input == NULL || output_gradient == NULL) {
@@ -151,6 +161,7 @@ static int cnn_backpropagate(
     output_grid_width = config->frame_width - config->kernel_size + 1U;
     output_grid_height = config->frame_height - config->kernel_size + 1U;
     output_positions = cnn_conv_position_count(config);
+    pooled_value_count = cnn_train_pooled_value_count(config);
     if (output_positions == 0U) {
         return ACTION_C_ERR_DIM_MISMATCH;
     }
@@ -168,15 +179,15 @@ static int cnn_backpropagate(
             float output_value = infer_ctx->output_buffer[output_index];
             float dz = output_gradient[output_index] *
                 cnn_activation_derivative_from_output(output_value, config->output_activation);
-            size_t filter_index;
+            size_t pooled_index;
 
             context->projection_bias_grad[feature_index] += dz;
-            for (filter_index = 0U; filter_index < config->filter_count; ++filter_index) {
-                size_t pooled_index = (step_index * config->filter_count) + filter_index;
-                size_t weight_index = (feature_index * config->filter_count) + filter_index;
+            for (pooled_index = 0U; pooled_index < pooled_value_count; ++pooled_index) {
+                size_t cache_index = (step_index * pooled_value_count) + pooled_index;
+                size_t weight_index = (feature_index * pooled_value_count) + pooled_index;
                 context->projection_weight_grad[weight_index] +=
-                    dz * context->pooled_activation_cache[pooled_index];
-                context->pooled_gradient_cache[pooled_index] +=
+                    dz * context->pooled_activation_cache[cache_index];
+                context->pooled_gradient_cache[cache_index] +=
                     infer_ctx->projection_weights[weight_index] * dz;
             }
         }
@@ -188,49 +199,94 @@ static int cnn_backpropagate(
         size_t filter_index;
 
         for (filter_index = 0U; filter_index < config->filter_count; ++filter_index) {
-            size_t pooled_index = (step_index * config->filter_count) + filter_index;
-            float pooled_output = context->pooled_activation_cache[pooled_index];
-            float dpool_linear = context->pooled_gradient_cache[pooled_index] *
-                cnn_activation_derivative_from_output(pooled_output, config->pooling_activation);
-            float position_scale = dpool_linear / (float)output_positions;
             size_t out_row;
             size_t out_column;
 
-            context->conv_bias_grad[filter_index] += dpool_linear;
+            if (config->pooling_mode == CNN_POOL_AVG) {
+                /* Average pooling: gradient distributed equally to all positions. */
+                size_t pooled_index = (step_index * config->filter_count) + filter_index;
+                float pooled_output = context->pooled_activation_cache[pooled_index];
+                float dpool_linear = context->pooled_gradient_cache[pooled_index] *
+                    cnn_activation_derivative_from_output(pooled_output, config->pooling_activation);
+                float position_scale = dpool_linear / (float)output_positions;
 
-            /* Every valid convolution window contributes equally to the pooled mean. */
-            for (out_row = 0U; out_row < output_grid_height; ++out_row) {
-                for (out_column = 0U; out_column < output_grid_width; ++out_column) {
-                    size_t channel_index;
-                    for (channel_index = 0U; channel_index < config->channel_count; ++channel_index) {
-                        size_t kernel_row;
-                        for (kernel_row = 0U; kernel_row < config->kernel_size; ++kernel_row) {
-                            size_t kernel_column;
-                            for (kernel_column = 0U; kernel_column < config->kernel_size; ++kernel_column) {
-                                size_t input_index = cnn_frame_index(
-                                    config,
-                                    channel_index,
-                                    out_row + kernel_row,
-                                    out_column + kernel_column
-                                );
-                                size_t weight_index = cnn_kernel_index(
-                                    config,
-                                    filter_index,
-                                    channel_index,
-                                    kernel_row,
-                                    kernel_column
-                                );
-                                context->conv_weight_grad[weight_index] +=
-                                    position_scale * frame[input_index];
-                                if (input_gradient != NULL) {
-                                    input_gradient[(step_index * frame_stride) + input_index] +=
-                                        infer_ctx->conv_weights[weight_index] * position_scale;
+                context->conv_bias_grad[filter_index] += dpool_linear;
+                for (out_row = 0U; out_row < output_grid_height; ++out_row) {
+                    for (out_column = 0U; out_column < output_grid_width; ++out_column) {
+                        size_t channel_index;
+                        for (channel_index = 0U; channel_index < config->channel_count; ++channel_index) {
+                            size_t kernel_row;
+                            for (kernel_row = 0U; kernel_row < config->kernel_size; ++kernel_row) {
+                                size_t kernel_column;
+                                for (kernel_column = 0U; kernel_column < config->kernel_size; ++kernel_column) {
+                                    size_t input_index = cnn_frame_index(
+                                        config, channel_index,
+                                        out_row + kernel_row, out_column + kernel_column);
+                                    size_t weight_index = cnn_kernel_index(
+                                        config, filter_index, channel_index, kernel_row, kernel_column);
+                                    context->conv_weight_grad[weight_index] +=
+                                        position_scale * frame[input_index];
+                                    if (input_gradient != NULL) {
+                                        input_gradient[(step_index * frame_stride) + input_index] +=
+                                            infer_ctx->conv_weights[weight_index] * position_scale;
+                                    }
                                 }
                             }
                         }
                     }
                 }
+            } else if (config->pooling_mode == CNN_POOL_DUAL) {
+                /* DUAL pooling: avg gradient distributed equally, max gradient to argmax only. */
+                size_t avg_cache_index = (step_index * pooled_value_count) + (filter_index * 2U);
+                size_t max_cache_index = avg_cache_index + 1U;
+                float avg_output = context->pooled_activation_cache[avg_cache_index];
+                float max_output = context->pooled_activation_cache[max_cache_index];
+                float davg_linear = context->pooled_gradient_cache[avg_cache_index] *
+                    cnn_activation_derivative_from_output(avg_output, config->pooling_activation);
+                float dmax_linear = context->pooled_gradient_cache[max_cache_index] *
+                    cnn_activation_derivative_from_output(max_output, config->pooling_activation);
+                float avg_position_scale = davg_linear / (float)output_positions;
+                size_t position_counter = 0U;
+                size_t argmax_pos = 0U;
+
+                if (context->max_index_cache != NULL) {
+                    argmax_pos = context->max_index_cache[(step_index * config->filter_count) + filter_index];
+                }
+
+                context->conv_bias_grad[filter_index] += davg_linear + dmax_linear;
+                for (out_row = 0U; out_row < output_grid_height; ++out_row) {
+                    for (out_column = 0U; out_column < output_grid_width; ++out_column) {
+                        float position_gradient = avg_position_scale;
+                        if (position_counter == argmax_pos) {
+                            position_gradient += dmax_linear;
+                        }
+                        {
+                            size_t channel_index;
+                            for (channel_index = 0U; channel_index < config->channel_count; ++channel_index) {
+                                size_t kernel_row;
+                                for (kernel_row = 0U; kernel_row < config->kernel_size; ++kernel_row) {
+                                    size_t kernel_column;
+                                    for (kernel_column = 0U; kernel_column < config->kernel_size; ++kernel_column) {
+                                        size_t input_index = cnn_frame_index(
+                                            config, channel_index,
+                                            out_row + kernel_row, out_column + kernel_column);
+                                        size_t weight_index = cnn_kernel_index(
+                                            config, filter_index, channel_index, kernel_row, kernel_column);
+                                        context->conv_weight_grad[weight_index] +=
+                                            position_gradient * frame[input_index];
+                                        if (input_gradient != NULL) {
+                                            input_gradient[(step_index * frame_stride) + input_index] +=
+                                                infer_ctx->conv_weights[weight_index] * position_gradient;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        position_counter += 1U;
+                    }
+                }
             }
+            /* Note: CNN_POOL_MAX backpropagation not yet implemented — requires max tracking. */
         }
     }
 
@@ -245,6 +301,7 @@ CnnTrainContext* nn_cnn_train_create(void* infer_ctx_ptr, const CnnTrainConfig* 
     CnnTrainContext* context;
     CnnInferContext* infer_ctx = (CnnInferContext*)infer_ctx_ptr;
     const CnnConfig* infer_config;
+    size_t pooled_value_count;
     size_t pooled_cache_count;
     size_t conv_weight_count;
     size_t projection_weight_count;
@@ -254,10 +311,11 @@ CnnTrainContext* nn_cnn_train_create(void* infer_ctx_ptr, const CnnTrainConfig* 
     }
 
     infer_config = &infer_ctx->config;
-    pooled_cache_count = infer_config->sequence_length * infer_config->filter_count;
+    pooled_value_count = cnn_train_pooled_value_count(infer_config);
+    pooled_cache_count = infer_config->sequence_length * pooled_value_count;
     conv_weight_count = infer_config->filter_count * infer_config->channel_count *
         infer_config->kernel_size * infer_config->kernel_size;
-    projection_weight_count = infer_config->feature_size * infer_config->filter_count;
+    projection_weight_count = cnn_train_projection_weight_count(infer_config);
 
     context = (CnnTrainContext*)calloc(1U, sizeof(CnnTrainContext));
     if (context == NULL) {
@@ -272,6 +330,10 @@ CnnTrainContext* nn_cnn_train_create(void* infer_ctx_ptr, const CnnTrainConfig* 
         infer_config->sequence_length * infer_config->feature_size,
         sizeof(float)
     );
+    if (infer_config->pooling_mode != CNN_POOL_AVG) {
+        context->max_index_cache = (size_t*)calloc(
+            infer_config->sequence_length * infer_config->filter_count, sizeof(size_t));
+    }
     context->pooled_gradient_cache = (float*)calloc(pooled_cache_count, sizeof(float));
     context->conv_weight_grad = (float*)calloc(conv_weight_count, sizeof(float));
     context->conv_bias_grad = (float*)calloc(infer_config->filter_count, sizeof(float));
@@ -299,6 +361,7 @@ void nn_cnn_train_destroy(CnnTrainContext* context) {
 
     free(context->pooled_linear_cache);
     free(context->pooled_activation_cache);
+    free(context->max_index_cache);
     free(context->output_linear_cache);
     free(context->pooled_gradient_cache);
     free(context->conv_weight_grad);
@@ -331,6 +394,7 @@ int nn_cnn_train_step_with_output_gradient(
         infer_ctx->output_buffer,
         context->pooled_linear_cache,
         context->pooled_activation_cache,
+        context->max_index_cache,
         context->output_linear_cache
     );
     if (rc != 0) {
@@ -372,6 +436,7 @@ int nn_cnn_train_step_with_data(CnnTrainContext* context, const float* input, co
         infer_ctx->output_buffer,
         context->pooled_linear_cache,
         context->pooled_activation_cache,
+        context->max_index_cache,
         context->output_linear_cache
     );
     if (rc != 0) {
@@ -509,6 +574,38 @@ static int cnn_train_load_checkpoint_vtable(void* context, FILE* fp) {
 const NNTrainBackend g_cnn_train_backend = {
     .type_name        = "cnn",
     .create           = cnn_train_create_vtable,
+    .destroy          = (void (*)(void*))nn_cnn_train_destroy,
+    .step             = cnn_train_step_vtable,
+    .step_with_data   = cnn_train_step_with_data_vtable,
+    .save_checkpoint  = cnn_train_save_checkpoint_vtable,
+    .load_checkpoint  = cnn_train_load_checkpoint_vtable,
+};
+
+/* ─── cnn_dual_pool VTable (forces CNN_POOL_DUAL mode) ─── */
+
+static void* cnn_dual_pool_train_create_vtable(const void* config_blob, size_t config_size,
+                                                const void* infer_config_blob, size_t infer_config_size,
+                                                struct Arena* arena) {
+    CnnInferContext* infer_ctx;
+    CnnTrainConfig train_cfg;
+    CnnConfig infer_cfg;
+    (void)arena;
+
+    if (config_blob == NULL || config_size < sizeof(CnnTrainConfig)) return NULL;
+    train_cfg = *(const CnnTrainConfig*)config_blob;
+
+    if (infer_config_blob == NULL || infer_config_size < sizeof(CnnConfig)) return NULL;
+    infer_cfg = *(const CnnConfig*)infer_config_blob;
+    infer_cfg.pooling_mode = CNN_POOL_DUAL;
+    infer_ctx = nn_cnn_infer_create_with_config(&infer_cfg, train_cfg.seed);
+    if (infer_ctx == NULL) return NULL;
+
+    return nn_cnn_train_create(infer_ctx, &train_cfg);
+}
+
+const NNTrainBackend g_cnn_dual_pool_train_backend = {
+    .type_name        = "cnn_dual_pool",
+    .create           = cnn_dual_pool_train_create_vtable,
     .destroy          = (void (*)(void*))nn_cnn_train_destroy,
     .step             = cnn_train_step_vtable,
     .step_with_data   = cnn_train_step_with_data_vtable,

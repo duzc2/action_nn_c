@@ -25,11 +25,12 @@ typedef struct {
     uint32_t rng_state;             /**< Deterministic RNG state for parameter init. */
     float* conv_weights;            /**< [filter][channel][ky][kx] flattened tensor. */
     float* conv_bias;               /**< One scalar bias per convolution filter. */
-    float* projection_weights;      /**< [feature][filter] projection tensor. */
+    float* projection_weights;      /**< [feature][pooled_dim] projection tensor. */
     float* projection_bias;         /**< One scalar bias per projected feature. */
     float* input_buffer;            /**< Owned copy of the latest flattened input. */
     float* output_buffer;           /**< Owned copy of the latest flattened output. */
     float* pooled_values;           /**< Reusable scratch buffer for pooled filter responses. */
+    size_t* max_index_cache;        /**< Argmax positions per filter (used by dual/max pool backprop). */
 } CnnInferContext;
 
 CnnInferContext* nn_cnn_infer_create(void);
@@ -51,6 +52,7 @@ int nn_cnn_forward_pass(
     float* output,
     float* pooled_linear_cache,
     float* pooled_activation_cache,
+    size_t* max_index_cache,
     float* output_linear_cache
 );
 

@@ -34,6 +34,8 @@
 #define ACTION_C_WASM_ENABLE_CNN 0
 #endif
 
+/* CNN_DUAL_POOL merged into CNN via CnnPoolingMode enum (see cnn_config.h).
+   Kept as no-op define for backward compat; enable CNN instead. */
 #ifndef ACTION_C_WASM_ENABLE_CNN_DUAL_POOL
 #define ACTION_C_WASM_ENABLE_CNN_DUAL_POOL 0
 #endif

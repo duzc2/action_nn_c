@@ -60,7 +60,15 @@
       "Bash(./build/demo/transformer/infer/Debug/transformer_infer.exe:*)",
       "Bash(./build/demo/cnn_rnn_react/generate/Debug/cnn_rnn_react_generate.exe:*)",
       "Bash(./build/demo/cnn_rnn_react/train/Debug/cnn_rnn_react_train.exe:*)",
-      "Bash(./build/demo/cnn_rnn_react/infer/Debug/cnn_rnn_react_infer.exe:*)"
+      "Bash(./build/demo/cnn_rnn_react/infer/Debug/cnn_rnn_react_infer.exe:*)",
+      "Bash(./build/demo/move/train/Debug/move_train.exe:*)",
+      "Bash(./build/demo/move/infer/Debug/move_infer.exe:*)",
+      "Bash(bash:*)",
+      "Bash(\"C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/tests/Debug/test_mlp_vtable.exe\":*)",
+      "Bash(\"C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/tests/Debug/test_backend_struct_size.exe\")",
+      "Bash(\"C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/tests/Debug/test_weight_header.exe\")",
+      "Bash(\"C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/tests/Debug/test_infer_registry.exe\":*)",
+      "Bash(\"C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/tests/Debug/test_all_vtables.exe\")"
     ]
   }
 }

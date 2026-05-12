@@ -2,12 +2,13 @@
  * @file cnn_config.h
  * @brief POD-style configuration shared by the tiny CNN backend and generated code.
  *
- * The CNN added for the reaction demo is intentionally compact: it interprets
- * the flattened network input as a short sequence of 2D frames, applies one
- * shared convolution stage to each frame, performs global average pooling, and
- * then projects the pooled response into a small feature vector. The profiler
- * only needs stable plain-old-data metadata, so this header keeps the config
- * self-contained and serialization friendly.
+ * The CNN supports three global pooling modes controlled by an enum:
+ *   CNN_POOL_AVG  – average pooling (original CNN behaviour)
+ *   CNN_POOL_MAX  – maximum pooling
+ *   CNN_POOL_DUAL – both average and maximum pooling per filter (formerly cnn_dual_pool)
+ *
+ * The profiler only needs stable plain-old-data metadata, so this header keeps
+ * the config self-contained and serialization friendly.
  */
 
 #ifndef CNN_CONFIG_H
@@ -26,6 +27,15 @@ typedef enum {
 } CnnActivationType;
 
 /**
+ * @brief Global pooling variant applied after convolution.
+ */
+typedef enum {
+    CNN_POOL_AVG  = 0, /**< Global average pooling (one scalar per filter). */
+    CNN_POOL_MAX  = 1, /**< Global maximum pooling (one scalar per filter). */
+    CNN_POOL_DUAL = 2  /**< Both average and maximum pooling (two scalars per filter). */
+} CnnPoolingMode;
+
+/**
  * @brief Structural configuration required to build one CNN leaf.
  */
 typedef struct {
@@ -37,8 +47,9 @@ typedef struct {
     size_t kernel_size;                   /**< Shared square convolution kernel size. */
     size_t filter_count;                  /**< Number of shared convolution filters. */
     size_t feature_size;                  /**< Projected per-frame feature width. */
-    CnnActivationType pooling_activation; /**< Activation applied after global average pooling. */
+    CnnActivationType pooling_activation; /**< Activation applied after global pooling. */
     CnnActivationType output_activation;  /**< Activation applied to projected features. */
+    CnnPoolingMode pooling_mode;          /**< Global pooling variant (default AVG). */
     uint32_t seed;                        /**< Deterministic parameter initialization seed. */
 } CnnConfig;
 

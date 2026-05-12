@@ -5,7 +5,7 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
 include(${CMAKE_CURRENT_LIST_DIR}/../../demo_common.cmake)
-action_c_enable_network_types(TYPES cnn_dual_pool mlp)
+action_c_enable_network_types(TYPES cnn cnn_dual_pool mlp)
 action_c_add_core_subdirectory()
 
 add_executable(mnist_cnn_generate

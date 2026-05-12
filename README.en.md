@@ -34,8 +34,7 @@ action_nn_c/
 │   ├── nn/                 # Core neural network implementation
 │   │   └── types/          # Network type implementations
 │   │       ├── mlp/         # MLP implementation
-│   │       ├── cnn/         # CNN implementation
-│   │       ├── cnn_dual_pool/
+│   │       ├── cnn/         # CNN implementation (with dual_pool mode)
 │   │       ├── gnn/        # GNN implementation
 │   │       ├── rnn/        # RNN implementation
 │   │       └── transformer/

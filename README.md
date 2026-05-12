@@ -36,8 +36,7 @@ action_nn_c/
 │   ├── nn/                 # 神经网络核心实现
 │   │   └── types/          # 网络类型实现
 │   │       ├── mlp/         # MLP 实现
-│   │       ├── cnn/         # CNN 实现
-│   │       ├── cnn_dual_pool/
+│   │       ├── cnn/         # CNN 实现 (含 dual_pool 模式)
 │   │       ├── gnn/        # GNN 实现
 │   │       ├── rnn/        # RNN 实现
 │   │       └── transformer/
