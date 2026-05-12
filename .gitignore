@@ -72,3 +72,4 @@ Makefile
 *.wasm
 *.js.map
 ```
+.claude/settings.local.json

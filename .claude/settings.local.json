@@ -45,7 +45,22 @@
       "Bash($env:CXX = \"clang++\")",
       "Bash(Get-ChildItem:*)",
       "Bash(Select-Object:*)",
-      "Bash(done:*)"
+      "Bash(done:*)",
+      "Bash(ctest:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(./build/demo/move/generate/Debug/move_generate.exe:*)",
+      "Bash(./build/demo/move/generate/move_generate.exe:*)",
+      "Bash(./build/demo/move/train/move_train.exe:*)",
+      "Bash(./build/demo/move/infer/move_infer.exe:*)",
+      "Bash(./build/demo/road_graph_nav/generate/road_graph_nav_generate.exe:*)",
+      "Bash(timeout:*)",
+      "Bash(./build/demo/transformer/generate/Debug/transformer_generate.exe:*)",
+      "Bash(./build/demo/transformer/train/Debug/transformer_train.exe:*)",
+      "Bash(./build/demo/transformer/infer/Debug/transformer_infer.exe:*)",
+      "Bash(./build/demo/cnn_rnn_react/generate/Debug/cnn_rnn_react_generate.exe:*)",
+      "Bash(./build/demo/cnn_rnn_react/train/Debug/cnn_rnn_react_train.exe:*)",
+      "Bash(./build/demo/cnn_rnn_react/infer/Debug/cnn_rnn_react_infer.exe:*)"
     ]
   }
 }
