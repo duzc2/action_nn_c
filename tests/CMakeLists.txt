@@ -19,3 +19,6 @@ endfunction()
 
 # Smoke test
 action_c_add_test(test_harness_smoke smoke_test.c)
+
+# utils tests
+action_c_add_test(test_error utils/test_error.c)
