@@ -746,3 +746,60 @@ int nn_gnn_train_step(void* ctx) {
     return rc;
 }
 
+/* ─── VTable backend ─── */
+
+#include "../../nn_backend.h"
+
+static void* gnn_train_create_vtable(const void* config_blob, size_t config_size,
+                                      const void* infer_config_blob, size_t infer_config_size,
+                                      struct Arena* arena) {
+    GnnInferContext* infer_ctx;
+    GnnTrainConfig train_cfg;
+    (void)arena;
+
+    if (config_blob == NULL || config_size < sizeof(GnnTrainConfig)) return NULL;
+    train_cfg = *(const GnnTrainConfig*)config_blob;
+
+    infer_ctx = nn_gnn_infer_create_with_config_blob(infer_config_blob, infer_config_size,
+                                                      train_cfg.seed);
+    if (infer_ctx == NULL) return NULL;
+
+    return nn_gnn_train_create(infer_ctx, &train_cfg);
+}
+
+static int gnn_train_step_vtable(void* context, const float* input, const float* target) {
+    GnnTrainContext* ctx = (GnnTrainContext*)context;
+    if (ctx == NULL || input == NULL || target == NULL) return -1;
+    return nn_gnn_train_step_with_data(ctx, input, target);
+}
+
+static int gnn_train_step_with_data_vtable(void* context, const float* input,
+                                            const float* target, float* out_grad) {
+    GnnTrainContext* ctx = (GnnTrainContext*)context;
+    (void)out_grad;
+    if (ctx == NULL || input == NULL || target == NULL) return -1;
+    return nn_gnn_train_step_with_data(ctx, input, target);
+}
+
+static int gnn_train_save_checkpoint_vtable(void* context, FILE* fp) {
+    (void)context;
+    (void)fp;
+    return -1;
+}
+
+static int gnn_train_load_checkpoint_vtable(void* context, FILE* fp) {
+    (void)context;
+    (void)fp;
+    return -1;
+}
+
+const NNTrainBackend g_gnn_train_backend = {
+    .type_name        = "gnn",
+    .create           = gnn_train_create_vtable,
+    .destroy          = (void (*)(void*))nn_gnn_train_destroy,
+    .step             = gnn_train_step_vtable,
+    .step_with_data   = gnn_train_step_with_data_vtable,
+    .save_checkpoint  = gnn_train_save_checkpoint_vtable,
+    .load_checkpoint  = gnn_train_load_checkpoint_vtable,
+};
+

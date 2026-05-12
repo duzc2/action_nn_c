@@ -882,3 +882,61 @@ int nn_transformer_save_weights(void* context, FILE* fp) {
             1
         );
 }
+
+/* ─── VTable backend ─── */
+
+#include "../../nn_backend.h"
+
+static void* transformer_infer_create_vtable(const void* config_blob, size_t config_size,
+                                              struct Arena* arena) {
+    TransformerInferContext* ctx;
+    const TransformerModelConfig* model_cfg;
+    (void)arena;
+
+    if (config_blob == NULL || config_size < sizeof(TransformerModelConfig)) return NULL;
+
+    ctx = (TransformerInferContext*)calloc(1, sizeof(TransformerInferContext));
+    if (ctx == NULL) return NULL;
+
+    model_cfg = (const TransformerModelConfig*)config_blob;
+    nn_transformer_init_parameters(ctx, model_cfg, 0, 0);
+    return ctx;
+}
+
+static int transformer_get_output(const void* context, float* out, size_t out_size) {
+    (void)context;
+    (void)out;
+    (void)out_size;
+    return 0;
+}
+
+static uint32_t transformer_abi(void) {
+    return TRANSFORMER_ABI_VERSION;
+}
+
+static uint64_t transformer_net_hash(const void* context) {
+    const TransformerInferContext* ctx = (const TransformerInferContext*)context;
+    return ctx ? ctx->expected_network_hash : (uint64_t)0;
+}
+
+static uint64_t transformer_lay_hash(const void* context) {
+    const TransformerInferContext* ctx = (const TransformerInferContext*)context;
+    return ctx ? ctx->expected_layout_hash : (uint64_t)0;
+}
+
+static int transformer_sv_weights(const void* context, FILE* fp) {
+    return nn_transformer_save_weights((void*)context, fp);
+}
+
+const NNInferBackend g_transformer_infer_backend = {
+    .type_name        = "transformer",
+    .create           = transformer_infer_create_vtable,
+    .destroy          = nn_transformer_infer_destroy,
+    .step             = nn_transformer_infer_step,
+    .get_output       = transformer_get_output,
+    .save_weights     = transformer_sv_weights,
+    .load_weights     = nn_transformer_load_weights,
+    .get_network_hash = transformer_net_hash,
+    .get_layout_hash  = transformer_lay_hash,
+    .get_abi_version  = transformer_abi,
+};

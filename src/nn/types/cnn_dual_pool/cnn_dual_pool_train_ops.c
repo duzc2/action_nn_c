@@ -339,3 +339,62 @@ int nn_cnn_dual_pool_train_step(void* ctx) {
     free(dummy_target);
     return rc;
 }
+
+/* ─── VTable backend ─── */
+
+#include "../../nn_backend.h"
+
+static void* cnn_dual_pool_train_create_vtable(const void* config_blob, size_t config_size,
+                                                const void* infer_config_blob, size_t infer_config_size,
+                                                struct Arena* arena) {
+    CnnDualPoolInferContext* infer_ctx;
+    CnnDualPoolTrainConfig train_cfg;
+    const CnnDualPoolConfig* infer_cfg;
+    (void)arena;
+
+    if (config_blob == NULL || config_size < sizeof(CnnDualPoolTrainConfig)) return NULL;
+    train_cfg = *(const CnnDualPoolTrainConfig*)config_blob;
+
+    if (infer_config_blob == NULL || infer_config_size < sizeof(CnnDualPoolConfig)) return NULL;
+    infer_cfg = (const CnnDualPoolConfig*)infer_config_blob;
+    infer_ctx = nn_cnn_dual_pool_infer_create_with_config(infer_cfg, train_cfg.seed);
+    if (infer_ctx == NULL) return NULL;
+
+    return nn_cnn_dual_pool_train_create(infer_ctx, &train_cfg);
+}
+
+static int cnn_dual_pool_train_step_vtable(void* context, const float* input, const float* target) {
+    CnnDualPoolTrainContext* ctx = (CnnDualPoolTrainContext*)context;
+    if (ctx == NULL || input == NULL || target == NULL) return -1;
+    return nn_cnn_dual_pool_train_step_with_data(ctx, input, target);
+}
+
+static int cnn_dual_pool_train_step_with_data_vtable(void* context, const float* input,
+                                                      const float* target, float* out_grad) {
+    CnnDualPoolTrainContext* ctx = (CnnDualPoolTrainContext*)context;
+    (void)out_grad;
+    if (ctx == NULL || input == NULL || target == NULL) return -1;
+    return nn_cnn_dual_pool_train_step_with_data(ctx, input, target);
+}
+
+static int cnn_dual_pool_train_save_ckpt_vtable(void* context, FILE* fp) {
+    (void)context;
+    (void)fp;
+    return -1;
+}
+
+static int cnn_dual_pool_train_load_ckpt_vtable(void* context, FILE* fp) {
+    (void)context;
+    (void)fp;
+    return -1;
+}
+
+const NNTrainBackend g_cnn_dual_pool_train_backend = {
+    .type_name        = "cnn_dual_pool",
+    .create           = cnn_dual_pool_train_create_vtable,
+    .destroy          = (void (*)(void*))nn_cnn_dual_pool_train_destroy,
+    .step             = cnn_dual_pool_train_step_vtable,
+    .step_with_data   = cnn_dual_pool_train_step_with_data_vtable,
+    .save_checkpoint  = cnn_dual_pool_train_save_ckpt_vtable,
+    .load_checkpoint  = cnn_dual_pool_train_load_ckpt_vtable,
+};

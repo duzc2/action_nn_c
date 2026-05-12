@@ -915,3 +915,44 @@ uint64_t nn_gnn_get_network_hash(const void* ctx) {
 }
 
 
+/* ─── VTable backend ─── */
+
+#include "../../nn_backend.h"
+
+static uint32_t gnn_infer_abi_version(void) {
+    return GNN_ABI_VERSION;
+}
+
+static uint64_t gnn_infer_layout_hash(const void* context) {
+    const GnnInferContext* ctx = (const GnnInferContext*)context;
+    if (ctx == NULL || ctx->config == NULL) return 0;
+    return gnn_compute_layout_hash(ctx->config);
+}
+
+static int gnn_infer_get_output_int(const void* context, float* out, size_t out_size) {
+    nn_gnn_infer_get_output((void*)context, out, out_size);
+    return 0;
+}
+
+static void* gnn_infer_create_vtable(const void* config_blob, size_t config_size,
+                                      struct Arena* arena) {
+    (void)arena;
+    return nn_gnn_infer_create_with_config_blob(config_blob, config_size, 0);
+}
+
+static int gnn_vtable_save_weights(const void* context, FILE* fp) {
+    return nn_gnn_save_weights((void*)context, fp);
+}
+
+const NNInferBackend g_gnn_infer_backend = {
+    .type_name        = "gnn",
+    .create           = gnn_infer_create_vtable,
+    .destroy          = nn_gnn_infer_destroy,
+    .step             = nn_gnn_infer_step,
+    .get_output       = gnn_infer_get_output_int,
+    .save_weights     = gnn_vtable_save_weights,
+    .load_weights     = nn_gnn_load_weights,
+    .get_network_hash = nn_gnn_get_network_hash,
+    .get_layout_hash  = gnn_infer_layout_hash,
+    .get_abi_version  = gnn_infer_abi_version,
+};

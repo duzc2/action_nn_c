@@ -8,6 +8,13 @@
  */
 
 #ifndef GNN_CONFIG_H
+
+/* MSVC /W4 /WX flags flexible array members as non-standard; we
+   intentionally use C99-compliant FAMs, so silence the diagnostic. */
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4200) /* zero-sized array in struct/union */
+#endif
 #define GNN_CONFIG_H
 
 #include <assert.h>
@@ -131,5 +138,8 @@ typedef struct {
     size_t batch_size;                                     /**< Batch size requested by generated wrappers. */
     uint32_t seed;                                         /**< Reserved deterministic seed for future train state. */
 } GnnTrainConfig;
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
 #endif

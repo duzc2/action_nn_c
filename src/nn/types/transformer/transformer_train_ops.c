@@ -475,3 +475,79 @@ int nn_transformer_train_step_with_output_gradient(
     arena_restore(infer_ctx->arena, _arena_mark);
     return 0;
 }
+
+/* ─── VTable backend ─── */
+
+#include "../../nn_backend.h"
+
+static void* transformer_train_create_vtable(const void* config_blob, size_t config_size,
+                                              const void* infer_config_blob, size_t infer_config_size,
+                                              struct Arena* arena) {
+    TransformerInferContext* infer_ctx;
+    TransformerTrainContext* train_ctx;
+    const TransformerModelConfig* model_cfg;
+    const TransformerTrainConfig* tr_cfg;
+    (void)arena;
+
+    if (config_blob == NULL || config_size < sizeof(TransformerTrainConfig)) return NULL;
+    tr_cfg = (const TransformerTrainConfig*)config_blob;
+
+    if (infer_config_blob == NULL || infer_config_size < sizeof(TransformerModelConfig)) return NULL;
+    model_cfg = (const TransformerModelConfig*)infer_config_blob;
+
+    infer_ctx = (TransformerInferContext*)calloc(1, sizeof(TransformerInferContext));
+    if (infer_ctx == NULL) return NULL;
+    nn_transformer_init_parameters(infer_ctx, model_cfg, 0, 0);
+
+    train_ctx = (TransformerTrainContext*)calloc(1, sizeof(TransformerTrainContext));
+    if (train_ctx == NULL) {
+        nn_transformer_infer_destroy(infer_ctx);
+        return NULL;
+    }
+    train_ctx->infer_ctx = infer_ctx;
+    train_ctx->learning_rate = tr_cfg->learning_rate;
+    return train_ctx;
+}
+
+static void transformer_train_destroy(void* context) {
+    TransformerTrainContext* ctx = (TransformerTrainContext*)context;
+    if (ctx == NULL) return;
+    if (ctx->infer_ctx != NULL) nn_transformer_infer_destroy(ctx->infer_ctx);
+    free(ctx);
+}
+
+static int transformer_train_step_vtable(void* context, const float* input, const float* target) {
+    (void)input;
+    (void)target;
+    return nn_transformer_train_step(context);
+}
+
+static int transformer_train_step_with_data_vtable(void* context, const float* input,
+                                                    const float* target, float* out_grad) {
+    (void)input;
+    (void)target;
+    (void)out_grad;
+    return nn_transformer_train_step(context);
+}
+
+static int transformer_train_save_ckpt_vtable(void* context, FILE* fp) {
+    (void)context;
+    (void)fp;
+    return -1;
+}
+
+static int transformer_train_load_ckpt_vtable(void* context, FILE* fp) {
+    (void)context;
+    (void)fp;
+    return -1;
+}
+
+const NNTrainBackend g_transformer_train_backend = {
+    .type_name        = "transformer",
+    .create           = transformer_train_create_vtable,
+    .destroy          = transformer_train_destroy,
+    .step             = transformer_train_step_vtable,
+    .step_with_data   = transformer_train_step_with_data_vtable,
+    .save_checkpoint  = transformer_train_save_ckpt_vtable,
+    .load_checkpoint  = transformer_train_load_ckpt_vtable,
+};

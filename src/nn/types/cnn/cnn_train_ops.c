@@ -456,3 +456,62 @@ int nn_cnn_train_step(void* ctx) {
     free(dummy_target);
     return rc;
 }
+
+/* ─── VTable backend ─── */
+
+#include "../../nn_backend.h"
+
+static void* cnn_train_create_vtable(const void* config_blob, size_t config_size,
+                                      const void* infer_config_blob, size_t infer_config_size,
+                                      struct Arena* arena) {
+    CnnInferContext* infer_ctx;
+    CnnTrainConfig train_cfg;
+    const CnnConfig* infer_cfg;
+    (void)arena;
+
+    if (config_blob == NULL || config_size < sizeof(CnnTrainConfig)) return NULL;
+    train_cfg = *(const CnnTrainConfig*)config_blob;
+
+    if (infer_config_blob == NULL || infer_config_size < sizeof(CnnConfig)) return NULL;
+    infer_cfg = (const CnnConfig*)infer_config_blob;
+    infer_ctx = nn_cnn_infer_create_with_config(infer_cfg, train_cfg.seed);
+    if (infer_ctx == NULL) return NULL;
+
+    return nn_cnn_train_create(infer_ctx, &train_cfg);
+}
+
+static int cnn_train_step_vtable(void* context, const float* input, const float* target) {
+    CnnTrainContext* ctx = (CnnTrainContext*)context;
+    if (ctx == NULL || input == NULL || target == NULL) return -1;
+    return nn_cnn_train_step_with_data(ctx, input, target);
+}
+
+static int cnn_train_step_with_data_vtable(void* context, const float* input,
+                                            const float* target, float* out_grad) {
+    CnnTrainContext* ctx = (CnnTrainContext*)context;
+    (void)out_grad;
+    if (ctx == NULL || input == NULL || target == NULL) return -1;
+    return nn_cnn_train_step_with_data(ctx, input, target);
+}
+
+static int cnn_train_save_checkpoint_vtable(void* context, FILE* fp) {
+    (void)context;
+    (void)fp;
+    return -1;
+}
+
+static int cnn_train_load_checkpoint_vtable(void* context, FILE* fp) {
+    (void)context;
+    (void)fp;
+    return -1;
+}
+
+const NNTrainBackend g_cnn_train_backend = {
+    .type_name        = "cnn",
+    .create           = cnn_train_create_vtable,
+    .destroy          = (void (*)(void*))nn_cnn_train_destroy,
+    .step             = cnn_train_step_vtable,
+    .step_with_data   = cnn_train_step_with_data_vtable,
+    .save_checkpoint  = cnn_train_save_checkpoint_vtable,
+    .load_checkpoint  = cnn_train_load_checkpoint_vtable,
+};

@@ -475,3 +475,48 @@ uint64_t nn_rnn_get_network_hash(const void* ctx) {
 
     return rnn_compute_layout_hash(&context->config);
 }
+
+/* ─── VTable backend ─── */
+
+#include "../../nn_backend.h"
+
+static uint32_t rnn_infer_abi_version(void) {
+    return RNN_ABI_VERSION;
+}
+
+static uint64_t rnn_infer_layout_hash(const void* context) {
+    const RnnInferContext* ctx = (const RnnInferContext*)context;
+    if (ctx == NULL) return 0;
+    return rnn_compute_layout_hash(&ctx->config);
+}
+
+static int rnn_infer_get_output_int(const void* context, float* out, size_t out_size) {
+    nn_rnn_infer_get_output((void*)context, out, out_size);
+    return 0;
+}
+
+static void* rnn_infer_create_vtable(const void* config_blob, size_t config_size,
+                                      struct Arena* arena) {
+    const RnnConfig* config;
+    (void)arena;
+    if (config_blob == NULL || config_size < sizeof(RnnConfig)) return NULL;
+    config = (const RnnConfig*)config_blob;
+    return nn_rnn_infer_create_with_config(config, 0);
+}
+
+static int rnn_vtable_save_weights(const void* context, FILE* fp) {
+    return nn_rnn_save_weights((void*)context, fp);
+}
+
+const NNInferBackend g_rnn_infer_backend = {
+    .type_name        = "rnn",
+    .create           = rnn_infer_create_vtable,
+    .destroy          = nn_rnn_infer_destroy,
+    .step             = nn_rnn_infer_step,
+    .get_output       = rnn_infer_get_output_int,
+    .save_weights     = rnn_vtable_save_weights,
+    .load_weights     = nn_rnn_load_weights,
+    .get_network_hash = nn_rnn_get_network_hash,
+    .get_layout_hash  = rnn_infer_layout_hash,
+    .get_abi_version  = rnn_infer_abi_version,
+};

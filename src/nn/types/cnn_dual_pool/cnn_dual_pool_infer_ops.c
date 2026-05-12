@@ -424,3 +424,48 @@ uint64_t nn_cnn_dual_pool_get_network_hash(const void* ctx) {
     }
     return cnn_dual_pool_compute_layout_hash(&context->config);
 }
+
+/* ─── VTable backend ─── */
+
+#include "../../nn_backend.h"
+
+static uint32_t cnn_dual_pool_abi_version(void) {
+    return CNN_DUAL_POOL_ABI_VERSION;
+}
+
+static uint64_t cnn_dual_pool_layout_hash(const void* context) {
+    const CnnDualPoolInferContext* ctx = (const CnnDualPoolInferContext*)context;
+    if (ctx == NULL) return 0;
+    return cnn_dual_pool_compute_layout_hash(&ctx->config);
+}
+
+static int cnn_dual_pool_get_output_int(const void* context, float* out, size_t out_size) {
+    nn_cnn_dual_pool_infer_get_output((void*)context, out, out_size);
+    return 0;
+}
+
+static void* cnn_dual_pool_create_vtable(const void* config_blob, size_t config_size,
+                                          struct Arena* arena) {
+    const CnnDualPoolConfig* config;
+    (void)arena;
+    if (config_blob == NULL || config_size < sizeof(CnnDualPoolConfig)) return NULL;
+    config = (const CnnDualPoolConfig*)config_blob;
+    return nn_cnn_dual_pool_infer_create_with_config(config, 0);
+}
+
+static int cnn_dual_pool_vtable_save_weights(const void* context, FILE* fp) {
+    return nn_cnn_dual_pool_save_weights((void*)context, fp);
+}
+
+const NNInferBackend g_cnn_dual_pool_infer_backend = {
+    .type_name        = "cnn_dual_pool",
+    .create           = cnn_dual_pool_create_vtable,
+    .destroy          = nn_cnn_dual_pool_infer_destroy,
+    .step             = nn_cnn_dual_pool_infer_step,
+    .get_output       = cnn_dual_pool_get_output_int,
+    .save_weights     = cnn_dual_pool_vtable_save_weights,
+    .load_weights     = nn_cnn_dual_pool_load_weights,
+    .get_network_hash = nn_cnn_dual_pool_get_network_hash,
+    .get_layout_hash  = cnn_dual_pool_layout_hash,
+    .get_abi_version  = cnn_dual_pool_abi_version,
+};
