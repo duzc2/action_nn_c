@@ -7,6 +7,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include "../../../utils/error.h"
 
 static float cnn_dual_pool_activation_derivative_from_output(float output, CnnDualPoolActivationType activation) {
     switch (activation) {
@@ -91,7 +92,7 @@ static int cnn_dual_pool_backpropagate(CnnDualPoolTrainContext* context, const f
     size_t step_index;
 
     if (context == NULL || context->infer_ctx == NULL || input == NULL || output_gradient == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     infer_ctx = context->infer_ctx;
@@ -102,7 +103,7 @@ static int cnn_dual_pool_backpropagate(CnnDualPoolTrainContext* context, const f
     output_positions = cnn_dual_pool_conv_position_count(config);
     pooled_feature_count = cnn_dual_pool_pooled_feature_count(config);
     if (output_positions == 0U) {
-        return -1;
+        return ACTION_C_ERR_DIM_MISMATCH;
     }
 
     cnn_dual_pool_zero_gradients(context);
@@ -240,7 +241,7 @@ int nn_cnn_dual_pool_train_step_with_output_gradient(CnnDualPoolTrainContext* co
     int rc;
 
     if (context == NULL || context->infer_ctx == NULL || input == NULL || output_gradient == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     infer_ctx = context->infer_ctx;
@@ -266,7 +267,7 @@ int nn_cnn_dual_pool_train_step_with_data(CnnDualPoolTrainContext* context, cons
     float loss = 0.0f;
 
     if (context == NULL || context->infer_ctx == NULL || input == NULL || target == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     infer_ctx = context->infer_ctx;
@@ -279,7 +280,7 @@ int nn_cnn_dual_pool_train_step_with_data(CnnDualPoolTrainContext* context, cons
 
     output_gradient = (float*)calloc(output_size, sizeof(float));
     if (output_gradient == NULL) {
-        return -1;
+        return ACTION_C_ERR_NO_MEMORY;
     }
     for (output_index = 0U; output_index < output_size; ++output_index) {
         float diff = infer_ctx->output_buffer[output_index] - target[output_index];
@@ -322,7 +323,7 @@ int nn_cnn_dual_pool_train_step(void* ctx) {
     int rc;
 
     if (context == NULL || context->infer_ctx == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     dummy_input = (float*)calloc(context->infer_ctx->config.total_input_size, sizeof(float));
@@ -330,7 +331,7 @@ int nn_cnn_dual_pool_train_step(void* ctx) {
     if (dummy_input == NULL || dummy_target == NULL) {
         free(dummy_input);
         free(dummy_target);
-        return -1;
+        return ACTION_C_ERR_NO_MEMORY;
     }
 
     rc = nn_cnn_dual_pool_train_step_with_data(context, dummy_input, dummy_target);

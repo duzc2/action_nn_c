@@ -7,6 +7,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include "../../../utils/error.h"
 
 #define ABI_VERSION 1
 
@@ -342,7 +343,7 @@ int nn_mlp_infer_step(void* context) {
     size_t i;
 
     if (ctx == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     current = ctx->input_buffer;
@@ -371,13 +372,13 @@ int nn_mlp_infer_auto_run(void* context, const float* input, float* output) {
     MlpInferContext* ctx = (MlpInferContext*)context;
 
     if (ctx == NULL || input == NULL || output == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     nn_mlp_infer_set_input(ctx, input, ctx->config->input_size);
 
     if (nn_mlp_infer_step(ctx) != 0) {
-        return -1;
+        return ACTION_C_ERR_INTERNAL;
     }
 
     nn_mlp_infer_get_output(ctx, output, ctx->config->output_size);

@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../utils/error.h"
 
 #define ABI_VERSION 1
 #define CODE_BUFFER_CAPACITY 524288U
@@ -123,10 +124,10 @@ static int append_format(
     va_list args;
 
     if (buffer == NULL || position == NULL || format == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
     if (*position >= buffer_capacity) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     remaining = buffer_capacity - *position;
@@ -135,7 +136,7 @@ static int append_format(
     va_end(args);
 
     if (written < 0 || (size_t)written >= remaining) {
-        return -1;
+        return ACTION_C_ERR_INTERNAL;
     }
 
     *position += (size_t)written;
@@ -160,7 +161,7 @@ static int append_type_config_blob(
     size_t index;
 
     if (buffer == NULL || position == NULL || symbol_name == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     if (append_format(
@@ -169,12 +170,12 @@ static int append_type_config_blob(
             position,
             "static const unsigned char %s[] = {\n",
             symbol_name) != 0) {
-        return -1;
+        return ACTION_C_ERR_INTERNAL;
     }
 
     if (data == NULL || data_size == 0U) {
         if (append_format(buffer, buffer_capacity, position, "    0x00\n};\n\n") != 0) {
-            return -1;
+            return ACTION_C_ERR_DIM_MISMATCH;
         }
         return 0;
     }
@@ -182,7 +183,7 @@ static int append_type_config_blob(
     for (index = 0U; index < data_size; ++index) {
         if ((index % 12U) == 0U) {
             if (append_format(buffer, buffer_capacity, position, "    ") != 0) {
-                return -1;
+                return ACTION_C_ERR_NULL_POINTER;
             }
         }
         if (append_format(
@@ -192,17 +193,17 @@ static int append_type_config_blob(
                 "0x%02X%s",
                 (unsigned int)data[index],
                 (index + 1U < data_size) ? ", " : "") != 0) {
-            return -1;
+            return ACTION_C_ERR_INTERNAL;
         }
         if ((index % 12U) == 11U || (index + 1U) == data_size) {
             if (append_format(buffer, buffer_capacity, position, "\n") != 0) {
-                return -1;
+                return ACTION_C_ERR_INTERNAL;
             }
         }
     }
 
     if (append_format(buffer, buffer_capacity, position, "};\n\n") != 0) {
-        return -1;
+        return ACTION_C_ERR_INTERNAL;
     }
 
     return 0;
@@ -363,23 +364,23 @@ static int append_leaf_graph_constants(
             network != NULL ? network->connection_count : (size_t)0U,
             prof_codegen_network_input_size(graph),
             prof_codegen_network_output_size(graph)) != 0) {
-        return -1;
+        return ACTION_C_ERR_INTERNAL;
     }
 
     /* Topology order drives execution order for graph-mode infer/train code. */
     if ((flags & GENERATED_CONST_TOPOLOGY_ORDER) != 0U) {
         if (append_format(buffer, buffer_capacity, position,
                 "static const size_t g_topology_order[GENERATED_LEAF_COUNT] = {") != 0) {
-            return -1;
+            return ACTION_C_ERR_INTERNAL;
         }
         for (leaf_index = 0U; leaf_index < graph->leaf_subnets.count; ++leaf_index) {
             if (append_format(buffer, buffer_capacity, position, "%s%zuU",
                     leaf_index == 0U ? "" : ", ", graph->topology_order[leaf_index]) != 0) {
-                return -1;
+                return ACTION_C_ERR_NULL_POINTER;
             }
         }
         if (append_format(buffer, buffer_capacity, position, "};\n") != 0) {
-            return -1;
+            return ACTION_C_ERR_NULL_POINTER;
         }
     }
 
@@ -387,35 +388,35 @@ static int append_leaf_graph_constants(
     if ((flags & GENERATED_CONST_EDGE_COUNTS) != 0U) {
         if (append_format(buffer, buffer_capacity, position,
                 "static const size_t g_incoming_counts[GENERATED_LEAF_COUNT] = {") != 0) {
-            return -1;
+            return ACTION_C_ERR_INTERNAL;
         }
         for (leaf_index = 0U; leaf_index < graph->leaf_subnets.count; ++leaf_index) {
             if (append_format(buffer, buffer_capacity, position, "%s%zuU",
                     leaf_index == 0U ? "" : ", ", graph->incoming_counts[leaf_index]) != 0) {
-                return -1;
+                return ACTION_C_ERR_NULL_POINTER;
             }
         }
         if (append_format(buffer, buffer_capacity, position, "};\n") != 0) {
-            return -1;
+            return ACTION_C_ERR_NULL_POINTER;
         }
 
         if (append_format(buffer, buffer_capacity, position,
                 "static const size_t g_outgoing_counts[GENERATED_LEAF_COUNT] = {") != 0) {
-            return -1;
+            return ACTION_C_ERR_INTERNAL;
         }
         for (leaf_index = 0U; leaf_index < graph->leaf_subnets.count; ++leaf_index) {
             if (append_format(buffer, buffer_capacity, position, "%s%zuU",
                     leaf_index == 0U ? "" : ", ", graph->outgoing_counts[leaf_index]) != 0) {
-                return -1;
+                return ACTION_C_ERR_NULL_POINTER;
             }
         }
         if (append_format(buffer, buffer_capacity, position, "};\n") != 0) {
-            return -1;
+            return ACTION_C_ERR_NULL_POINTER;
         }
     }
 
     if (append_format(buffer, buffer_capacity, position, "\n") != 0) {
-        return -1;
+        return ACTION_C_ERR_INTERNAL;
     }
 
     return 0;
@@ -451,7 +452,7 @@ static int append_connection_table(
             "    int merge_strategy;\n"
             "} GeneratedConnection;\n\n"
             "static const GeneratedConnection g_connections[(GENERATED_CONNECTION_COUNT == 0U) ? 1U : GENERATED_CONNECTION_COUNT] = {\n") != 0) {
-        return -1;
+        return ACTION_C_ERR_DIM_MISMATCH;
     }
 
     if (network->connection_count == 0U) {
@@ -461,7 +462,7 @@ static int append_connection_table(
                 position,
                 "    { 0U, 0U, 0U, 0U, %d },\n",
                 (int)NN_MERGE_SUM) != 0) {
-            return -1;
+            return ACTION_C_ERR_INTERNAL;
         }
     }
 
@@ -474,7 +475,7 @@ static int append_connection_table(
         if (connection == NULL) {
             if (append_format(buffer, buffer_capacity, position,
                     "    { 0U, 0U, 0U, 0U, %d },\n", (int)NN_MERGE_SUM) != 0) {
-                return -1;
+                return ACTION_C_ERR_NULL_POINTER;
             }
             continue;
         }
@@ -488,12 +489,12 @@ static int append_connection_table(
                 connection->source_node_index,
                 connection->target_node_index,
                 (int)connection->merge_strategy) != 0) {
-            return -1;
+            return ACTION_C_ERR_INTERNAL;
         }
     }
 
     if (append_format(buffer, buffer_capacity, position, "};\n#endif\n\n") != 0) {
-        return -1;
+        return ACTION_C_ERR_INTERNAL;
     }
 
     return 0;
@@ -524,7 +525,7 @@ static int append_infer_type_blobs(
         (void)snprintf(symbol_name, sizeof(symbol_name), "g_infer_type_config_bytes_%zu", leaf_index);
         if (append_type_config_blob(buffer, buffer_capacity, position, symbol_name,
                 subnet->infer_type_config_data, subnet->infer_type_config_size) != 0) {
-            return -1;
+            return ACTION_C_ERR_INTERNAL;
         }
     }
 
@@ -554,7 +555,7 @@ static int append_train_type_blobs(
         (void)snprintf(symbol_name, sizeof(symbol_name), "g_train_type_config_bytes_%zu", leaf_index);
         if (append_type_config_blob(buffer, buffer_capacity, position, symbol_name,
                 subnet->train_type_config_data, subnet->train_type_config_size) != 0) {
-            return -1;
+            return ACTION_C_ERR_INTERNAL;
         }
     }
 
@@ -955,11 +956,11 @@ static int append_generated_infer_helpers(
             "    free(leaf->average_counts);\n"
             "    leaf->network_ctx = 0;\n"
             "}\n\n") != 0) {
-        return -1;
+        return ACTION_C_ERR_INTERNAL;
     }
 
     if (append_format(buffer, buffer_capacity, position, "#if GENERATED_LEAF_COUNT > 1U\n") != 0) {
-        return -1;
+        return ACTION_C_ERR_INTERNAL;
     }
 
     if (append_format(
@@ -992,7 +993,7 @@ static int append_generated_infer_helpers(
             "        }\n"
             "    }\n"
             "}\n\n") != 0) {
-        return -1;
+        return ACTION_C_ERR_INTERNAL;
     }
 
     if (append_format(
@@ -1034,7 +1035,7 @@ static int append_generated_infer_helpers(
             "    }\n"
             "    return 0;\n"
             "}\n\n") != 0) {
-        return -1;
+        return ACTION_C_ERR_INTERNAL;
     }
 
     if (append_format(
@@ -1055,7 +1056,7 @@ static int append_generated_infer_helpers(
         "        output_offset += leaf->output_size;\n"
         "    }\n"
         "}\n\n") != 0) {
-        return -1;
+        return ACTION_C_ERR_INTERNAL;
     }
 
     return append_format(buffer, buffer_capacity, position, "#endif\n\n");
@@ -1459,7 +1460,7 @@ static int append_generated_train_helpers(char* buffer, size_t buffer_capacity, 
      * wall of buffer-manipulation details.
      */
     if (append_format(buffer, buffer_capacity, position, "#if GENERATED_LEAF_COUNT > 1U\n") != 0) {
-        return -1;
+        return ACTION_C_ERR_INTERNAL;
     }
 
     if (append_format(
@@ -1493,7 +1494,7 @@ static int append_generated_train_helpers(char* buffer, size_t buffer_capacity, 
             "        }\n"
             "    }\n"
             "}\n\n") != 0) {
-        return -1;
+        return ACTION_C_ERR_INTERNAL;
     }
 
     if (append_format(
@@ -1530,7 +1531,7 @@ static int append_generated_train_helpers(char* buffer, size_t buffer_capacity, 
             "        }\n"
             "    }\n"
             "}\n\n") != 0) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     if (append_format(
@@ -1561,7 +1562,7 @@ static int append_generated_train_helpers(char* buffer, size_t buffer_capacity, 
             "        output_offset += leaf->output_size;\n"
             "    }\n"
             "}\n\n") != 0) {
-        return -1;
+        return ACTION_C_ERR_INTERNAL;
     }
 
     if (append_format(
@@ -1584,7 +1585,7 @@ static int append_generated_train_helpers(char* buffer, size_t buffer_capacity, 
             "        output_offset += infer_leaf->output_size;\n"
             "    }\n"
             "}\n\n") != 0) {
-        return -1;
+        return ACTION_C_ERR_INTERNAL;
     }
 
     if (append_format(
@@ -1615,7 +1616,7 @@ static int append_generated_train_helpers(char* buffer, size_t buffer_capacity, 
         "        source_train_leaf->output_grad_buffer[connection->source_node_index] += grad_value;\n"
         "    }\n"
         "}\n\n") != 0) {
-        return -1;
+        return ACTION_C_ERR_INTERNAL;
     }
 
     return append_format(buffer, buffer_capacity, position, "#endif\n\n");
@@ -1965,7 +1966,7 @@ static int append_weight_runtime_arrays(
             network,
             graph,
             GENERATED_CONST_TOPOLOGY_ORDER) != 0) {
-        return -1;
+        return ACTION_C_ERR_INTERNAL;
     }
 
     if (!include_expected_leaf_metadata) {
@@ -1974,31 +1975,31 @@ static int append_weight_runtime_arrays(
 
     if (append_format(buffer, buffer_capacity, position,
             "static const char* g_expected_leaf_ids[GENERATED_LEAF_COUNT] = {") != 0) {
-        return -1;
+        return ACTION_C_ERR_INTERNAL;
     }
     for (order_index = 0U; order_index < graph->leaf_subnets.count; ++order_index) {
         NNSubnetDef* subnet = graph->leaf_subnets.items[order_index];
         if (append_format(buffer, buffer_capacity, position, "%s\"%s\"",
                 order_index == 0U ? "" : ", ", subnet != NULL ? subnet->subnet_id : "") != 0) {
-            return -1;
+            return ACTION_C_ERR_NULL_POINTER;
         }
     }
     if (append_format(buffer, buffer_capacity, position, "};\n") != 0) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
     if (append_format(buffer, buffer_capacity, position,
             "static const char* g_expected_leaf_types[GENERATED_LEAF_COUNT] = {") != 0) {
-        return -1;
+        return ACTION_C_ERR_INTERNAL;
     }
     for (order_index = 0U; order_index < graph->leaf_subnets.count; ++order_index) {
         NNSubnetDef* subnet = graph->leaf_subnets.items[order_index];
         if (append_format(buffer, buffer_capacity, position, "%s\"%s\"",
                 order_index == 0U ? "" : ", ", subnet != NULL ? subnet->subnet_type : "") != 0) {
-            return -1;
+            return ACTION_C_ERR_NULL_POINTER;
         }
     }
     if (append_format(buffer, buffer_capacity, position, "};\n\n") != 0) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
     return 0;
 }

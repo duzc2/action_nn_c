@@ -8,6 +8,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../../../utils/error.h"
 
 #define CNN_DUAL_POOL_ABI_VERSION 1U
 
@@ -221,7 +222,7 @@ int nn_cnn_dual_pool_forward_pass(CnnDualPoolInferContext* context, const float*
     size_t feature_index;
 
     if (context == NULL || input == NULL || output == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     config = &context->config;
@@ -231,7 +232,7 @@ int nn_cnn_dual_pool_forward_pass(CnnDualPoolInferContext* context, const float*
     output_positions = cnn_dual_pool_conv_position_count(config);
     pooled_feature_count = cnn_dual_pool_pooled_feature_count(config);
     if (output_positions == 0U) {
-        return -1;
+        return ACTION_C_ERR_DIM_MISMATCH;
     }
 
     for (step_index = 0U; step_index < config->sequence_length; ++step_index) {
@@ -239,7 +240,7 @@ int nn_cnn_dual_pool_forward_pass(CnnDualPoolInferContext* context, const float*
         float* pooled_values = context->pooled_values;
 
         if (pooled_values == NULL) {
-            return -1;
+            return ACTION_C_ERR_NULL_POINTER;
         }
 
         for (filter_index = 0U; filter_index < config->filter_count; ++filter_index) {
@@ -312,7 +313,7 @@ int nn_cnn_dual_pool_forward_pass(CnnDualPoolInferContext* context, const float*
 int nn_cnn_dual_pool_infer_step(void* ctx) {
     CnnDualPoolInferContext* context = (CnnDualPoolInferContext*)ctx;
     if (context == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
     return nn_cnn_dual_pool_forward_pass(context, context->input_buffer, context->output_buffer, NULL, NULL, NULL, NULL);
 }
@@ -322,12 +323,12 @@ int nn_cnn_dual_pool_infer_auto_run(void* ctx, const float* input, float* output
     size_t output_size;
 
     if (context == NULL || input == NULL || output == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
     output_size = context->config.sequence_length * context->config.feature_size;
     nn_cnn_dual_pool_infer_set_input(context, input, context->config.total_input_size);
     if (nn_cnn_dual_pool_infer_step(context) != 0) {
-        return -1;
+        return ACTION_C_ERR_INTERNAL;
     }
     nn_cnn_dual_pool_infer_get_output(context, output, output_size);
     return 0;

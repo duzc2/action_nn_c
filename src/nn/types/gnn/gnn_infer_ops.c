@@ -13,6 +13,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../../../utils/error.h"
 
 #define GNN_ABI_VERSION 2U
 
@@ -343,15 +344,15 @@ static int gnn_get_active_neighbor(
     int neighbor;
 
     if (slot_index >= config->slot_count || source_node >= config->node_count) {
-        return -1;
+        return ACTION_C_ERR_INTERNAL;
     }
 
     neighbor = gnn_neighbor_at(config, source_node, slot_index);
     if (neighbor < 0) {
-        return -1;
+        return ACTION_C_ERR_INTERNAL;
     }
     if (!gnn_node_is_active(config, input, (size_t)neighbor)) {
-        return -1;
+        return ACTION_C_ERR_INTERNAL;
     }
     return neighbor;
 }
@@ -560,12 +561,12 @@ int nn_gnn_forward_pass(
     const float* final_stage;
 
     if (context == NULL || input == NULL || output == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     config = context->config;
     if (!gnn_config_is_valid(config, context->config_size)) {
-        return -1;
+        return ACTION_C_ERR_INTERNAL;
     }
 
     stage_stride = gnn_stage_stride(config);
@@ -574,12 +575,12 @@ int nn_gnn_forward_pass(
         cache = owned_cache;
     }
     if (cache == NULL) {
-        return -1;
+        return ACTION_C_ERR_NO_MEMORY;
     }
     aggregated = (float*)calloc(config->hidden_size, sizeof(float));
     if (aggregated == NULL) {
         free(owned_cache);
-        return -1;
+        return ACTION_C_ERR_NO_MEMORY;
     }
 
     /* Stage 0 encodes each active node feature vector into the hidden state space. */
@@ -666,7 +667,7 @@ int nn_gnn_forward_pass(
         if (pooled_hidden == NULL) {
             free(aggregated);
             free(owned_cache);
-            return -1;
+            return ACTION_C_ERR_NO_MEMORY;
         }
 
         (void)gnn_collect_graph_pool(config, input, final_stage, pooled_hidden);
@@ -740,7 +741,7 @@ int nn_gnn_infer_step(void* ctx) {
     GnnInferContext* context = (GnnInferContext*)ctx;
 
     if (context == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     return nn_gnn_forward_pass(
@@ -758,12 +759,12 @@ int nn_gnn_infer_auto_run(void* ctx, const float* input, float* output) {
     GnnInferContext* context = (GnnInferContext*)ctx;
 
     if (context == NULL || input == NULL || output == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     nn_gnn_infer_set_input(context, input, gnn_total_input_size(context->config));
     if (nn_gnn_infer_step(context) != 0) {
-        return -1;
+        return ACTION_C_ERR_INTERNAL;
     }
     nn_gnn_infer_get_output(context, output, context->config->output_size);
     return 0;

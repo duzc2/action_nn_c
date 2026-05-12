@@ -17,6 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include "../../../utils/error.h"
 
 #define ABI_VERSION 1
 #define ADAM_EPS 1e-8f
@@ -344,13 +345,13 @@ static int train_forward_pass(MlpTrainContext* ctx,
     size_t i;
 
     if (ctx == NULL || ctx->infer_ctx == NULL || input == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     infer_ctx = (MlpInferContext*)ctx->infer_ctx;
 
     if (infer_ctx->layer_count == 0 || infer_ctx->layers == NULL) {
-        return -1;
+        return ACTION_C_ERR_DIM_MISMATCH;
     }
 
     /* Cache the original sample because backprop needs it later. */
@@ -391,7 +392,7 @@ static int train_backward_pass(
     size_t layer_cursor;
 
     if (ctx == NULL || ctx->infer_ctx == NULL || output_gradient == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     infer_ctx = (MlpInferContext*)ctx->infer_ctx;
@@ -402,7 +403,7 @@ static int train_backward_pass(
     if (current_delta == NULL || next_delta == NULL) {
         free(current_delta);
         free(next_delta);
-        return -1;
+        return ACTION_C_ERR_NO_MEMORY;
     }
 
     /* Seed the reverse sweep with dL/dY from the chosen loss function. */
@@ -677,7 +678,7 @@ int nn_mlp_train_step_with_data(MlpTrainContext* ctx, const float* input, const 
     size_t i;
 
     if (ctx == NULL || input == NULL || target == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     infer_ctx = (MlpInferContext*)ctx->infer_ctx;
@@ -736,11 +737,11 @@ int nn_mlp_train_step_ex(MlpTrainContext* ctx,
     size_t i;
 
     if (ctx == NULL || step_in == NULL || step_out == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     if (step_in->input == NULL || step_in->target == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     infer_ctx = (MlpInferContext*)ctx->infer_ctx;
@@ -798,7 +799,7 @@ int nn_mlp_train_step_with_output_gradient(
     int rc;
 
     if (ctx == NULL || input == NULL || output_gradient == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     /* Graph mode still needs a fresh forward pass to populate activations. */
@@ -834,7 +835,7 @@ int nn_mlp_train_run_auto(MlpTrainContext* ctx, size_t epochs,
     int rc;
 
     if (ctx == NULL || input == NULL || target == NULL || sample_count == 0) {
-        return -1;
+        return ACTION_C_ERR_DIM_MISMATCH;
     }
 
     infer_ctx = (MlpInferContext*)ctx->infer_ctx;
@@ -1071,13 +1072,13 @@ int nn_mlp_train_step(void* context) {
     int rc;
 
     if (context == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     ctx = (MlpTrainContext*)context;
     infer_ctx = (MlpInferContext*)ctx->infer_ctx;
     if (infer_ctx == NULL || infer_ctx->config == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     dummy_input = (float*)calloc(infer_ctx->config->input_size, sizeof(float));
@@ -1085,7 +1086,7 @@ int nn_mlp_train_step(void* context) {
     if (dummy_input == NULL || dummy_target == NULL) {
         free(dummy_input);
         free(dummy_target);
-        return -1;
+        return ACTION_C_ERR_NO_MEMORY;
     }
 
     rc = nn_mlp_train_step_with_data(ctx, dummy_input, dummy_target);

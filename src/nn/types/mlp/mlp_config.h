@@ -12,6 +12,7 @@
 #include <stddef.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include "../../../utils/error.h"
 
 /**
  * @brief Optimizer type
@@ -98,10 +99,10 @@ static inline int mlp_config_init(
     size_t* stored_hidden_sizes;
 
     if (config == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
     if (hidden_layer_count > 0U && hidden_sizes == NULL) {
-        return -1;
+        return ACTION_C_ERR_DIM_MISMATCH;
     }
 
     config->input_size = input_size;

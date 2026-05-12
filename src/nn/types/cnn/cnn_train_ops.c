@@ -14,6 +14,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../../../utils/error.h"
 
 /**
  * @brief Recover d(activation)/d(linear) from the post-activation output value.
@@ -141,7 +142,7 @@ static int cnn_backpropagate(
     size_t step_index;
 
     if (context == NULL || context->infer_ctx == NULL || input == NULL || output_gradient == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     infer_ctx = context->infer_ctx;
@@ -151,7 +152,7 @@ static int cnn_backpropagate(
     output_grid_height = config->frame_height - config->kernel_size + 1U;
     output_positions = cnn_conv_position_count(config);
     if (output_positions == 0U) {
-        return -1;
+        return ACTION_C_ERR_DIM_MISMATCH;
     }
 
     cnn_zero_gradients(context);
@@ -320,7 +321,7 @@ int nn_cnn_train_step_with_output_gradient(
     int rc;
 
     if (context == NULL || context->infer_ctx == NULL || input == NULL || output_gradient == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     infer_ctx = context->infer_ctx;
@@ -358,7 +359,7 @@ int nn_cnn_train_step_with_data(CnnTrainContext* context, const float* input, co
     float loss = 0.0f;
 
     if (context == NULL || context->infer_ctx == NULL || input == NULL || target == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     infer_ctx = context->infer_ctx;
@@ -379,7 +380,7 @@ int nn_cnn_train_step_with_data(CnnTrainContext* context, const float* input, co
 
     output_gradient = (float*)calloc(output_size, sizeof(float));
     if (output_gradient == NULL) {
-        return -1;
+        return ACTION_C_ERR_NO_MEMORY;
     }
 
     /* The standalone supervised path uses simple MSE to stay transparent. */
@@ -436,7 +437,7 @@ int nn_cnn_train_step(void* ctx) {
     int rc;
 
     if (context == NULL || context->infer_ctx == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     dummy_input = (float*)calloc(context->infer_ctx->config.total_input_size, sizeof(float));
@@ -447,7 +448,7 @@ int nn_cnn_train_step(void* ctx) {
     if (dummy_input == NULL || dummy_target == NULL) {
         free(dummy_input);
         free(dummy_target);
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     rc = nn_cnn_train_step_with_data(context, dummy_input, dummy_target);

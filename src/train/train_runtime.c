@@ -11,6 +11,7 @@
 #include "train_runtime.h"
 
 #include "nn_train_registry.h"
+#include "../utils/error.h"
 
 /**
  * @brief Dispatch one training step to the selected backend.
@@ -23,17 +24,17 @@ int nn_train_runtime_step(const NNTrainRequest* request) {
 
     /* Validate the dispatch envelope before touching the global registry. */
     if (request == 0 || request->network_type == 0) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     /* Ensure all enabled training backends have been registered once. */
     if (nn_train_registry_bootstrap() != 0) {
-        return -2;
+        return ACTION_C_ERR_CONFIG_INVALID;
     }
 
     /* Resolve the semantic type name into a concrete training callback. */
     if (nn_train_registry_get(request->network_type, &step) != 0) {
-        return -3;
+        return ACTION_C_ERR_NOT_FOUND;
     }
 
     /* Forward the opaque context directly to the type-specific backend. */

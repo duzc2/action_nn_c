@@ -11,6 +11,7 @@
 #include "nn_infer_registry.h"
 
 #include <string.h>
+#include "../utils/error.h"
 
 /**
  * @brief One slot in the static inference registry table.
@@ -65,7 +66,7 @@ int nn_infer_registry_register(const NNInferRegistryEntry* entry) {
 
     /* Reject incomplete entries because generated code depends on infer_step. */
     if (entry == 0 || is_empty(entry->type_name) || entry->infer_step == 0) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     /* Duplicate names replace the hook pointer so bootstrap stays idempotent. */
@@ -87,7 +88,7 @@ int nn_infer_registry_register(const NNInferRegistryEntry* entry) {
     }
 
     /* A full table means the static registry budget was exceeded. */
-    return -2;
+    return ACTION_C_ERR_NO_MEMORY;
 }
 
 /**
@@ -116,7 +117,7 @@ int nn_infer_registry_get(const char* type_name, NNInferStepFn* out_infer_step) 
     const NNInferRegistryEntry* entry;
 
     if (out_infer_step == 0) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     entry = nn_infer_registry_find_entry(type_name);
@@ -162,7 +163,7 @@ int nn_infer_registry_bootstrap(void) {
     if (nn_infer_registry_clear() != 0) {
         g_bootstrap_failed = 1;
         g_bootstrapped = 1;
-        return -1;
+        return ACTION_C_ERR_CONFIG_INVALID;
     }
 
     /* Register every CMake-enabled builtin entry emitted by the build. */

@@ -8,6 +8,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include "../../../utils/error.h"
 
 /**
  * @brief Reconstruct a transformer training context from codegen metadata.
@@ -59,7 +60,7 @@ static int nn_type_transformer_train_step_with_data_codegen(
     TransformerTrainContext* train_ctx = (TransformerTrainContext*)context;
 
     if (train_ctx == 0 || input == 0 || target == 0) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     train_ctx->current_question = (const char*)input;

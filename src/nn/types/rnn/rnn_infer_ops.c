@@ -8,6 +8,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../../../utils/error.h"
 
 #define RNN_ABI_VERSION 1U
 
@@ -250,14 +251,14 @@ int nn_rnn_forward_pass(
     size_t hidden_index;
 
     if (context == NULL || input == NULL || output == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     config = &context->config;
     previous_hidden = context->hidden_state_a;
     current_hidden = context->hidden_state_b;
     if (previous_hidden == NULL || current_hidden == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
     (void)memset(previous_hidden, 0, config->hidden_size * sizeof(float));
 
@@ -319,7 +320,7 @@ int nn_rnn_infer_step(void* ctx) {
     RnnInferContext* context = (RnnInferContext*)ctx;
 
     if (context == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     return nn_rnn_forward_pass(
@@ -338,7 +339,7 @@ int nn_rnn_infer_auto_run(void* ctx, const float* input, float* output) {
     RnnInferContext* context = (RnnInferContext*)ctx;
 
     if (context == NULL || input == NULL || output == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     nn_rnn_infer_set_input(
@@ -347,7 +348,7 @@ int nn_rnn_infer_auto_run(void* ctx, const float* input, float* output) {
         context->config.sequence_length * context->config.input_feature_size
     );
     if (nn_rnn_infer_step(context) != 0) {
-        return -1;
+        return ACTION_C_ERR_INTERNAL;
     }
     nn_rnn_infer_get_output(context, output, context->config.output_size);
     return 0;

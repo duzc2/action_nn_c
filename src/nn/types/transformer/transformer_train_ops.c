@@ -8,6 +8,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../../../utils/error.h"
 
 typedef struct {
     size_t seq_length;
@@ -37,7 +38,7 @@ static int transformer_train_cache_init(
     size_t attention_count;
 
     if (cache == 0 || context == 0) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     (void)memset(cache, 0, sizeof(*cache));
@@ -74,7 +75,7 @@ static int transformer_train_cache_init(
         free(cache->logits);
         free(cache->probabilities);
         (void)memset(cache, 0, sizeof(*cache));
-        return -1;
+        return ACTION_C_ERR_INTERNAL;
     }
 
     return 0;
@@ -161,7 +162,7 @@ static int transformer_run_training_forward(
     float scale;
 
     if (context == 0 || question == 0 || cache == 0) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     cache->seq_length = nn_transformer_tokenize_text(
@@ -171,7 +172,7 @@ static int transformer_run_training_forward(
         context->vocab_size
     );
     if (cache->seq_length == 0U) {
-        return -1;
+        return ACTION_C_ERR_DIM_MISMATCH;
     }
 
     for (seq_index = 0U; seq_index < cache->seq_length; ++seq_index) {
@@ -313,13 +314,13 @@ int nn_transformer_train_step(void* context) {
 
     if (train_ctx == 0 || train_ctx->infer_ctx == 0 ||
         train_ctx->current_question == 0 || train_ctx->current_answer == 0) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     infer_ctx = train_ctx->infer_ctx;
     target_class = nn_transformer_find_or_add_class(infer_ctx, train_ctx->current_answer);
     if (target_class < 0) {
-        return -1;
+        return ACTION_C_ERR_NOT_FOUND;
     }
 
     rc = transformer_train_cache_init(&cache, infer_ctx);
@@ -344,7 +345,7 @@ int nn_transformer_train_step(void* context) {
         free(classifier_bias_gradient);
         free(dlogits);
         transformer_train_cache_destroy(&cache);
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     loss = -logf(cache.probabilities[(size_t)target_class] + 1.0e-6f);
@@ -418,22 +419,22 @@ int nn_transformer_train_step_with_output_gradient(
     size_t output_index;
 
     if (train_ctx == 0 || train_ctx->infer_ctx == 0 || input == 0 || output_gradient == 0) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     infer_ctx = train_ctx->infer_ctx;
     if (infer_ctx->graph_input_size == 0U || infer_ctx->graph_output_size == 0U) {
-        return -1;
+        return ACTION_C_ERR_DIM_MISMATCH;
     }
 
     output_cache = (float*)calloc(infer_ctx->graph_output_size, sizeof(float));
     if (output_cache == 0) {
-        return -1;
+        return ACTION_C_ERR_NO_MEMORY;
     }
 
     if (nn_transformer_graph_run(infer_ctx, input, output_cache) != 0) {
         free(output_cache);
-        return -1;
+        return ACTION_C_ERR_INTERNAL;
     }
 
     if (input_gradient != 0) {

@@ -7,6 +7,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include "../../../utils/error.h"
 
 /**
  * @brief Recover d(activation)/d(linear) from the post-activation output value.
@@ -108,7 +109,7 @@ static int rnn_backpropagate(
     size_t hidden_index;
 
     if (context == NULL || context->infer_ctx == NULL || input == NULL || output_gradient == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     infer_ctx = context->infer_ctx;
@@ -117,7 +118,7 @@ static int rnn_backpropagate(
     dh_next = context->hidden_grad_a;
     dh_current = context->hidden_grad_b;
     if (dh_next == NULL || dh_current == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
     (void)memset(dh_next, 0, config->hidden_size * sizeof(float));
 
@@ -281,7 +282,7 @@ int nn_rnn_train_step_with_output_gradient(
     int rc;
 
     if (context == NULL || context->infer_ctx == NULL || input == NULL || output_gradient == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     infer_ctx = context->infer_ctx;
@@ -317,14 +318,14 @@ int nn_rnn_train_step_with_data(RnnTrainContext* context, const float* input, co
     int rc;
 
     if (context == NULL || context->infer_ctx == NULL || input == NULL || target == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     infer_ctx = context->infer_ctx;
     config = &infer_ctx->config;
     output_gradient = context->output_gradient_buffer;
     if (output_gradient == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
     rc = nn_rnn_forward_pass(
         infer_ctx,
@@ -390,7 +391,7 @@ int nn_rnn_train_step(void* ctx) {
     int rc;
 
     if (context == NULL || context->infer_ctx == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     dummy_input = (float*)calloc(
@@ -401,7 +402,7 @@ int nn_rnn_train_step(void* ctx) {
     if (dummy_input == NULL || dummy_target == NULL) {
         free(dummy_input);
         free(dummy_target);
-        return -1;
+        return ACTION_C_ERR_NO_MEMORY;
     }
 
     rc = nn_rnn_train_step_with_data(context, dummy_input, dummy_target);

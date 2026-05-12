@@ -8,6 +8,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include "../../../utils/error.h"
 
 /**
  * @brief Reconstruct a transformer inference context from codegen metadata.
@@ -61,7 +62,7 @@ static int nn_type_transformer_infer_auto_run_codegen(void* context, const void*
     TransformerInferContext* infer_ctx = (TransformerInferContext*)context;
 
     if (infer_ctx == 0 || input == 0 || output == 0) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     infer_ctx->question = (const char*)input;

@@ -11,6 +11,7 @@
 #include "infer_runtime.h"
 
 #include "nn_infer_registry.h"
+#include "../utils/error.h"
 
 /**
  * @brief Dispatch one inference step to the registered backend.
@@ -27,17 +28,17 @@ int nn_infer_runtime_step(const NNInferRequest* request) {
 
     /* Reject incomplete dispatch requests before touching global state. */
     if (request == 0 || request->network_type == 0) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     /* Materialize the compile-time enabled inference hooks exactly once. */
     if (nn_infer_registry_bootstrap() != 0) {
-        return -2;
+        return ACTION_C_ERR_CONFIG_INVALID;
     }
 
     /* Resolve the semantic type name into the concrete step callback. */
     if (nn_infer_registry_get(request->network_type, &step) != 0) {
-        return -3;
+        return ACTION_C_ERR_NOT_FOUND;
     }
 
     /* Forward the opaque backend context without imposing extra policy. */

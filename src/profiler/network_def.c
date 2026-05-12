@@ -7,6 +7,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include "../utils/error.h"
 
 /**
  * @brief Duplicate a NUL-terminated string into profiler-owned memory.
@@ -180,7 +181,7 @@ int nn_network_def_add_subnet(NN_NetworkDef* network, NNSubnetDef* subnet) {
     size_t new_count;
 
     if (network == NULL || subnet == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     new_count = network->subnet_count + 1;
@@ -190,7 +191,7 @@ int nn_network_def_add_subnet(NN_NetworkDef* network, NNSubnetDef* subnet) {
     );
 
     if (new_subnets == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     network->subnets = new_subnets;
@@ -207,7 +208,7 @@ int nn_network_def_add_connection(NN_NetworkDef* network, NNConnectionDef* conne
     size_t new_count;
 
     if (network == NULL || connection == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     new_count = network->connection_count + 1;
@@ -217,7 +218,7 @@ int nn_network_def_add_connection(NN_NetworkDef* network, NNConnectionDef* conne
     );
 
     if (new_conns == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     network->connections = new_conns;
@@ -298,18 +299,18 @@ int nn_subnet_def_set_hidden_layers(
     size_t i;
 
     if (subnet == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     if (layer_count > 0U && layer_sizes == NULL) {
-        return -1;
+        return ACTION_C_ERR_DIM_MISMATCH;
     }
 
     new_hidden_layer_sizes = NULL;
     if (layer_count > 0U) {
         new_hidden_layer_sizes = (size_t*)malloc(layer_count * sizeof(size_t));
         if (new_hidden_layer_sizes == NULL) {
-            return -1;
+            return ACTION_C_ERR_NO_MEMORY;
         }
 
         for (i = 0; i < layer_count; i++) {
@@ -331,7 +332,7 @@ int nn_subnet_def_add_subnet(NNSubnetDef* parent, NNSubnetDef* child) {
     size_t new_count;
 
     if (parent == NULL || child == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     new_count = parent->subnet_count + 1U;
@@ -341,7 +342,7 @@ int nn_subnet_def_add_subnet(NNSubnetDef* parent, NNSubnetDef* child) {
     );
 
     if (new_subnets == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     parent->subnets = new_subnets;
@@ -478,7 +479,7 @@ int nn_subnet_def_set_infer_type_config(
     if (subnet == NULL || config_data == NULL || config_size == 0U ||
         header_path == NULL || header_path[0] == '\0' ||
         type_name == NULL || type_name[0] == '\0') {
-        return -1;
+        return ACTION_C_ERR_DIM_MISMATCH;
     }
 
     config_copy = nn_memdup_local(config_data, config_size);
@@ -488,7 +489,7 @@ int nn_subnet_def_set_infer_type_config(
         free(config_copy);
         free(header_copy);
         free(type_copy);
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     nn_subnet_def_clear_infer_type_config(subnet);
@@ -516,7 +517,7 @@ int nn_subnet_def_set_train_type_config(
     if (subnet == NULL || config_data == NULL || config_size == 0U ||
         header_path == NULL || header_path[0] == '\0' ||
         type_name == NULL || type_name[0] == '\0') {
-        return -1;
+        return ACTION_C_ERR_DIM_MISMATCH;
     }
 
     config_copy = nn_memdup_local(config_data, config_size);
@@ -526,7 +527,7 @@ int nn_subnet_def_set_train_type_config(
         free(config_copy);
         free(header_copy);
         free(type_copy);
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     nn_subnet_def_clear_train_type_config(subnet);

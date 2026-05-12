@@ -11,6 +11,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include "../../../utils/error.h"
 
 /**
  * @brief Recover d(activation)/d(linear) from the post-activation output value.
@@ -162,15 +163,15 @@ static int gnn_get_active_neighbor(
     int neighbor;
 
     if (slot_index >= config->slot_count || source_node >= config->node_count) {
-        return -1;
+        return ACTION_C_ERR_INTERNAL;
     }
 
     neighbor = gnn_neighbor_at(config, source_node, slot_index);
     if (neighbor < 0) {
-        return -1;
+        return ACTION_C_ERR_INTERNAL;
     }
     if (!gnn_node_is_active(config, input, (size_t)neighbor)) {
-        return -1;
+        return ACTION_C_ERR_INTERNAL;
     }
     return neighbor;
 }
@@ -290,7 +291,7 @@ static int gnn_backpropagate(
     size_t pass_index;
 
     if (context == NULL || context->infer_ctx == NULL || input == NULL || output_gradient == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     infer_ctx = context->infer_ctx;
@@ -307,7 +308,7 @@ static int gnn_backpropagate(
         free(previous_stage_grad);
         free(aggregated);
         free(aggregated_grad);
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     if (input_gradient != NULL) {
@@ -328,7 +329,7 @@ static int gnn_backpropagate(
             free(pooled_grad);
             free(aggregated);
             free(aggregated_grad);
-            return -1;
+            return ACTION_C_ERR_INTERNAL;
         }
         active_count = gnn_collect_graph_pool(config, input, final_stage, pooled_hidden);
 
@@ -606,7 +607,7 @@ int nn_gnn_train_step_with_output_gradient(
     int rc;
 
     if (context == NULL || context->infer_ctx == NULL || input == NULL || output_gradient == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     rc = nn_gnn_forward_pass(
@@ -640,14 +641,14 @@ int nn_gnn_train_step_with_data(GnnTrainContext* context, const float* input, co
     int rc;
 
     if (context == NULL || context->infer_ctx == NULL || input == NULL || target == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     infer_ctx = context->infer_ctx;
     config = infer_ctx->config;
     output_gradient = (float*)calloc(config->output_size, sizeof(float));
     if (output_gradient == NULL) {
-        return -1;
+        return ACTION_C_ERR_NO_MEMORY;
     }
     rc = nn_gnn_forward_pass(
         infer_ctx,
@@ -716,7 +717,7 @@ int nn_gnn_train_step(void* ctx) {
     int rc;
 
     if (context == NULL || context->infer_ctx == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     dummy_input = (float*)calloc(gnn_total_input_size(context->infer_ctx->config), sizeof(float));
@@ -724,7 +725,7 @@ int nn_gnn_train_step(void* ctx) {
     if (dummy_input == NULL || dummy_target == NULL) {
         free(dummy_input);
         free(dummy_target);
-        return -1;
+        return ACTION_C_ERR_NO_MEMORY;
     }
 
     rc = nn_gnn_train_step_with_data(context, dummy_input, dummy_target);

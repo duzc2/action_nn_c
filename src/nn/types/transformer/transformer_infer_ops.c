@@ -8,6 +8,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../../../utils/error.h"
 
 #define TRANSFORMER_ABI_VERSION 3U
 
@@ -138,7 +139,7 @@ static int transformer_forward_cache_init(
     size_t attention_count;
 
     if (cache == 0 || context == 0) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     (void)memset(cache, 0, sizeof(*cache));
@@ -175,7 +176,7 @@ static int transformer_forward_cache_init(
         free(cache->logits);
         free(cache->probabilities);
         (void)memset(cache, 0, sizeof(*cache));
-        return -1;
+        return ACTION_C_ERR_INTERNAL;
     }
 
     return 0;
@@ -233,7 +234,7 @@ int nn_transformer_find_class(
     size_t class_index;
 
     if (context == 0 || answer == 0) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     for (class_index = 0U; class_index < context->class_count; ++class_index) {
@@ -242,7 +243,7 @@ int nn_transformer_find_class(
         }
     }
 
-    return -1;
+    return ACTION_C_ERR_NOT_FOUND;
 }
 
 int nn_transformer_find_or_add_class(
@@ -252,7 +253,7 @@ int nn_transformer_find_or_add_class(
     int existing_index;
 
     if (context == 0 || answer == 0 || answer[0] == '\0') {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     existing_index = nn_transformer_find_class(context, answer);
@@ -260,7 +261,7 @@ int nn_transformer_find_or_add_class(
         return existing_index;
     }
     if (context->class_count >= context->max_response_classes) {
-        return -1;
+        return ACTION_C_ERR_NOT_FOUND;
     }
 
     transformer_copy_text(
@@ -284,12 +285,12 @@ int nn_transformer_init_parameters(
     size_t column;
 
     if (context == 0 || config == 0) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
     if (config->vocab_size < 2U || config->model_dim == 0U || config->max_seq_length == 0U ||
         config->max_response_classes == 0U || config->max_text_length == 0U ||
         graph_input_size == 0U || graph_output_size == 0U) {
-        return -1;
+        return ACTION_C_ERR_DIM_MISMATCH;
     }
 
     transformer_release_parameters(context);
@@ -331,7 +332,7 @@ int nn_transformer_init_parameters(
         context->class_texts == 0 || context->fallback_answer == 0 ||
         context->graph_projection_weight == 0 || context->graph_projection_bias == 0) {
         transformer_release_parameters(context);
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     transformer_copy_text(
@@ -436,7 +437,7 @@ static int transformer_run_forward(
     float scale;
 
     if (context == 0 || question == 0 || cache == 0) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     cache->seq_length = nn_transformer_tokenize_text(
@@ -446,7 +447,7 @@ static int transformer_run_forward(
         context->vocab_size
     );
     if (cache->seq_length == 0U) {
-        return -1;
+        return ACTION_C_ERR_DIM_MISMATCH;
     }
 
     for (seq_index = 0U; seq_index < cache->seq_length; ++seq_index) {
@@ -577,20 +578,20 @@ int nn_transformer_predict_class(
     size_t best_index = 0U;
 
     if (context == 0 || question == 0) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
     if (context->class_count == 0U) {
         if (out_loss_hint != 0) {
             *out_loss_hint = 1.0f;
         }
-        return -1;
+        return ACTION_C_ERR_DIM_MISMATCH;
     }
     if (transformer_forward_cache_init(&cache, context) != 0) {
-        return -1;
+        return ACTION_C_ERR_INTERNAL;
     }
     if (transformer_run_forward(context, question, &cache) != 0) {
         transformer_forward_cache_destroy(&cache);
-        return -1;
+        return ACTION_C_ERR_INTERNAL;
     }
 
     for (class_index = 1U; class_index < context->class_count; ++class_index) {
@@ -621,7 +622,7 @@ int nn_transformer_graph_run(void* context, const void* input, void* output) {
     size_t output_index;
 
     if (infer_ctx == 0 || input_values == 0 || output_values == 0) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     for (output_index = 0U; output_index < infer_ctx->graph_output_size; ++output_index) {
@@ -648,7 +649,7 @@ int nn_transformer_infer_step(void* context) {
 
     if (infer_ctx == 0 || infer_ctx->question == 0 ||
         infer_ctx->answer == 0 || infer_ctx->answer_capacity == 0U) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     class_index = nn_transformer_predict_class(infer_ctx, infer_ctx->question, 0, 0U, 0);

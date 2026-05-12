@@ -7,6 +7,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include "../utils/error.h"
 
 /**
  * @section prof_flatten_design Flattened graph helper responsibilities
@@ -180,7 +181,7 @@ int prof_flatten_find_subnet_index(
     size_t subnet_index;
 
     if (list == NULL || subnet_id == NULL) {
-        return -1;
+        return ACTION_C_ERR_NULL_POINTER;
     }
 
     for (subnet_index = 0U; subnet_index < list->count; ++subnet_index) {
@@ -192,7 +193,7 @@ int prof_flatten_find_subnet_index(
         }
     }
 
-    return -1;
+    return ACTION_C_ERR_NOT_FOUND;
 }
 
 /**
