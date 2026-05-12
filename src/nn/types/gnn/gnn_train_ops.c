@@ -289,6 +289,7 @@ static int gnn_backpropagate(
     size_t output_index;
     size_t hidden_index;
     size_t pass_index;
+    size_t _arena_mark;
 
     if (context == NULL || context->infer_ctx == NULL || input == NULL || output_gradient == NULL) {
         return ACTION_C_ERR_NULL_POINTER;
@@ -298,16 +299,16 @@ static int gnn_backpropagate(
     config = infer_ctx->config;
     stage_stride = gnn_stage_stride(config);
     gnn_zero_gradients(context);
-    stage_grad = (float*)calloc(stage_stride, sizeof(float));
-    previous_stage_grad = (float*)calloc(stage_stride, sizeof(float));
-    aggregated = (float*)calloc(config->hidden_size, sizeof(float));
-    aggregated_grad = (float*)calloc(config->hidden_size, sizeof(float));
+
+    /* Snapshot arena before allocating the six scratch buffers for backprop. */
+    _arena_mark = arena_snapshot(context->arena);
+    stage_grad = ARENA_CALLOC(context->arena, float, stage_stride);
+    previous_stage_grad = ARENA_CALLOC(context->arena, float, stage_stride);
+    aggregated = ARENA_CALLOC(context->arena, float, config->hidden_size);
+    aggregated_grad = ARENA_CALLOC(context->arena, float, config->hidden_size);
     if (stage_grad == NULL || previous_stage_grad == NULL ||
         aggregated == NULL || aggregated_grad == NULL) {
-        free(stage_grad);
-        free(previous_stage_grad);
-        free(aggregated);
-        free(aggregated_grad);
+        arena_restore(context->arena, _arena_mark);
         return ACTION_C_ERR_NULL_POINTER;
     }
 
@@ -320,15 +321,10 @@ static int gnn_backpropagate(
     if (config->readout_type == GNN_READOUT_GRAPH_POOL) {
         size_t active_count;
 
-        pooled_hidden = (float*)calloc(config->hidden_size, sizeof(float));
-        pooled_grad = (float*)calloc(config->hidden_size, sizeof(float));
+        pooled_hidden = ARENA_CALLOC(context->arena, float, config->hidden_size);
+        pooled_grad = ARENA_CALLOC(context->arena, float, config->hidden_size);
         if (pooled_hidden == NULL || pooled_grad == NULL) {
-            free(stage_grad);
-            free(previous_stage_grad);
-            free(pooled_hidden);
-            free(pooled_grad);
-            free(aggregated);
-            free(aggregated_grad);
+            arena_restore(context->arena, _arena_mark);
             return ACTION_C_ERR_INTERNAL;
         }
         active_count = gnn_collect_graph_pool(config, input, final_stage, pooled_hidden);
@@ -512,12 +508,7 @@ static int gnn_backpropagate(
     }
 
     gnn_apply_parameter_update(context);
-    free(stage_grad);
-    free(previous_stage_grad);
-    free(pooled_hidden);
-    free(pooled_grad);
-    free(aggregated);
-    free(aggregated_grad);
+    arena_restore(context->arena, _arena_mark);
     return 0;
 }
 
@@ -571,6 +562,20 @@ GnnTrainContext* nn_gnn_train_create(void* infer_ctx_ptr, const GnnTrainConfig* 
         return NULL;
     }
 
+    /* Create scratch arena sized to cover the 6 backpropagate temporary buffers
+     * (2 * stage_stride + 4 * hidden_size) plus dummy inputs, with 4x safety. */
+    {
+        size_t stage_stride = gnn_stage_stride(infer_config);
+        size_t max_scratch = (stage_stride * 2 + infer_config->hidden_size * 4
+                              + gnn_total_input_size(infer_config)
+                              + infer_config->output_size) * sizeof(float) * 4;
+        context->arena = arena_create(max_scratch);
+        if (context->arena == NULL) {
+            nn_gnn_train_destroy(context);
+            return NULL;
+        }
+    }
+
     return context;
 }
 
@@ -582,6 +587,7 @@ void nn_gnn_train_destroy(GnnTrainContext* context) {
         return;
     }
 
+    arena_destroy(context->arena);
     free(context->hidden_cache);
     free(context->input_weight_grad);
     free(context->input_bias_grad);
@@ -638,6 +644,7 @@ int nn_gnn_train_step_with_data(GnnTrainContext* context, const float* input, co
     float* output_gradient;
     float loss = 0.0f;
     size_t output_index;
+    size_t _arena_mark;
     int rc;
 
     if (context == NULL || context->infer_ctx == NULL || input == NULL || target == NULL) {
@@ -646,8 +653,11 @@ int nn_gnn_train_step_with_data(GnnTrainContext* context, const float* input, co
 
     infer_ctx = context->infer_ctx;
     config = infer_ctx->config;
-    output_gradient = (float*)calloc(config->output_size, sizeof(float));
+
+    _arena_mark = arena_snapshot(context->arena);
+    output_gradient = ARENA_CALLOC(context->arena, float, config->output_size);
     if (output_gradient == NULL) {
+        arena_restore(context->arena, _arena_mark);
         return ACTION_C_ERR_NO_MEMORY;
     }
     rc = nn_gnn_forward_pass(
@@ -657,7 +667,7 @@ int nn_gnn_train_step_with_data(GnnTrainContext* context, const float* input, co
         context->hidden_cache
     );
     if (rc != 0) {
-        free(output_gradient);
+        arena_restore(context->arena, _arena_mark);
         return rc;
     }
 
@@ -671,11 +681,11 @@ int nn_gnn_train_step_with_data(GnnTrainContext* context, const float* input, co
 
     rc = gnn_backpropagate(context, input, output_gradient, NULL);
     if (rc != 0) {
-        free(output_gradient);
+        arena_restore(context->arena, _arena_mark);
         return rc;
     }
 
-    free(output_gradient);
+    arena_restore(context->arena, _arena_mark);
     context->total_steps += 1U;
     context->last_loss = loss / (float)config->output_size;
     context->cumulative_loss += context->last_loss;
@@ -714,23 +724,25 @@ int nn_gnn_train_step(void* ctx) {
     GnnTrainContext* context = (GnnTrainContext*)ctx;
     float* dummy_input;
     float* dummy_target;
+    size_t _arena_mark;
     int rc;
 
     if (context == NULL || context->infer_ctx == NULL) {
         return ACTION_C_ERR_NULL_POINTER;
     }
 
-    dummy_input = (float*)calloc(gnn_total_input_size(context->infer_ctx->config), sizeof(float));
-    dummy_target = (float*)calloc(context->infer_ctx->config->output_size, sizeof(float));
+    _arena_mark = arena_snapshot(context->arena);
+    dummy_input = ARENA_CALLOC(context->arena, float,
+                               gnn_total_input_size(context->infer_ctx->config));
+    dummy_target = ARENA_CALLOC(context->arena, float,
+                                context->infer_ctx->config->output_size);
     if (dummy_input == NULL || dummy_target == NULL) {
-        free(dummy_input);
-        free(dummy_target);
+        arena_restore(context->arena, _arena_mark);
         return ACTION_C_ERR_NO_MEMORY;
     }
 
     rc = nn_gnn_train_step_with_data(context, dummy_input, dummy_target);
-    free(dummy_input);
-    free(dummy_target);
+    arena_restore(context->arena, _arena_mark);
     return rc;
 }
 

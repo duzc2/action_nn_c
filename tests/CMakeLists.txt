@@ -32,3 +32,7 @@ action_c_add_test(test_arena utils/test_arena.c
 action_c_add_test(test_mlp_arena_integration nn/test_mlp_arena_integration.c
     ${CMAKE_SOURCE_DIR}/src/utils/arena.c
     ${CMAKE_SOURCE_DIR}/src/utils/log.c)
+
+action_c_add_test(test_gnn_arena_integration nn/test_gnn_arena_integration.c
+    ${CMAKE_SOURCE_DIR}/src/utils/arena.c
+    ${CMAKE_SOURCE_DIR}/src/utils/log.c)

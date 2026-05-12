@@ -7,6 +7,7 @@
 #define GNN_TRAIN_OPS_H
 
 #include "gnn_infer_ops.h"
+#include "../../../utils/arena.h"
 
 #include <stddef.h>
 
@@ -31,6 +32,7 @@ typedef struct {
     float cumulative_loss;          /**< Running loss accumulator for averages. */
     float average_loss;             /**< Average loss seen so far. */
     float last_loss;                /**< Loss from the most recent update. */
+    Arena* arena;                   /**< Scratch arena for hot-path temporary buffers in backprop. */
 } GnnTrainContext;
 
 GnnTrainContext* nn_gnn_train_create(void* infer_ctx, const GnnTrainConfig* config);

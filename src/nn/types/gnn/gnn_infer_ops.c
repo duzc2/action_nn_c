@@ -461,6 +461,18 @@ GnnInferContext* nn_gnn_infer_create_with_config_blob(
         context->output_bias[value_index] = gnn_random_weight(&context->rng_state, 0.05f);
     }
 
+    /* Create scratch arena sized to cover forward_pass temporary buffers
+     * (owned_cache + aggregated + pooled_hidden with 2x safety margin). */
+    {
+        size_t max_scratch = ((config->message_passes + 1U) * config->node_count * config->hidden_size
+                              + 2U * config->hidden_size) * sizeof(float) * 2;
+        context->arena = arena_create(max_scratch);
+        if (context->arena == NULL) {
+            nn_gnn_infer_destroy(context);
+            return NULL;
+        }
+    }
+
     return context;
 }
 
@@ -487,6 +499,8 @@ void nn_gnn_infer_destroy(void* ctx) {
     if (context == NULL) {
         return;
     }
+
+    arena_destroy(context->arena);
 
     free(context->input_weight);
     free(context->input_bias);
@@ -559,6 +573,7 @@ int nn_gnn_forward_pass(
     size_t pass_index;
     size_t output_index;
     const float* final_stage;
+    size_t _arena_mark;
 
     if (context == NULL || input == NULL || output == NULL) {
         return ACTION_C_ERR_NULL_POINTER;
@@ -569,17 +584,19 @@ int nn_gnn_forward_pass(
         return ACTION_C_ERR_INTERNAL;
     }
 
+    /* Snapshot the arena so all scratch buffers are reclaimed on return. */
+    _arena_mark = arena_snapshot(context->arena);
     stage_stride = gnn_stage_stride(config);
     if (cache == NULL) {
-        owned_cache = (float*)calloc((config->message_passes + 1U) * stage_stride, sizeof(float));
+        owned_cache = ARENA_CALLOC(context->arena, float,
+                                   (config->message_passes + 1U) * stage_stride);
         cache = owned_cache;
     }
     if (cache == NULL) {
         return ACTION_C_ERR_NO_MEMORY;
     }
-    aggregated = (float*)calloc(config->hidden_size, sizeof(float));
+    aggregated = ARENA_CALLOC(context->arena, float, config->hidden_size);
     if (aggregated == NULL) {
-        free(owned_cache);
         return ACTION_C_ERR_NO_MEMORY;
     }
 
@@ -663,10 +680,9 @@ int nn_gnn_forward_pass(
     final_stage = cache + (config->message_passes * stage_stride);
 
     if (config->readout_type == GNN_READOUT_GRAPH_POOL) {
-        pooled_hidden = (float*)calloc(config->hidden_size, sizeof(float));
+        pooled_hidden = ARENA_CALLOC(context->arena, float, config->hidden_size);
         if (pooled_hidden == NULL) {
-            free(aggregated);
-            free(owned_cache);
+            arena_restore(context->arena, _arena_mark);
             return ACTION_C_ERR_NO_MEMORY;
         }
 
@@ -728,9 +744,7 @@ int nn_gnn_forward_pass(
         }
     }
 
-    free(pooled_hidden);
-    free(aggregated);
-    free(owned_cache);
+    arena_restore(context->arena, _arena_mark);
     return 0;
 }
 

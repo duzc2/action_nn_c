@@ -7,6 +7,7 @@
 #define GNN_INFER_OPS_H
 
 #include "gnn_config.h"
+#include "../../../utils/arena.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -32,6 +33,7 @@ typedef struct {
     float* output_bias;             /**< [output] bias for the exported graph readout vector. */
     float* input_buffer;            /**< Owned copy of the latest flattened graph input. */
     float* output_buffer;           /**< Owned copy of the latest exported graph readout vector. */
+    Arena* arena;                   /**< Scratch arena for hot-path temporary buffers in forward pass. */
 } GnnInferContext;
 
 GnnInferContext* nn_gnn_infer_create(void);
