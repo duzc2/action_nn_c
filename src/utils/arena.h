@@ -3,7 +3,7 @@
 
 #include <stddef.h>
 
-typedef struct {
+typedef struct Arena {
     unsigned char* memory;
     size_t         capacity;
     size_t         used;

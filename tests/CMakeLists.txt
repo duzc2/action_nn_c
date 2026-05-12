@@ -49,3 +49,8 @@ action_c_add_test(test_backend_struct_size nn/test_backend_struct_size.c)
 action_c_add_test(test_weight_header nn/test_weight_header.c
     ${CMAKE_SOURCE_DIR}/src/nn/nn_weight_header.c
     ${CMAKE_SOURCE_DIR}/src/utils/log.c)
+
+action_c_add_test(test_infer_registry nn/test_infer_registry.c
+    ${CMAKE_SOURCE_DIR}/src/nn/nn_infer_registry.c
+    ${CMAKE_SOURCE_DIR}/src/utils/log.c)
+target_compile_definitions(test_infer_registry PRIVATE NN_REGISTRY_BUILD_TEST)

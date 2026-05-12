@@ -14,9 +14,9 @@
 #include <stdint.h>
 #include <stdio.h>
 
-/* If Track A is incomplete, forward-declare Arena. */
+/* Forward-declare Arena (struct tag added in utils/arena.h). */
 #ifndef ACTION_C_ARENA_H
-typedef struct Arena Arena;
+struct Arena;
 #endif
 
 /* ─── Inference backend interface ─── */
@@ -24,7 +24,7 @@ typedef struct {
     const char* type_name;
 
     void*    (*create)         (const void* config_blob, size_t config_size,
-                                Arena* arena);
+                                struct Arena* arena);
     void     (*destroy)        (void* context);
     int      (*step)           (void* context);
     int      (*get_output)     (const void* context, float* out, size_t out_size);
@@ -42,7 +42,7 @@ typedef struct {
 
     void* (*create)          (const void* config_blob, size_t config_size,
                               const void* infer_config_blob, size_t infer_config_size,
-                              Arena* arena);
+                              struct Arena* arena);
     void  (*destroy)         (void* context);
     int   (*step)            (void* context, const float* input, const float* target);
     int   (*step_with_data)  (void* context, const float* input,
