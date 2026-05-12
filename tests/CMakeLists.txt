@@ -23,3 +23,4 @@ action_c_add_test(test_harness_smoke smoke_test.c)
 # utils tests
 action_c_add_test(test_error utils/test_error.c)
 action_c_add_test(test_log utils/test_log.c ${CMAKE_SOURCE_DIR}/src/utils/log.c)
+action_c_add_test(test_safe_math utils/test_safe_math.c)
