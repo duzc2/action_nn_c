@@ -45,3 +45,7 @@ action_c_add_test(test_transformer_arena nn/test_transformer_arena.c
 
 # Track B: VTable and deduplication tests
 action_c_add_test(test_backend_struct_size nn/test_backend_struct_size.c)
+
+action_c_add_test(test_weight_header nn/test_weight_header.c
+    ${CMAKE_SOURCE_DIR}/src/nn/nn_weight_header.c
+    ${CMAKE_SOURCE_DIR}/src/utils/log.c)
