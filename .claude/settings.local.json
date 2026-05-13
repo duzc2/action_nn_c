@@ -67,7 +67,8 @@
       "Bash(tests/Debug/test_mnist_dataset.exe:*)",
       "Bash(tests/Debug/test_safe_alloc_size.exe:*)",
       "Bash(tests/Debug/test_mlp_vtable.exe:*)",
-      "Bash(tests/Debug/test_all_vtables.exe)"
+      "Bash(tests/Debug/test_all_vtables.exe)",
+      "Bash(find:*)"
     ]
   }
 }

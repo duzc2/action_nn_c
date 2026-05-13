@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 project(action_c_wasm C)
 
+include("${CMAKE_SOURCE_DIR}/cmake/version.cmake")
+
 # ============================================================================
 # WebAssembly Build Configuration for action_nn_c
 # ============================================================================
@@ -162,10 +164,10 @@ add_library(wasm_exports OBJECT
 )
 
 target_compile_definitions(wasm_exports PRIVATE
-    ACTION_C_WASM_VERSION="1.0.0"
-    ACTION_C_WASM_VERSION_MAJOR=1
-    ACTION_C_WASM_VERSION_MINOR=0
-    ACTION_C_WASM_VERSION_PATCH=0
+    ACTION_C_WASM_VERSION="${ACTION_C_VERSION}"
+    ACTION_C_WASM_VERSION_MAJOR=${ACTION_C_VERSION_MAJOR}
+    ACTION_C_WASM_VERSION_MINOR=${ACTION_C_VERSION_MINOR}
+    ACTION_C_WASM_VERSION_PATCH=${ACTION_C_VERSION_PATCH}
 )
 
 if(ACTION_C_WASM_ENABLE_TRAINING)

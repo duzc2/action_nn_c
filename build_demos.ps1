@@ -1,64 +1,40 @@
-# Build script for all demos
-# Usage: .\build_demos.ps1
-
 $ErrorActionPreference = "Stop"
 
-$RootDir = (Resolve-Path -Path $PSScriptRoot).Path
-$BuildDir = Join-Path $RootDir "build"
-$DemoRoot = Join-Path $RootDir "demo"
-$Demos = @("move", "sevenseg", "target", "transformer")
+$demos = @("move", "sevenseg", "target", "transformer", "mnist", "mnist_cnn", "nested_nav", "road_graph_nav", "cnn_rnn_react", "hybrid_route")
+$failed = @()
 
-Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "  Building All Demos" -ForegroundColor Cyan
-Write-Host "========================================" -ForegroundColor Cyan
+Write-Host "=== Building all demos (generate phase) ===" -ForegroundColor Cyan
 
-# Build each demo
-foreach ($demo in $Demos) {
-    Write-Host "`n--- Building $demo ---" -ForegroundColor Yellow
+foreach ($demo in $demos) {
+    Write-Host "`n[$demo]" -ForegroundColor Cyan
 
-    # Create build directories
-    $demoBuildDir = "$BuildDir\demo\$demo"
-    @("generate", "train", "infer") | ForEach-Object {
-        $dir = "$demoBuildDir\$_"
-        if (-not (Test-Path $dir)) {
-            New-Item -ItemType Directory -Path $dir -Force | Out-Null
-        }
-    }
-
-    # Step 1: Configure and build generator
-    Write-Host "  [1/3] Configuring generator..." -ForegroundColor Gray
-    $genDir = "$demoBuildDir\generate"
-    Push-Location $genDir
-    Remove-Item CMakeCache.txt, CMakeFiles -Recurse -Force -ErrorAction SilentlyContinue
-    cmake -S "$DemoRoot\$demo\generate" -B . 2>&1 | Out-Null
+    Write-Host "  Configuring..." -NoNewline
+    cmake -B "build/demo/$demo/generate" -S "demo/$demo/generate" -DCMAKE_BUILD_TYPE=Debug
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "    Generator configure failed!" -ForegroundColor Red
-        Pop-Location
+        Write-Host " FAIL (configure)" -ForegroundColor Red
+        $failed += "$demo (configure)"
         continue
     }
-    Pop-Location
+    Write-Host " OK" -ForegroundColor Green
 
-    Write-Host "  [1/3] Building generator..." -ForegroundColor Gray
-    cmake --build $genDir --config Debug 2>&1 | Out-Host
+    Write-Host "  Building..." -NoNewline
+    cmake --build "build/demo/$demo/generate" --config Debug
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "    Generator build failed!" -ForegroundColor Red
+        Write-Host " FAIL (build)" -ForegroundColor Red
+        $failed += "$demo (build)"
         continue
     }
-
-    Write-Host "  [1/3] Running generator..." -ForegroundColor Gray
-    & "$genDir\Debug\${demo}_generate.exe" 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "    Generator run failed!" -ForegroundColor Red
-        continue
-    }
-
-    Write-Host "  $demo generator: OK" -ForegroundColor Green
+    Write-Host " OK" -ForegroundColor Green
 }
 
-Write-Host "`n========================================" -ForegroundColor Cyan
-Write-Host "  Build Complete!" -ForegroundColor Cyan
-Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "`nGenerated files are in:" -ForegroundColor White
-foreach ($demo in $Demos) {
-    Write-Host "  $BuildDir\demo\$demo\data\" -ForegroundColor Gray
+Write-Host "`n=== Build Summary ===" -ForegroundColor Cyan
+if ($failed.Count -eq 0) {
+    Write-Host "All demos built successfully!" -ForegroundColor Green
+    exit 0
+} else {
+    Write-Host "Failed demos:" -ForegroundColor Red
+    foreach ($f in $failed) {
+        Write-Host "  - $f" -ForegroundColor Red
+    }
+    exit 1
 }

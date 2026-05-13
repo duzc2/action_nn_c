@@ -30,6 +30,15 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# Verify EMSDK environment variable is set
+if [[ -z "${EMSDK}" ]]; then
+    echo "Error: EMSDK environment variable is not set."
+    echo "Please set EMSDK to your Emscripten SDK path before running this script."
+    echo "Example: export EMSDK=/path/to/emsdk"
+    echo "Then: source \$EMSDK/emsdk_env.sh"
+    exit 1
+fi
+
 # Default options
 ENABLE_CNN=OFF
 ENABLE_RNN=OFF
@@ -114,7 +123,7 @@ fi
 echo "Using Emscripten: $(emcc --version | head -1)"
 
 # Build directory
-BUILD_DIR="$SCRIPT_DIR/build"
+BUILD_DIR="$SCRIPT_DIR/build/wasm"
 
 # Clean if requested
 if [[ "$CLEAN_BUILD" == "TRUE" ]]; then
@@ -127,7 +136,7 @@ mkdir -p "$BUILD_DIR"
 
 # Build configuration
 CMAKE_ARGS=(
-    "-DCMAKE_TOOLCHAIN_FILE=\$EMSDK/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake"
+    "-DCMAKE_TOOLCHAIN_FILE=${EMSDK}/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake"
     "-DCMAKE_BUILD_TYPE=$BUILD_TYPE"
     "-DACTION_C_WASM_ENABLE_MLP=ON"
     "-DACTION_C_WASM_ENABLE_TRANSFORMER=ON"

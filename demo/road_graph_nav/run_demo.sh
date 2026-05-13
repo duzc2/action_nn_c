@@ -1,6 +1,11 @@
 ﻿#!/usr/bin/env sh
 set -eu
 
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) EXE=".exe" ;;
+    *)                    EXE="" ;;
+esac
+
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ACTION_C_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
 BUILD_ROOT="$ACTION_C_ROOT/build/demo/road_graph_nav"
@@ -12,18 +17,18 @@ cmake -S "$SCRIPT_DIR/generate" -B "$BUILD_ROOT/generate" $COMMON_ARGS
 cmake --build "$BUILD_ROOT/generate"
 
 echo "[road_graph_nav] step 2/6 run generate"
-"$BUILD_ROOT/generate/road_graph_nav_generate"
+"$BUILD_ROOT/generate/road_graph_nav_generate${EXE}"
 
 echo "[road_graph_nav] step 3/6 configure + build train"
 cmake -S "$SCRIPT_DIR/train" -B "$BUILD_ROOT/train" $COMMON_ARGS
 cmake --build "$BUILD_ROOT/train"
 
 echo "[road_graph_nav] step 4/6 run train"
-"$BUILD_ROOT/train/road_graph_nav_train"
+"$BUILD_ROOT/train/road_graph_nav_train${EXE}"
 
 echo "[road_graph_nav] step 5/6 configure + build infer"
 cmake -S "$SCRIPT_DIR/infer" -B "$BUILD_ROOT/infer" $COMMON_ARGS
 cmake --build "$BUILD_ROOT/infer"
 
 echo "[road_graph_nav] step 6/6 run infer"
-"$BUILD_ROOT/infer/road_graph_nav_infer"
+"$BUILD_ROOT/infer/road_graph_nav_infer${EXE}"

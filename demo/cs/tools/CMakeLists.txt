@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
+set(CMAKE_C_EXTENSIONS OFF)
 project(action_c_cs_tools C)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
-set(CMAKE_C_EXTENSIONS OFF)
 
 include("${CMAKE_CURRENT_LIST_DIR}/../../demo_common.cmake")
 
@@ -34,25 +34,28 @@ add_executable(cs_state_trace
 target_link_libraries(cs_state_trace PRIVATE cs_v1_tool_common)
 action_c_apply_strict_warnings(cs_state_trace)
 
-set(CS_RUNTIME_PROBE32_DLL "${CMAKE_CURRENT_BINARY_DIR}/cs_runtime_probe32.dll")
-set(CS_RUNTIME_PROBE32_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_cs_runtime_probe32.bat")
-string(CONCAT CS_RUNTIME_PROBE32_SCRIPT_CONTENT
-    "@echo off\r\n"
-    "call \"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Auxiliary\\Build\\vcvars32.bat\"\r\n"
-    "if errorlevel 1 exit /b 1\r\n"
-    "clang-cl /nologo /TC /LD --target=i686-pc-windows-msvc /W4 /WX /I \"${CMAKE_CURRENT_LIST_DIR}\" /Fe:\"${CS_RUNTIME_PROBE32_DLL}\" \"${CMAKE_CURRENT_LIST_DIR}/cs_runtime_probe32.c\"\r\n"
-)
-file(GENERATE OUTPUT "${CS_RUNTIME_PROBE32_SCRIPT}" CONTENT "${CS_RUNTIME_PROBE32_SCRIPT_CONTENT}")
-add_custom_command(
-    OUTPUT "${CS_RUNTIME_PROBE32_DLL}"
-    COMMAND "${CS_RUNTIME_PROBE32_SCRIPT}"
-    DEPENDS
-        "${CMAKE_CURRENT_LIST_DIR}/cs_runtime_probe32.c"
-        "${CMAKE_CURRENT_LIST_DIR}/cs_runtime_probe_shared.h"
-    VERBATIM
-)
-add_custom_target(cs_runtime_probe32 ALL DEPENDS "${CS_RUNTIME_PROBE32_DLL}")
-add_dependencies(cs_state_trace cs_runtime_probe32)
+# cs_runtime_probe32: 32-bit probe DLL, Windows-only
+if(NOT WIN32)
+    message(WARNING "cs_tools: cs_runtime_probe32 requires Windows. Skipping 32-bit probe DLL build.")
+elseif(MSVC OR CMAKE_C_COMPILER_ID MATCHES "Clang")
+    add_library(cs_runtime_probe32 SHARED
+        cs_runtime_probe32.c
+    )
+    target_include_directories(cs_runtime_probe32 PRIVATE
+        "${CMAKE_CURRENT_LIST_DIR}"
+    )
+    target_compile_definitions(cs_runtime_probe32 PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_compile_options(cs_runtime_probe32 PRIVATE
+        $<$<OR:$<C_COMPILER_ID:MSVC>,$<C_COMPILER_ID:Clang>>:/W4>
+        $<$<OR:$<C_COMPILER_ID:MSVC>,$<C_COMPILER_ID:Clang>>:/WX>
+    )
+    set_target_properties(cs_runtime_probe32 PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_dependencies(cs_state_trace cs_runtime_probe32)
+else()
+    message(WARNING "cs_tools: cs_runtime_probe32 requires MSVC or Clang on Windows. Compiler detected: ${CMAKE_C_COMPILER_ID}. Skipping 32-bit probe DLL build.")
+endif()
 
 add_executable(cs_dataset_build
     cs_dataset_build.c
