@@ -100,3 +100,7 @@ action_c_add_test(test_pipeline_e2e integration/test_pipeline_e2e.c
     ${CMAKE_SOURCE_DIR}/src/utils/arena.c
     ${CMAKE_SOURCE_DIR}/src/utils/log.c)
 target_link_libraries(test_pipeline_e2e profiler_core)
+
+# Phase 3: CS tool tests
+action_c_add_test(test_cs_json_parse demo/test_cs_json_parse.c)
+target_compile_definitions(test_cs_json_parse PRIVATE _CRT_SECURE_NO_WARNINGS)

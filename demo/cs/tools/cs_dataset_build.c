@@ -812,7 +812,7 @@ static int cs_build_load_projection(const char* path,
         }
 
         projection->zone_count++;
-        cursor += 8;
+        cursor += 1;  /* advance past closing delimiter, cs_find_key skips to next entry */
     }
 
     free(text);

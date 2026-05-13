@@ -164,14 +164,19 @@ Module.infer_destroy(ctx);</code></pre>
         }
 
         function displayModuleInfo() {
-            const version = wasmModule.cwrap('action_c_wasm_get_version_string', 'string', []);
-            const major = wasmModule.cwrap('action_c_wasm_get_version_major', 'number', []);
-            const minor = wasmModule.cwrap('action_c_wasm_get_version_minor', 'number', []);
-            const patch = wasmModule.cwrap('action_c_wasm_get_version_patch', 'number', []);
+            try {
+                const version = wasmModule.cwrap('action_c_wasm_get_version_string', 'string', []);
+                const major = wasmModule.cwrap('action_c_wasm_get_version_major', 'number', []);
+                const minor = wasmModule.cwrap('action_c_wasm_get_version_minor', 'number', []);
+                const patch = wasmModule.cwrap('action_c_wasm_get_version_patch', 'number', []);
 
-            moduleInfoEl.textContent = `Version: ${version()}
+                moduleInfoEl.textContent = `Version: ${version()}
 Version (numeric): ${major()}.${minor()}.${patch()}
 Module Ready: Yes`;
+            } catch (e) {
+                console.error('Failed to display module info:', e);
+                moduleInfoEl.textContent = 'Failed to read module info';
+            }
         }
 
         function displayNetworkTypes() {
@@ -211,7 +216,7 @@ Module Ready: Yes`;
 
             memoryInfoEl.textContent = `Total Memory: ${(memSize / 1024 / 1024).toFixed(2)} MB
 Heap Size: ${(heapSize / 1024 / 1024).toFixed(2)} MB
-Available: ${(memSize - heapSize) / 1024 / 1024.toFixed(2)} MB`;
+Available: ${((memSize - heapSize) / 1024 / 1024).toFixed(2)} MB`;
         }
 
         function runInferenceTest() {

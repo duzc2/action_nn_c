@@ -109,9 +109,11 @@ void action_c_wasm_infer_destroy(void* ctx_ptr) {
     if (!ctx_ptr) {
         return;
     }
-    
-    /* Context is owned by the specific network implementation */
-    /* This just frees the memory - implementations should provide their own destroy */
+
+    NNInferContext* ctx = (NNInferContext*)ctx_ptr;
+    if (ctx->backend && ctx->backend->destroy) {
+        ctx->backend->destroy(ctx->backend_ctx);
+    }
     free(ctx_ptr);
 }
 

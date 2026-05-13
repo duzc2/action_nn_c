@@ -210,6 +210,10 @@ async function addExampleNetwork() {
  * 添加节点
  */
 async function addNode(type) {
+    if (!editor) {
+        console.error('Editor not initialized yet')
+        return
+    }
     const configs = {
         'input': { input_size: 10, output_size: 64, hidden_layers: 0, activation: 'linear' },
         'mlp': { input_size: 64, output_size: 32, hidden_layers: 2, hidden_size: 64, activation: 'relu' },
@@ -271,9 +275,12 @@ function buildNetworkState() {
         subnetworks: [],
         connections: []
     }
-    
+
+    if (!editor) return state
+
     // 遍历所有节点
-    for (const node of editor.nodes) {
+    const nodes = editor.getNodes()
+    for (const node of nodes) {
         const data = getNodeData(node)
         const subnet = {
             id: node.id,
@@ -288,25 +295,24 @@ function buildNetworkState() {
             input_ports: [{ id: `${node.id}_in`, name: 'input' }]
         }
         state.subnetworks.push(subnet)
-    }
-    
-    // 遍历所有连接的节点，从节点的输入端口获取连接信息
-    for (const node of editor.nodes) {
-        for (const [key, input] of Object.entries(node.inputs)) {
-            for (const conn of input.connections || []) {
-                const connection = {
-                    id: `conn_${conn.id}`,
-                    source_subnet_id: conn.output.node.id,
-                    source_port_id: `${conn.output.node.id}_out`,
-                    target_subnet_id: conn.input.node.id,
-                    target_port_id: `${conn.input.node.id}_in`,
-                    merge_strategy: 'sum'
-                }
-                state.connections.push(connection)
+
+        // 从节点的输入端口获取连接信息
+        Object.entries(node.inputs).forEach(([key, input]) => {
+            if (input.connections && input.connections.length > 0) {
+                input.connections.forEach(conn => {
+                    state.connections.push({
+                        id: `conn_${conn.id || '0'}`,
+                        source_subnet_id: conn.output.node.id,
+                        source_key: conn.output.key,
+                        target_subnet_id: node.id,
+                        target_key: key,
+                        merge_strategy: 'sum'
+                    })
+                })
             }
-        }
+        })
     }
-    
+
     return state
 }
 
@@ -474,9 +480,26 @@ static NN_NetworkDef* create_network(void) {
     })
 
     // 添加连接
+    code += `    /* Connections */\n`
     state.connections.forEach((conn, i) => {
-        code += `    /* Connection ${i}: ${conn.source_subnet_id} -> ${conn.target_subnet_id} */\n`
-        code += `    /* Note: Add connection creation here when connection UI is implemented */\n`
+        code += `    {\n`
+        code += `        NNConnectionDef* conn_${i} = nn_connection_def_create(\n`
+        code += `            "conn_${conn.id}",\n`
+        code += `            "${conn.source_subnet_id}", "${conn.source_key}",\n`
+        code += `            "${conn.target_subnet_id}", "${conn.target_key}");\n`
+        code += `        if (conn_${i} == NULL) {\n`
+        code += `            fprintf(stderr, "Failed to create connection ${conn.id}\\\n");\n`
+        code += `            nn_network_def_free(network);\n`
+        code += `            return NULL;\n`
+        code += `        }\n`
+        code += `        result = nn_network_def_add_connection(network, conn_${i});\n`
+        code += `        if (result != 0) {\n`
+        code += `            fprintf(stderr, "Failed to add connection ${conn.id}\\\n");\n`
+        code += `            nn_connection_def_free(conn_${i});\n`
+        code += `            nn_network_def_free(network);\n`
+        code += `            return NULL;\n`
+        code += `        }\n`
+        code += `    }\n\n`
     })
 
     code += `    return network;\n`
@@ -505,19 +528,39 @@ static NN_NetworkDef* create_network(void) {
 function showOutput(content, type) {
     const existing = document.querySelector('.output-panel')
     if (existing) existing.remove()
-    
+
     const outputDiv = document.createElement('div')
     outputDiv.className = 'output-panel'
-    outputDiv.innerHTML = `
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-            <h3 style="color: #569cd6; margin: 0;">Output (${type.toUpperCase()})</h3>
-            <div>
-                <button onclick="copyOutput(this)" style="padding: 8px 15px; background: #0e639c; border: none; border-radius: 4px; color: white; cursor: pointer; margin-right: 10px;">Copy</button>
-                <button onclick="this.closest('.output-panel').remove()" style="padding: 8px 15px; background: #4e1515; border: none; border-radius: 4px; color: #f48771; cursor: pointer;">Close</button>
-            </div>
-        </div>
-        <pre style="background: #1e1e1e; padding: 15px; border-radius: 6px; overflow: auto; max-height: 60vh; font-family: Consolas, Monaco, monospace; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-all;">${content.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
-    `
+
+    const header = document.createElement('div')
+    header.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;'
+
+    const h3 = document.createElement('h3')
+    h3.style.cssText = 'color: #569cd6; margin: 0;'
+    h3.textContent = `Output (${type.toUpperCase()})`
+
+    const btnDiv = document.createElement('div')
+    const copyBtn = document.createElement('button')
+    copyBtn.style.cssText = 'padding: 8px 15px; background: #0e639c; border: none; border-radius: 4px; color: white; cursor: pointer; margin-right: 10px;'
+    copyBtn.textContent = 'Copy'
+    copyBtn.onclick = function() { copyOutput(copyBtn) }
+
+    const closeBtn = document.createElement('button')
+    closeBtn.style.cssText = 'padding: 8px 15px; background: #4e1515; border: none; border-radius: 4px; color: #f48771; cursor: pointer;'
+    closeBtn.textContent = 'Close'
+    closeBtn.onclick = function() { outputDiv.remove() }
+
+    btnDiv.appendChild(copyBtn)
+    btnDiv.appendChild(closeBtn)
+    header.appendChild(h3)
+    header.appendChild(btnDiv)
+
+    const pre = document.createElement('pre')
+    pre.style.cssText = 'background: #1e1e1e; padding: 15px; border-radius: 6px; overflow: auto; max-height: 60vh; font-family: Consolas, Monaco, monospace; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-all;'
+    pre.textContent = content
+
+    outputDiv.appendChild(header)
+    outputDiv.appendChild(pre)
     document.body.appendChild(outputDiv)
 }
 
@@ -568,6 +611,11 @@ initEditor().then(() => {
     window.editor = editor
     window.area = area
     console.log('Editor initialized and exported to window')
+}).catch((err) => {
+    document.getElementById('editor').innerHTML =
+        '<div style="color:red;padding:20px;">Editor failed to initialize: '
+        + err.message + '</div>'
+    console.error('Editor init error:', err)
 })
 
 // 导出到全局

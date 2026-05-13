@@ -307,7 +307,7 @@ static int cs_report_scan_split_file(const char* path,
             coverage[coverage_index].sample_count++;
         }
 
-        cursor += 9;
+        cursor += 1;  /* advance past closing delimiter, cs_find_key skips to next entry */
     }
 
     free(text);

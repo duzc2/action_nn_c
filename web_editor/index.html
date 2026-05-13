@@ -3,6 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline';">
     <title>Action NN-C Network Editor</title>
     <link rel="stylesheet" href="/src/style.css">
 </head>
@@ -10,15 +12,18 @@
     <div class="toolbar">
         <span class="logo">NN-C Editor</span>
         <div class="toolbar-buttons">
-            <button onclick="addNode('input')" class="toolbar-btn">[+Input]</button>
-            <button onclick="addNode('mlp')" class="toolbar-btn">[+MLP]</button>
-            <button onclick="addNode('output')" class="toolbar-btn">[+Output]</button>
+            <button onclick="addNode('input')" class="toolbar-btn"
+                    aria-label="Add input node">[+Input]</button>
+            <button onclick="addNode('mlp')" class="toolbar-btn"
+                    aria-label="Add MLP hidden layer">[+MLP]</button>
+            <button onclick="addNode('output')" class="toolbar-btn"
+                    aria-label="Add output node">[+Output]</button>
             <div class="separator"></div>
             <button onclick="exportJSON()" class="toolbar-btn primary">Export JSON</button>
             <button onclick="exportC()" class="toolbar-btn primary">Export C</button>
         </div>
     </div>
-    <div id="editor"></div>
+    <div id="editor" role="application" aria-label="Neural network editor"></div>
     <script type="module" src="/src/main.js"></script>
 </body>
 </html>

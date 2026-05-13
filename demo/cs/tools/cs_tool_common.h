@@ -43,25 +43,6 @@ typedef struct CsPlaceDictionaryTag {
     size_t entry_count;
 } CsPlaceDictionary;
 
-/*
- * Legacy segment structs remain temporarily in the shared header until every
- * source file has been migrated off the old pipeline. They are no longer part
- * of the intended public Version 1 workflow.
- */
-typedef struct CsLabelSegmentTag {
-    int segment_id;
-    int start_frame;
-    int end_frame;
-    int place_id;
-    char place_token[64];
-} CsLabelSegment;
-
-typedef struct CsLabelSegmentsFileTag {
-    char session_id[64];
-    CsLabelSegment segments[CS_TOOL_MAX_SEGMENTS];
-    size_t segment_count;
-} CsLabelSegmentsFile;
-
 typedef struct CsStateTraceRecordTag {
     int frame_index;
     char timestamp[64];

@@ -59,7 +59,7 @@ console.warn(
 );
 
 export default function ActionNnC(config) {
-    throw new Error(
+    return Promise.reject(new Error(
         'Wasm module not built. Please run ./scripts/build_wasm.sh first.'
-    );
+    ));
 }

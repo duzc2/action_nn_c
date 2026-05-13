@@ -6,8 +6,9 @@ option(ACTION_C_ENABLE_NN_RNN "Enable the built-in RNN network type" ON)
 option(ACTION_C_ENABLE_NN_GNN "Enable the built-in GNN network type" ON)
 
 # Shared compiler flags from the cmake/ modules
-include("${CMAKE_SOURCE_DIR}/cmake/compiler_flags.cmake")
-include("${CMAKE_SOURCE_DIR}/cmake/version.cmake")
+# Use CMAKE_CURRENT_LIST_DIR so includes work both as top-level and as subdirectory
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/compiler_flags.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/version.cmake")
 
 if(NOT ACTION_C_ENABLE_NN_MLP AND
    NOT ACTION_C_ENABLE_NN_TRANSFORMER AND

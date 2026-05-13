@@ -532,7 +532,7 @@ static float react_route_danger(
 /**
  * @brief Compute danger for the lane directly in front of the ego.
  *
- * This is the "????????" part of the teacher. The next lane receives the
+ * This is the front-lane priority part of the teacher. The next lane receives the
  * highest weight because it is the lane that can kill the crosser immediately.
  */
 static float react_front_lane_danger(

@@ -1,4 +1,3 @@
-```
 # Build artifacts
 build/
 dist/
@@ -71,6 +70,4 @@ Makefile
 # Web artifacts
 *.wasm
 *.js.map
-```
 .claude/settings.local.json
-nul

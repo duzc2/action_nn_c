@@ -23,6 +23,10 @@
 #include <direct.h>
 #include <windows.h>
 #define DEMO_CHDIR _chdir
+#elif defined(__linux__)
+#include <unistd.h>
+#include <limits.h>
+#define DEMO_CHDIR chdir
 #else
 #include <unistd.h>
 #define DEMO_CHDIR chdir
@@ -49,6 +53,15 @@ static int demo_get_executable_dir(char* out_dir, size_t out_size) {
             return -1;
         }
         len = (size_t)copied;
+    }
+#elif defined(__linux__)
+    {
+        ssize_t r = readlink("/proc/self/exe", out_dir, out_size - 1U);
+        if (r < 0 || (size_t)r >= out_size) {
+            return -1;
+        }
+        out_dir[r] = '\0';
+        len = (size_t)r;
     }
 #else
     if (getcwd(out_dir, out_size) == NULL) {
