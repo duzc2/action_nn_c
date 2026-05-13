@@ -19,7 +19,7 @@ set_source_files_properties(
 
 add_executable(mnist_cnn_infer
     ../infer_main.c
-    ../mnist_cnn_dataset.c
+    ../../dataset/mnist_dataset.c
     "${GENERATED_INFER_C}"
     "${GENERATED_WEIGHTS_LOAD_C}"
 )

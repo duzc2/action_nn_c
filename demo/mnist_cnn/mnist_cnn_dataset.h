@@ -1,42 +1,33 @@
 /**
  * @file mnist_cnn_dataset.h
- * @brief MNIST IDX loader and CNN-specific input packing helpers.
+ * @brief Compatibility shim — delegates to the unified dataset loader.
+ *
+ * Provides legacy type/macro aliases so existing calling code
+ * continues to compile without changes.
  */
-
 #ifndef DEMO_MNIST_CNN_DATASET_H
 #define DEMO_MNIST_CNN_DATASET_H
+#include "../dataset/mnist_dataset.h"
 
-#include <stddef.h>
-#include <stdint.h>
+/* Legacy type alias */
+typedef MnistDataset MnistCnnDataset;
 
-#define MNIST_CNN_IMAGE_ROWS 28U
-#define MNIST_CNN_IMAGE_COLS 28U
-#define MNIST_CNN_IMAGE_SIZE (MNIST_CNN_IMAGE_ROWS * MNIST_CNN_IMAGE_COLS)
-#define MNIST_CNN_CLASS_COUNT 10U
-#define MNIST_CNN_QUADRANT_ROWS 14U
-#define MNIST_CNN_QUADRANT_COLS 14U
-#define MNIST_CNN_SEQUENCE_LENGTH 4U
-#define MNIST_CNN_FEATURE_INPUT_SIZE (MNIST_CNN_QUADRANT_ROWS * MNIST_CNN_QUADRANT_COLS * MNIST_CNN_SEQUENCE_LENGTH)
+/* Legacy API aliases */
+#define mnist_cnn_dataset_load(...)      mnist_dataset_load(__VA_ARGS__)
+#define mnist_cnn_dataset_free           mnist_dataset_free
+#define mnist_cnn_dataset_make_one_hot   mnist_dataset_make_one_hot
+#define mnist_cnn_dataset_argmax         mnist_dataset_argmax
+#define mnist_cnn_dataset_render_ascii   mnist_dataset_render_ascii
+#define mnist_cnn_pack_quadrants         mnist_pack_quadrants
 
-typedef struct {
-    size_t sample_count;
-    size_t image_size;
-    float* images;
-    uint8_t* labels;
-} MnistCnnDataset;
-
-int mnist_cnn_dataset_load(
-    const char* images_path,
-    const char* labels_path,
-    size_t max_samples,
-    MnistCnnDataset* out_dataset,
-    char* error_buffer,
-    size_t error_buffer_size);
-
-void mnist_cnn_dataset_free(MnistCnnDataset* dataset);
-void mnist_cnn_dataset_make_one_hot(uint8_t label, float* target, size_t class_count);
-int mnist_cnn_dataset_argmax(const float* values, size_t count);
-void mnist_cnn_dataset_render_ascii(const float* image, size_t rows, size_t cols);
-void mnist_cnn_pack_quadrants(const float* image, float* packed_input);
+/* Legacy constant aliases */
+#define MNIST_CNN_IMAGE_ROWS      MNIST_IMAGE_ROWS
+#define MNIST_CNN_IMAGE_COLS      MNIST_IMAGE_COLS
+#define MNIST_CNN_IMAGE_SIZE      MNIST_IMAGE_SIZE
+#define MNIST_CNN_CLASS_COUNT     MNIST_CLASS_COUNT
+#define MNIST_CNN_QUADRANT_ROWS   MNIST_QUADRANT_ROWS
+#define MNIST_CNN_QUADRANT_COLS   MNIST_QUADRANT_COLS
+#define MNIST_CNN_SEQUENCE_LENGTH MNIST_SEQUENCE_LENGTH
+#define MNIST_CNN_FEATURE_INPUT_SIZE MNIST_FEATURE_INPUT_SIZE
 
 #endif

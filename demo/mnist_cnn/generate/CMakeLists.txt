@@ -10,7 +10,7 @@ action_c_add_core_subdirectory()
 
 add_executable(mnist_cnn_generate
     ../generate_main.c
-    ../mnist_cnn_dataset.c
+    ../../dataset/mnist_dataset.c
 )
 action_c_apply_strict_warnings(mnist_cnn_generate)
 

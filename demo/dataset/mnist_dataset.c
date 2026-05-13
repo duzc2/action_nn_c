@@ -1,9 +1,6 @@
 /**
  * @file mnist_dataset.c
- * @brief Minimal IDX reader used by the MNIST demo.
- *
- * The helper intentionally keeps all parsing logic local to the demo so the
- * main action_c libraries stay focused on network generation and execution.
+ * @brief Unified MNIST IDX reader used by all MNIST-based demos.
  */
 
 #include "mnist_dataset.h"
@@ -11,18 +8,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-/**
- * @brief Format one short error string when the caller provides a buffer.
- */
 static void mnist_set_error(char* error_buffer, size_t error_buffer_size, const char* message) {
     if (error_buffer != NULL && error_buffer_size > 0U) {
         (void)snprintf(error_buffer, error_buffer_size, "%s", message);
     }
 }
 
-/**
- * @brief Read one big-endian unsigned 32-bit integer from an IDX stream.
- */
 static int mnist_read_u32(FILE* file, uint32_t* out_value) {
     unsigned char bytes[4];
 
@@ -35,14 +26,11 @@ static int mnist_read_u32(FILE* file, uint32_t* out_value) {
 
     *out_value = ((uint32_t)bytes[0] << 24U) |
                  ((uint32_t)bytes[1] << 16U) |
-                 ((uint32_t)bytes[2] << 8U) |
-                 (uint32_t)bytes[3];
+                 ((uint32_t)bytes[2] <<  8U) |
+                  (uint32_t)bytes[3];
     return 0;
 }
 
-/**
- * @brief Open one file for binary reading with the platform-preferred API.
- */
 static FILE* mnist_open_binary_read(const char* path) {
 #ifdef _WIN32
     FILE* file = NULL;
@@ -55,15 +43,12 @@ static FILE* mnist_open_binary_read(const char* path) {
 #endif
 }
 
-/**
- * @brief Zero one dataset object before filling it.
- */
 static void mnist_dataset_reset(MnistDataset* dataset) {
     if (dataset != NULL) {
         dataset->sample_count = 0U;
-        dataset->image_size = 0U;
-        dataset->images = NULL;
-        dataset->labels = NULL;
+        dataset->image_size   = 0U;
+        dataset->images       = NULL;
+        dataset->labels       = NULL;
     }
 }
 
@@ -73,7 +58,8 @@ int mnist_dataset_load(
     size_t max_samples,
     MnistDataset* out_dataset,
     char* error_buffer,
-    size_t error_buffer_size) {
+    size_t error_buffer_size)
+{
     FILE* images_file;
     FILE* labels_file;
     uint32_t image_magic;
@@ -108,9 +94,9 @@ int mnist_dataset_load(
         return -1;
     }
 
-    if (mnist_read_u32(images_file, &image_magic) != 0 ||
-        mnist_read_u32(images_file, &image_count) != 0 ||
-        mnist_read_u32(images_file, &row_count) != 0 ||
+    if (mnist_read_u32(images_file, &image_magic)  != 0 ||
+        mnist_read_u32(images_file, &image_count)  != 0 ||
+        mnist_read_u32(images_file, &row_count)    != 0 ||
         mnist_read_u32(images_file, &column_count) != 0) {
         fclose(images_file);
         fclose(labels_file);
@@ -188,7 +174,7 @@ int mnist_dataset_load(
     fclose(labels_file);
 
     out_dataset->sample_count = sample_count;
-    out_dataset->image_size = image_size;
+    out_dataset->image_size   = image_size;
     mnist_set_error(error_buffer, error_buffer_size, "");
     return 0;
 }
@@ -257,5 +243,31 @@ void mnist_dataset_render_ascii(const float* image, size_t rows, size_t cols) {
             putchar((int)kRamp[ramp_index]);
         }
         putchar('\n');
+    }
+}
+
+void mnist_pack_quadrants(const float* image, float* packed_input) {
+    static const size_t kRowOffsets[MNIST_SEQUENCE_LENGTH] = {0U, 0U, 14U, 14U};
+    static const size_t kColOffsets[MNIST_SEQUENCE_LENGTH] = {0U, 14U, 0U, 14U};
+    size_t quadrant_index;
+
+    if (image == NULL || packed_input == NULL) {
+        return;
+    }
+
+    for (quadrant_index = 0U; quadrant_index < MNIST_SEQUENCE_LENGTH; ++quadrant_index) {
+        size_t row;
+        size_t row_offset = kRowOffsets[quadrant_index];
+        size_t col_offset = kColOffsets[quadrant_index];
+        size_t quadrant_base = quadrant_index * (MNIST_QUADRANT_ROWS * MNIST_QUADRANT_COLS);
+
+        for (row = 0U; row < MNIST_QUADRANT_ROWS; ++row) {
+            size_t col;
+            for (col = 0U; col < MNIST_QUADRANT_COLS; ++col) {
+                size_t source_index = ((row + row_offset) * MNIST_IMAGE_COLS) + (col + col_offset);
+                size_t target_index = quadrant_base + (row * MNIST_QUADRANT_COLS) + col;
+                packed_input[target_index] = image[source_index];
+            }
+        }
     }
 }

@@ -61,6 +61,10 @@ action_c_add_test(test_mlp_vtable nn/test_mlp_vtable.c
     ${CMAKE_SOURCE_DIR}/src/utils/arena.c)
 target_link_libraries(test_mlp_vtable nn_train_core)
 
+# Track B: MNIST dataset merge (B9)
+action_c_add_test(test_mnist_dataset nn/test_mnist_dataset.c
+    ${CMAKE_SOURCE_DIR}/demo/dataset/mnist_dataset.c)
+
 # Track B: All backends VTable tests
 action_c_add_test(test_all_vtables nn/test_all_vtables.c
     ${CMAKE_SOURCE_DIR}/src/utils/log.c
