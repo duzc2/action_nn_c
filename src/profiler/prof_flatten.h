@@ -13,6 +13,7 @@
 #include "profiler_types.h"
 
 #include <stddef.h>
+#include <stdint.h>
 
 /**
  * @brief Flat subnet pointer list
@@ -21,6 +22,40 @@ typedef struct {
     NNSubnetDef** items;
     size_t count;
 } ProfSubnetList;
+
+/**
+ * @brief String-keyed hash map for subnet ID lookups
+ *
+ * Uses FNV-1a hashing with open addressing and geometric growth.
+ * Keys are borrowed (not copied) -- the caller must keep them alive.
+ */
+typedef struct {
+    const char** keys;
+    size_t*      values;
+    size_t       count;
+    size_t       capacity;
+} StringHashMap;
+
+void string_hash_map_init(StringHashMap* m, size_t cap);
+void string_hash_map_free(StringHashMap* m);
+void string_hash_map_put(StringHashMap* m, const char* key, size_t value);
+int  string_hash_map_get(const StringHashMap* m, const char* key, size_t* out);
+
+/**
+ * @brief Immutable flat network result
+ *
+ * Bundles the flattened executable leaf list, topological order, and an
+ * O(1) ID-to-index hash map. The cycle flag is set when the leaf DAG
+ * cannot be topologically sorted.
+ */
+typedef struct {
+    ProfSubnetList leaves;
+    size_t*        topological_order;
+    size_t*        incoming_counts;
+    size_t*        outgoing_counts;
+    StringHashMap  id_to_index;
+    int            has_cycles;
+} FlatNetwork;
 
 /**
  * @brief Return 1 if subnet has no child subnet, otherwise 0
@@ -71,5 +106,24 @@ ProfStatus prof_flatten_build_leaf_topology(
     size_t** out_incoming_counts,
     size_t** out_outgoing_counts
 );
+
+/**
+ * @brief Build a complete FlatNetwork from a network definition
+ *
+ * Collects executable leaf subnets, computes topological order, detects
+ * cycles, and populates the ID-to-index hash map. Returns 0 on success
+ * or -1 when argument validation fails. The caller must check
+ * flat->has_cycles after a successful return.
+ *
+ * @param network Network definition
+ * @param out     Zero-initialised FlatNetwork to populate
+ * @return 0 on success, -1 on invalid arguments
+ */
+int  prof_flatten_build(const NN_NetworkDef* network, FlatNetwork* out);
+
+/**
+ * @brief Release all memory owned by a FlatNetwork
+ */
+void prof_flatten_free(FlatNetwork* f);
 
 #endif

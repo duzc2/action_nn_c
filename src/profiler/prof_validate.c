@@ -557,13 +557,22 @@ ProfStatus prof_validate_dag(
  * The order here is part of the public behaviour: callers first get argument
  * errors, then structural subnet errors, then connection diagnostics, and only
  * then cycle reports. That keeps failures specific and easier to act on.
+ *
+ * Internally builds a FlatNetwork once and passes it to connection and DAG
+ * validators, avoiding the redundant flattening that occurred when each
+ * validator independently re-collected the leaf set.
  */
 ProfStatus prof_validate_all(
     const ProfGenerateRequest* req,
     ProfErrorBuffer* error
 ) {
     NN_NetworkDef* network;
+    FlatNetwork flat;
     ProfStatus status;
+    int    built;
+
+    built = 0;
+    (void)memset(&flat, 0, sizeof(flat));
 
     /* Stop at the first failing stage so the returned error describes the earliest cause. */
     status = prof_validate_request(req, error);
@@ -578,14 +587,132 @@ ProfStatus prof_validate_all(
         return status;
     }
 
-    status = prof_validate_connections(network, error);
+    /* Build FlatNetwork once and share it with downstream validators. */
+    if (prof_flatten_build(network, &flat) == 0) {
+        built = 1;
+    }
+
+    status = prof_validate_connections_flat(network, &flat, error);
+    if (status != PROF_STATUS_OK) {
+        if (built) {
+            prof_flatten_free(&flat);
+        }
+        return status;
+    }
+
+    status = prof_validate_dag_flat(&flat, error);
+    if (built) {
+        prof_flatten_free(&flat);
+    }
     if (status != PROF_STATUS_OK) {
         return status;
     }
 
-    status = prof_validate_dag(network, error);
-    if (status != PROF_STATUS_OK) {
-        return status;
+    return PROF_STATUS_OK;
+}
+
+/**
+ * @brief Validate connections using a pre-built FlatNetwork for O(1) lookups.
+ *
+ * All endpoint resolution reuses the immutable flat leaf list and hash map
+ * that were built once in prof_validate_all. This avoids redundantly walking
+ * the subnet tree and rebuilding temporary allocations for each connection.
+ */
+ProfStatus prof_validate_connections_flat(
+    const NN_NetworkDef* network,
+    const FlatNetwork* flat,
+    ProfErrorBuffer* error
+) {
+    size_t connection_index;
+
+    if (network == NULL || flat == NULL) {
+        return PROF_STATUS_OK;
+    }
+
+    for (connection_index = 0U; connection_index < network->connection_count; ++connection_index) {
+        NNConnectionDef* connection = network->connections[connection_index];
+        size_t source_index;
+        size_t target_index;
+        NNSubnetDef* source_subnet;
+        NNSubnetDef* target_subnet;
+
+        if (connection == NULL) {
+            continue;
+        }
+
+        if (is_empty(connection->source_subnet_id)) {
+            return prof_error_set(error, PROF_STATUS_VALIDATION_FAILED,
+                "Connection %zu has empty source subnet ID", connection_index);
+        }
+        if (is_empty(connection->target_subnet_id)) {
+            return prof_error_set(error, PROF_STATUS_VALIDATION_FAILED,
+                "Connection %zu has empty target subnet ID", connection_index);
+        }
+
+        /* O(1) hash-map lookup instead of O(n) linear scan. */
+        if (!string_hash_map_get(&flat->id_to_index,
+                connection->source_subnet_id, &source_index)) {
+            return prof_error_set(error, PROF_STATUS_VALIDATION_FAILED,
+                "Connection references non-existent source leaf subnet '%s'",
+                connection->source_subnet_id);
+        }
+        if (!string_hash_map_get(&flat->id_to_index,
+                connection->target_subnet_id, &target_index)) {
+            return prof_error_set(error, PROF_STATUS_VALIDATION_FAILED,
+                "Connection references non-existent target leaf subnet '%s'",
+                connection->target_subnet_id);
+        }
+
+        if (source_index >= flat->leaves.count || target_index >= flat->leaves.count) {
+            return prof_error_set(error, PROF_STATUS_INTERNAL_ERROR,
+                "Hash map returned out-of-range leaf index");
+        }
+
+        source_subnet = flat->leaves.items[source_index];
+        target_subnet = flat->leaves.items[target_index];
+        if (source_subnet == NULL || target_subnet == NULL) {
+            return prof_error_set(error, PROF_STATUS_INTERNAL_ERROR,
+                "Connection flattening produced NULL subnet pointer");
+        }
+
+        if (connection->source_node_index >= source_subnet->output_layer_size) {
+            return prof_error_set(error, PROF_STATUS_VALIDATION_FAILED,
+                "Connection from '%s' node %zu exceeds output layer size %zu",
+                connection->source_subnet_id,
+                connection->source_node_index,
+                source_subnet->output_layer_size);
+        }
+
+        if (connection->target_node_index >= target_subnet->input_layer_size) {
+            return prof_error_set(error, PROF_STATUS_VALIDATION_FAILED,
+                "Connection to '%s' node %zu exceeds input layer size %zu",
+                connection->target_subnet_id,
+                connection->target_node_index,
+                target_subnet->input_layer_size);
+        }
+    }
+
+    return PROF_STATUS_OK;
+}
+
+/**
+ * @brief Validate DAG acyclicity from a pre-built FlatNetwork.
+ *
+ * The cycle flag was set by prof_flatten_build's topological sort
+ * (Kahn's algorithm). A FlatNetwork with has_cycles=1 means the
+ * leaf graph is not a DAG.
+ */
+ProfStatus prof_validate_dag_flat(
+    const FlatNetwork* flat,
+    ProfErrorBuffer* error
+) {
+    if (flat == NULL) {
+        return PROF_STATUS_OK;
+    }
+
+    if (flat->has_cycles) {
+        return prof_error_set(error, PROF_STATUS_CYCLE_DETECTED,
+            "Cycle detected in flattened leaf subnet topology");
     }
 
     return PROF_STATUS_OK;

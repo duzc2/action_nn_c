@@ -4,6 +4,7 @@
  */
 
 #include "prof_flatten.h"
+#include "prof_hash.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -344,4 +345,229 @@ ProfStatus prof_flatten_build_leaf_topology(
     *out_incoming_counts = incoming_counts;
     *out_outgoing_counts = outgoing_counts;
     return PROF_STATUS_OK;
+}
+
+/**
+ * @section string_hash_map String-keyed hash map
+ *
+ * O(1) amortised lookups using FNV-1a hashing and open addressing
+ * with linear probing. Used by FlatNetwork for subnet ID → index
+ * translation, replacing the O(n) linear scan in the simpler helpers.
+ */
+
+#define SHM_EMPTY_MARKER ((const char*)(uintptr_t)1)
+
+void string_hash_map_init(StringHashMap* m, size_t cap) {
+    size_t i;
+
+    if (m == NULL) {
+        return;
+    }
+    if (cap < 8U) {
+        cap = 8U;
+    }
+    m->keys     = (const char**)calloc(cap, sizeof(const char*));
+    m->values   = (size_t*)calloc(cap, sizeof(size_t));
+    m->count    = 0U;
+    m->capacity = (m->keys != NULL && m->values != NULL) ? cap : 0U;
+
+    /* Mark every slot empty. */
+    for (i = 0U; i < m->capacity; ++i) {
+        m->keys[i] = SHM_EMPTY_MARKER;
+    }
+}
+
+void string_hash_map_free(StringHashMap* m) {
+    if (m == NULL) {
+        return;
+    }
+    free((void*)m->keys);
+    free(m->values);
+    m->keys     = NULL;
+    m->values   = NULL;
+    m->count    = 0U;
+    m->capacity = 0U;
+}
+
+/**
+ * @brief Grow the table to twice its current size and rehash all entries.
+ */
+static int string_hash_map_grow(StringHashMap* m) {
+    const char** old_keys;
+    size_t*      old_values;
+    size_t       old_capacity;
+    size_t       i;
+
+    if (m == NULL || m->capacity == 0U) {
+        return -1;
+    }
+
+    old_keys       = m->keys;
+    old_values     = m->values;
+    old_capacity   = m->capacity;
+
+    /* Allocate new storage at double size. */
+    m->capacity   *= 2U;
+    m->keys       = (const char**)calloc(m->capacity, sizeof(const char*));
+    m->values     = (size_t*)calloc(m->capacity, sizeof(size_t));
+    if (m->keys == NULL || m->values == NULL) {
+        free((void*)m->keys);
+        free(m->values);
+        m->keys     = old_keys;
+        m->values   = old_values;
+        m->capacity = old_capacity;
+        return -1;
+    }
+
+    /* Mark every slot in the new table empty. */
+    for (i = 0U; i < m->capacity; ++i) {
+        m->keys[i] = SHM_EMPTY_MARKER;
+    }
+
+    m->count = 0U;
+
+    /* Rehash all existing entries into the expanded table. */
+    for (i = 0U; i < old_capacity; ++i) {
+        if (old_keys[i] != NULL && old_keys[i] != SHM_EMPTY_MARKER) {
+            string_hash_map_put(m, old_keys[i], old_values[i]);
+        }
+    }
+
+    free((void*)old_keys);
+    free(old_values);
+    return 0;
+}
+
+void string_hash_map_put(StringHashMap* m, const char* key, size_t value) {
+    size_t idx;
+
+    if (m == NULL || key == NULL || m->capacity == 0U) {
+        return;
+    }
+
+    /* Grow when load factor exceeds 0.7. */
+    if (m->count * 10U >= m->capacity * 7U) {
+        if (string_hash_map_grow(m) != 0) {
+            return;
+        }
+    }
+
+    /* FNV-1a hash with open-address linear probe. */
+    idx = prof_fnv1a_hash(key, strlen(key)) % m->capacity;
+
+    while (m->keys[idx] != SHM_EMPTY_MARKER) {
+        if (m->keys[idx] != NULL && strcmp(m->keys[idx], key) == 0) {
+            /* Update existing entry. */
+            m->values[idx] = value;
+            return;
+        }
+        idx = (idx + 1U) % m->capacity;
+    }
+
+    /* Append new entry. */
+    m->keys[idx] = key;
+    m->values[idx] = value;
+    m->count++;
+}
+
+int string_hash_map_get(const StringHashMap* m, const char* key, size_t* out) {
+    size_t idx;
+
+    if (m == NULL || key == NULL || m->capacity == 0U) {
+        return 0;
+    }
+
+    idx = prof_fnv1a_hash(key, strlen(key)) % m->capacity;
+
+    while (m->keys[idx] != SHM_EMPTY_MARKER) {
+        if (m->keys[idx] != NULL && strcmp(m->keys[idx], key) == 0) {
+            if (out != NULL) {
+                *out = m->values[idx];
+            }
+            return 1;
+        }
+        idx = (idx + 1U) % m->capacity;
+    }
+
+    return 0;
+}
+
+/**
+ * @section flat_network FlatNetwork build / free
+ *
+ * prof_flatten_build is the single entry point that callers use to obtain
+ * a complete immutable view of the executable leaf graph. It internally
+ * collects leaves, computes topology, populates the ID-to-index hash map,
+ * and sets the cycle flag.
+ */
+
+int prof_flatten_build(const NN_NetworkDef* network, FlatNetwork* out) {
+    ProfStatus st;
+    size_t leaf_index;
+
+    if (network == NULL || out == NULL) {
+        return -1;
+    }
+
+    /* Clear output fields so partial failures can be cleaned up predictably. */
+    (void)memset(out, 0, sizeof(*out));
+    out->topological_order    = NULL;
+    out->incoming_counts      = NULL;
+    out->outgoing_counts      = NULL;
+
+    /* Stage 1: collect only executable leaves. */
+    st = prof_flatten_collect_leaf_subnets(network, &out->leaves);
+    if (st != PROF_STATUS_OK) {
+        prof_flatten_free(out);
+        return -1;
+    }
+
+    /* Stage 2: build the topological order (Kahn's algorithm). */
+    st = prof_flatten_build_leaf_topology(
+        network,
+        &out->leaves,
+        &out->topological_order,
+        &out->incoming_counts,
+        &out->outgoing_counts
+    );
+
+    if (st == PROF_STATUS_CYCLE_DETECTED) {
+        out->has_cycles = 1;
+        /* Continue despite cycles -- the caller inspects has_cycles. */
+    } else if (st != PROF_STATUS_OK) {
+        prof_flatten_free(out);
+        return -1;
+    }
+
+    /* Stage 3: populate the O(1) ID → index hash map. */
+    string_hash_map_init(&out->id_to_index, out->leaves.count * 2U);
+    for (leaf_index = 0U; leaf_index < out->leaves.count; ++leaf_index) {
+        if (out->leaves.items[leaf_index] != NULL &&
+            out->leaves.items[leaf_index]->subnet_id != NULL) {
+            string_hash_map_put(
+                &out->id_to_index,
+                out->leaves.items[leaf_index]->subnet_id,
+                leaf_index
+            );
+        }
+    }
+
+    return 0;
+}
+
+void prof_flatten_free(FlatNetwork* f) {
+    if (f == NULL) {
+        return;
+    }
+
+    prof_flatten_free_list(&f->leaves);
+    free(f->topological_order);
+    free(f->incoming_counts);
+    free(f->outgoing_counts);
+    string_hash_map_free(&f->id_to_index);
+
+    f->topological_order = NULL;
+    f->incoming_counts   = NULL;
+    f->outgoing_counts   = NULL;
+    f->has_cycles        = 0;
 }

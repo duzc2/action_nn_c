@@ -17,6 +17,7 @@
 
 #include "profiler_types.h"
 #include "network_def.h"
+#include "prof_flatten.h"
 
 /**
  * @brief Validation result structure
@@ -120,16 +121,50 @@ ProfStatus prof_validate_dag(
 );
 
 /**
+ * @brief Validate connection endpoints using a pre-built FlatNetwork
+ *
+ * Consumes the flat leaf list and O(1) ID map from a FlatNetwork
+ * instead of rebuilding them internally. This avoids redundant
+ * flattening when validation is performed inside the pipeline.
+ *
+ * @param network Network definition (for diagnostic messages)
+ * @param flat    Pre-built FlatNetwork with leaves and id_to_index
+ * @param error   Error buffer
+ * @return PROF_STATUS_OK on success, error code on failure
+ */
+ProfStatus prof_validate_connections_flat(
+    const NN_NetworkDef* network,
+    const FlatNetwork* flat,
+    ProfErrorBuffer* error
+);
+
+/**
+ * @brief Validate DAG acyclicity using a pre-built FlatNetwork
+ *
+ * Inspects the cycle flag already computed by prof_flatten_build
+ * instead of recomputing topological order.
+ *
+ * @param flat  Pre-built FlatNetwork
+ * @param error Error buffer
+ * @return PROF_STATUS_OK if no cycles, PROF_STATUS_CYCLE_DETECTED otherwise
+ */
+ProfStatus prof_validate_dag_flat(
+    const FlatNetwork* flat,
+    ProfErrorBuffer* error
+);
+
+/**
  * @brief Complete validation of network definition
  *
  * Performs all validation checks in order:
  * 1. Request parameters
  * 2. Network structure
  * 3. Subnets
- * 4. Connections
+ * 4. Connections (uses FlatNetwork for O(1) leaf lookups)
  * 5. DAG cycle detection
  *
- * Stops on first error.
+ * Builds a FlatNetwork internally and passes it to connection and DAG
+ * validators, avoiding redundant flattening. Stops on first error.
  *
  * @param req Generate request
  * @param error Error buffer

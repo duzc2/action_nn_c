@@ -17,11 +17,26 @@
 #include "prof_validate.h"
 #include "prof_hash.h"
 #include "prof_codegen.h"
+#include "prof_flatten.h"
 
 #include <string.h>
 
 /**
  * @brief Run the full profiler pipeline for one caller-supplied network.
+ *
+ * The pipeline now uses the immutable FlatNetwork representation so
+ * flattening happens once and its results are shared across validation,
+ * hashing, and code generation stages.  The documented five-stage
+ * pipeline is:
+ *
+ *   Stage 1 — Validate    (topology, paths, contracts)
+ *   Stage 2 — Flatten     (collect leaves, topological sort, ID map)
+ *   Stage 3 — Hash        (FNV-1a network + layout hashes)
+ *   Stage 4 — Codegen     (7 emitter modules)
+ *   Stage 5 — Write-back  (commit generated buffers to disk)
+ *
+ * Each stage fails fast: as soon as one reports an error the pipeline
+ * cleans up and returns without running later stages.
  */
 ProfStatus profiler_generate_v2(
     const ProfGenerateRequest* req,
@@ -30,9 +45,14 @@ ProfStatus profiler_generate_v2(
     ProfErrorBuffer error;
     ProfCodegenContext codegen_ctx;
     NN_NetworkDef* network;
-    uint64_t network_hash;
-    uint64_t layout_hash;
-    ProfStatus st;
+    FlatNetwork flat;
+    int           flat_built;
+    uint64_t      network_hash;
+    uint64_t      layout_hash;
+    ProfStatus    st;
+
+    flat_built = 0;
+    (void)memset(&flat, 0, sizeof(flat));
 
     /* The public API rejects a NULL request before touching user buffers. */
     if (req == NULL) {
@@ -45,7 +65,8 @@ ProfStatus profiler_generate_v2(
     /* The current profiler pipeline consumes the structured network directly. */
     network = (NN_NetworkDef*)req->network_def;
 
-    /* Stage 1: validate topology, paths, and registration-dependent contracts. */
+    /* Stage 1: validate topology, paths, and registration-dependent contracts.
+       Validation now uses FlatNetwork internally for O(1) leaf lookups. */
     st = prof_validate_all(req, &error);
     if (st != PROF_STATUS_OK) {
         if (error.buffer != NULL && error.capacity > 0U && error.buffer[0] == '\0') {
@@ -54,16 +75,25 @@ ProfStatus profiler_generate_v2(
         return st;
     }
 
-    /* Stage 2: compute the two hashes used by save/load compatibility checks. */
+    /* Stage 2: flatten the validated network into an immutable leaf graph.
+       This is the single source of truth for all downstream consumers. */
+    if (prof_flatten_build(network, &flat) == 0) {
+        flat_built = 1;
+    }
+
+    /* Stage 3: compute the two hashes used by save / load compatibility checks. */
     network_hash = prof_network_hash(network);
     layout_hash = prof_layout_hash(network);
 
-    /* Stage 3: pass the normalized request into the code generator. */
+    /* Stage 4: pass the normalized request into the code generator. */
     prof_codegen_init(&codegen_ctx, network, &req->output_layout,
         network_hash, layout_hash, &error);
 
     st = prof_codegen_generate_all(&codegen_ctx);
     if (st != PROF_STATUS_OK) {
+        if (flat_built) {
+            prof_flatten_free(&flat);
+        }
         if (error.buffer != NULL && error.capacity > 0U && error.buffer[0] == '\0') {
             prof_error_set(&error, st, "%s", prof_status_to_string(st));
         }
@@ -76,5 +106,8 @@ ProfStatus profiler_generate_v2(
         out_result->metadata_written_path = req->output_layout.metadata_path;
     }
 
+    if (flat_built) {
+        prof_flatten_free(&flat);
+    }
     return PROF_STATUS_OK;
 }

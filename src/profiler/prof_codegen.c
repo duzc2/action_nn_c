@@ -86,9 +86,14 @@ typedef struct {
 
 /**
  * @brief Write one generated source blob to its final destination path.
+ *
+ * Returns ACTION_C_OK only when fopen, fprintf, and fclose all succeed.
+ * Any failure produces an IO_FAILED status so the pipeline can abort.
  */
 static ProfStatus write_file(const char* path, const char* content) {
     FILE* fp;
+    int written;
+    int closed;
 
     if (path == NULL || content == NULL) {
         return PROF_STATUS_PATH_INVALID;
@@ -99,8 +104,17 @@ static ProfStatus write_file(const char* path, const char* content) {
         return PROF_STATUS_IO_FAILED;
     }
 
-    (void)fprintf(fp, "%s", content);
-    (void)fclose(fp);
+    written = fprintf(fp, "%s", content);
+    if (written < 0) {
+        (void)fclose(fp);
+        return PROF_STATUS_IO_FAILED;
+    }
+
+    closed = fclose(fp);
+    if (closed != 0) {
+        return PROF_STATUS_IO_FAILED;
+    }
+
     return PROF_STATUS_OK;
 }
 

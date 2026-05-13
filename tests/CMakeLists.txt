@@ -70,3 +70,33 @@ action_c_add_test(test_all_vtables nn/test_all_vtables.c
     ${CMAKE_SOURCE_DIR}/src/utils/log.c
     ${CMAKE_SOURCE_DIR}/src/utils/arena.c)
 target_link_libraries(test_all_vtables nn_train_core)
+
+# Phase 2: Profiler pipeline tests
+action_c_add_test(test_flatten profiler/test_flatten.c)
+target_link_libraries(test_flatten profiler_core)
+
+action_c_add_test(test_validate_pipeline profiler/test_validate_pipeline.c
+    ${CMAKE_SOURCE_DIR}/src/utils/arena.c
+    ${CMAKE_SOURCE_DIR}/src/utils/log.c)
+target_link_libraries(test_validate_pipeline profiler_core)
+
+action_c_add_test(test_pipeline_types profiler/test_pipeline_types.c
+    ${CMAKE_SOURCE_DIR}/src/profiler/prof_pipeline.c)
+target_include_directories(test_pipeline_types PRIVATE ${CMAKE_SOURCE_DIR}/src)
+
+action_c_add_test(test_string_hash_map profiler/test_string_hash_map.c
+    ${CMAKE_SOURCE_DIR}/src/profiler/prof_flatten.c
+    ${CMAKE_SOURCE_DIR}/src/profiler/prof_hash.c
+    ${CMAKE_SOURCE_DIR}/src/profiler/profiler_types.c
+    ${CMAKE_SOURCE_DIR}/src/profiler/network_def.c
+    ${CMAKE_SOURCE_DIR}/src/profiler/prof_error.c)
+target_include_directories(test_string_hash_map PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_string_hash_map nn_infer_core)
+
+action_c_add_test(test_write_file profiler/test_write_file.c)
+target_compile_definitions(test_write_file PRIVATE _CRT_SECURE_NO_WARNINGS)
+
+action_c_add_test(test_pipeline_e2e integration/test_pipeline_e2e.c
+    ${CMAKE_SOURCE_DIR}/src/utils/arena.c
+    ${CMAKE_SOURCE_DIR}/src/utils/log.c)
+target_link_libraries(test_pipeline_e2e profiler_core)
