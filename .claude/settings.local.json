@@ -74,7 +74,10 @@
       "Bash(clang-tidy:*)",
       "Bash(ldd:*)",
       "Bash(dumpbin:*)",
-      "Bash(export:*)"
+      "Bash(export:*)",
+      "Bash(printf:*)",
+      "Bash(/c/Users/ASUS/Desktop/ai-build-ai/action_c/build/demo/sevenseg/infer/Debug/sevenseg_infer.exe:*)",
+      "Bash(/c/Users/ASUS/Desktop/ai-build-ai/action_c/build/demo/mnist/train/Debug/mnist_train.exe:*)"
     ]
   }
 }

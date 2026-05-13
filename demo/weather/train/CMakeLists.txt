@@ -1,12 +1,12 @@
 cmake_minimum_required(VERSION 3.20)
 set(CMAKE_C_EXTENSIONS OFF)
-project(mnist_cnn_train C)
+project(weather_train C)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
 include(${CMAKE_CURRENT_LIST_DIR}/../../demo_common.cmake)
-action_c_enable_network_types(TYPES cnn cnn_dual_pool mlp)
+action_c_enable_network_types(TYPES mlp)
 action_c_add_core_subdirectory()
 
 action_c_get_demo_generated_dir(GENERATED_DIR)
@@ -20,20 +20,20 @@ set_source_files_properties(
     PROPERTIES GENERATED TRUE
 )
 
-add_executable(mnist_cnn_train
+add_executable(weather_train
     ../train_main.c
-    ../../dataset/mnist_dataset.c
+    ../weather_dataset.c
     "${GENERATED_INFER_C}"
     "${GENERATED_TRAIN_C}"
     "${GENERATED_WEIGHTS_SAVE_C}"
 )
-action_c_apply_strict_warnings(mnist_cnn_train)
+action_c_apply_strict_warnings(weather_train)
 
-target_include_directories(mnist_cnn_train PRIVATE
+target_include_directories(weather_train PRIVATE
     "${ACTION_C_ROOT}/src"
     "${GENERATED_DIR}"
 )
 
-target_link_libraries(mnist_cnn_train PRIVATE
+target_link_libraries(weather_train PRIVATE
     nn_train_core
 )

@@ -12,10 +12,6 @@ action_c_add_core_subdirectory()
 add_executable(cnn_rnn_react_generate ../generate_main.c)
 action_c_apply_strict_warnings(cnn_rnn_react_generate)
 
-set_target_properties(cnn_rnn_react_generate PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Debug"
-)
-
 target_link_libraries(cnn_rnn_react_generate PRIVATE
     profiler_core
 )

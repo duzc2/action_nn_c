@@ -29,10 +29,6 @@ add_executable(cnn_rnn_react_train
 )
 action_c_apply_strict_warnings(cnn_rnn_react_train)
 
-set_target_properties(cnn_rnn_react_train PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Debug"
-)
-
 target_include_directories(cnn_rnn_react_train PRIVATE
     "${ACTION_C_ROOT}/src"
     "${GENERATED_DIR}"
