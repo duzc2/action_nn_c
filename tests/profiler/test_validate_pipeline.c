@@ -26,23 +26,6 @@ static NN_NetworkDef* build_linear_network(void) {
     return net;
 }
 
-static void fill_output_layout_trivial(ProfOutputLayout* layout) {
-    (void)memset(layout, 0, sizeof(*layout));
-    layout->tokenizer.c_path    = "build/val/tokenizer.c";
-    layout->tokenizer.h_path    = "build/val/tokenizer.h";
-    layout->network_init.c_path = "build/val/network_init.c";
-    layout->network_init.h_path = "build/val/network_init.h";
-    layout->weights_load.c_path = "build/val/weights_load.c";
-    layout->weights_load.h_path = "build/val/weights_load.h";
-    layout->train.c_path        = "build/val/train.c";
-    layout->train.h_path        = "build/val/train.h";
-    layout->weights_save.c_path = "build/val/weights_save.c";
-    layout->weights_save.h_path = "build/val/weights_save.h";
-    layout->infer.c_path        = "build/val/infer.c";
-    layout->infer.h_path        = "build/val/infer.h";
-    layout->metadata_path       = "build/val/metadata.h";
-}
-
 /* --- tests --- */
 
 TEST(validate_rejects_null_request) {

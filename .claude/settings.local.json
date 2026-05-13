@@ -69,7 +69,12 @@
       "Bash(tests/Debug/test_mlp_vtable.exe:*)",
       "Bash(tests/Debug/test_all_vtables.exe)",
       "Bash(find:*)",
-      "Bash(\"C:\\\\Users\\\\ASUS\\\\Desktop\\\\ai-build-ai\\\\action_c\\\\build\\\\debug\\\\tests\\\\Debug\\\\test_write_file.exe\":*)"
+      "Bash(\"C:\\\\Users\\\\ASUS\\\\Desktop\\\\ai-build-ai\\\\action_c\\\\build\\\\debug\\\\tests\\\\Debug\\\\test_write_file.exe\":*)",
+      "Bash(cppcheck:*)",
+      "Bash(clang-tidy:*)",
+      "Bash(ldd:*)",
+      "Bash(dumpbin:*)",
+      "Bash(export:*)"
     ]
   }
 }

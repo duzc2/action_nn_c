@@ -12,8 +12,7 @@ action_nn_c 是一个纯 C 实现的神经网络库，具有代码生成（profi
 
 - **多种网络类型支持**
   - MLP (多层感知机)
-  - CNN (卷积神经网络)
-  - CNN Dual Pool (双池化卷积网络)
+  - CNN (卷积神经网络，含 Dual Pool 模式)
   - RNN (循环神经网络)
   - GNN (图神经网络)
   - Transformer (注意力机制网络)
@@ -35,66 +34,95 @@ action_nn_c/
 ├── src/
 │   ├── nn/                 # 神经网络核心实现
 │   │   └── types/          # 网络类型实现
-│   │       ├── mlp/         # MLP 实现
-│   │       ├── cnn/         # CNN 实现 (含 dual_pool 模式)
+│   │       ├── mlp/        # MLP 实现
+│   │       ├── cnn/        # CNN 实现 (含 Dual Pool 模式)
 │   │       ├── gnn/        # GNN 实现
 │   │       ├── rnn/        # RNN 实现
 │   │       └── transformer/
-│   ├── profiler/          # 代码生成器
-│   ├── infer/             # 推理运行时
-│   └── train/             # 训练运行时
-├── demo/                  # 示例项目
-│   ├── mnist/             # MNIST 手写数字识别
-│   ├── mnist_cnn/         # MNIST CNN 版本
+│   ├── profiler/           # 代码生成器
+│   ├── train/              # 训练运行时
+│   ├── utils/              # 工具库 (arena, log, error)
+│   └── CMakeLists.txt
+├── tests/                  # 测试套件 (23 个测试)
+│   ├── CMakeLists.txt
+│   ├── test_harness.h      # 轻量测试框架
+│   ├── utils/              # 工具库测试
+│   ├── nn/                 # NN 核心测试
+│   ├── profiler/           # Profiler 测试
+│   ├── integration/        # 集成测试
+│   └── demo/               # Demo 回归测试
+├── demo/                   # 示例项目
+│   ├── mnist/              # MNIST 手写数字识别
+│   ├── mnist_cnn/          # MNIST CNN 版本
 │   ├── move/               # 移动控制 demo
 │   ├── target/             # 目标追踪 demo
 │   ├── sevenseg/           # 七段显示识别
 │   ├── nested_nav/         # 嵌套导航
 │   ├── road_graph_nav/     # 道路图导航
-│   ├── cnn_rnn_react/     # CNN+RNN 反应式控制
+│   ├── cnn_rnn_react/      # CNN+RNN 反应式控制
 │   ├── hybrid_route/       # 混合路由
-│   ├── transformer/       # Transformer 对话
-│   └── cs/                # CS 游戏 Demo
-└── docs/                  # 开发文档
+│   ├── transformer/        # Transformer 对话
+│   └── cs/                 # CS 游戏 Demo
+├── web_editor/             # 可视化网络编辑器 (Vite)
+├── wasm/                   # WebAssembly 导出
+├── scripts/                # 构建脚本
+├── cmake/                  # CMake 模块
+└── docs/                   # 开发文档
 ```
 
 ## 快速开始
 
-### 编译与运行流程
+### 构建与测试
 
-每个 demo 项目都遵循相同的 6 步流程：
+使用 CMake 预设 (debug / release / sanitized):
+
+```bash
+# Debug 构建
+cmake --preset debug
+cmake --build --preset debug
+
+# 运行测试套件
+ctest --preset debug
+
+# Release 构建
+cmake --preset release
+cmake --build --preset release
+
+# Sanitizer 构建 (需 clang, ASan + UBSan)
+cmake --preset sanitized
+cmake --build --preset sanitized
+ctest --preset sanitized
+
+# 注意: sanitized 构建需将 ASan DLL 加入 PATH
+# export PATH="$(llvm-config --libdir)/clang/$(llvm-config --version | cut -d. -f1)/lib/windows:$PATH"
+```
+
+### 运行 Demo
+
+使用统一脚本:
+
+```bash
+# 运行单个 demo
+bash scripts/run_demo.sh move
+
+# 指定阶段 (generate / train / infer)
+bash scripts/run_demo.sh move generate
+```
+
+### Demo 手动构建流程
+
+每个 demo 项目都遵循相同的流程:
 
 ```bash
 # 步骤1: 配置并编译生成器
 mkdir -p build/generate && cd build/generate
-cmake ../../demo/xxx -G "Unix Makefiles"  # 或使用其他 generator
+cmake ../../demo/xxx -G "Unix Makefiles"
 cmake --build .
 
 # 步骤2: 运行生成器
 ./generate/xxx_generate
 
-# 步骤3: 配置并编译训练
-mkdir -p build/train && cd build/train
-cmake ../../demo/xxx -G "Unix Makefiles"
-cmake --build .
-
-# 步骤4: 运行训练
-./train/xxx_train
-
-# 步骤5: 配置并编译推理
-mkdir -p build/infer && cd build/infer
-cmake ../../demo/xxx -G "Unix Makefiles"
-cmake --build .
-
-# 步骤6: 运行推理
-./infer/xxx_infer
-```
-
-### Windows 构建 (使用 clang)
-
-```powershell
-# 使用提供的脚本
-.\demo\xxx\run_demo.bat
+# 步骤3-6: 类似编译并运行 train / infer
 ```
 
 ## 网络类型

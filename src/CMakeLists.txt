@@ -19,6 +19,7 @@ if(NOT ACTION_C_ENABLE_NN_MLP AND
     message(FATAL_ERROR "At least one network type must be enabled for action_c")
 endif()
 
+add_subdirectory(utils)
 add_subdirectory(nn)
 add_subdirectory(infer)
 add_subdirectory(train)

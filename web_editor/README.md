@@ -37,48 +37,35 @@
 - **C 头文件**: 自动生成适用于 action_nn_c 的配置头文件
 - **导入配置**: 从 JSON 文件恢复之前的工作
 
+## 要求
+
+- **Node.js** >= 18.0.0
+- **npm** >= 9.0.0
+
 ## 快速开始
 
-### 方法一：使用启动脚本（推荐）
-
 ```bash
-# Linux/macOS
-cd /workspace/web_editor
-./start.sh
+# 安装依赖
+cd web_editor
+npm install
 
-# 或者指定端口
-./start.sh 3000
+# 开发模式 (热更新)
+npm run dev
+
+# 生产构建
+npm run build
+
+# 预览生产构建
+npm run preview
 ```
 
-### 方法二：手动启动
+浏览器访问 `http://127.0.0.1:5173` (Vite 默认端口)
+
+### 部署到生产环境
 
 ```bash
-# 进入 web_editor 目录
-cd /workspace/web_editor
-
-# 使用 Python 启动简单 HTTP 服务器
-python3 -m http.server 8080
-
-# 或使用 Node.js 的 http-server
-npx http-server -p 8080
-```
-
-然后在浏览器中访问 `http://localhost:8080`
-
-### 方法三：使用 VS Code Live Server
-
-1. 安装 VS Code 的 "Live Server" 扩展
-2. 右键点击 `index.html`
-3. 选择 "Open with Live Server"
-
-### 方法四：部署到生产环境
-
-```bash
-# 将 web_editor 目录复制到 Web 服务器
-cp -r /workspace/web_editor /var/www/html/
-
-# 或使用 Docker
-docker run -d -p 80:80 -v /workspace/web_editor:/usr/share/nginx/html nginx
+npm run build
+# 部署 dist/ 目录到任意静态文件服务器
 ```
 
 ## 使用说明
@@ -137,22 +124,21 @@ docker run -d -p 80:80 -v /workspace/web_editor:/usr/share/nginx/html nginx
 
 ```
 web_editor/
-├── index.html          # 主页面
-├── start.sh            # 快速启动脚本
+├── index.html          # 主页面 (含 CSP 安全策略)
+├── package.json        # Vite + Rete.js 2.x 依赖
+├── vite.config.js      # Vite 配置 (host: 127.0.0.1)
 ├── README.md           # 本文件
-├── css/
-│   └── style.css       # 样式文件
-├── js/
-│   ├── nodes.js        # 节点类型定义
-│   └── editor.js       # 编辑器主逻辑
-└── lib/                # 第三方库（Rete.js，通过 CDN 加载）
+├── src/
+│   └── main.js         # 编辑器主逻辑
+└── dist/               # 构建产物 (npm run build)
 ```
 
 ## 技术栈
 
-- **Rete.js 1.x**: 基于节点的可视化框架（通过 CDN 加载）
-- **HTML5/CSS3**: 现代化 UI 设计
-- **Vanilla JavaScript**: 无框架依赖，轻量级实现
+- **Rete.js 2.x**: 基于节点的可视化框架 (npm 依赖)
+- **Vite 6**: 开发服务器与构建工具
+- **Vue 3**: UI 组件 (rete-vue-plugin)
+- **Vanilla JavaScript**: 编辑器业务逻辑
 
 ## 与 action_nn_c 集成
 
@@ -181,7 +167,8 @@ int main() {
 2. **节点连接**: 确保输入层在最前，输出层在最后，中间层正确连接
 3. **参数验证**: 某些参数有取值范围限制，请注意提示
 4. **保存工作**: 定期导出 JSON 配置以防丢失
-5. **CDN 依赖**: 当前版本通过 CDN 加载 Rete.js 库，需要网络连接
+5. **依赖安装**: 必须先运行 `npm install`，所有依赖通过 npm 管理
+6. **安全**: 页面含有 CSP (Content Security Policy)，仅绑定 127.0.0.1
 
 ## 开发调试
 

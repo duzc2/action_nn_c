@@ -1,0 +1,452 @@
+[
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\utils\\CMakeFiles\\utils_core.dir\\arena.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\utils\\arena.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils/arena.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/utils/CMakeFiles/utils_core.dir/arena.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\utils\\CMakeFiles\\utils_core.dir\\log.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\utils\\log.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils/log.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/utils/CMakeFiles/utils_core.dir/log.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\nn\\CMakeFiles\\nn_infer_core.dir\\nn_graph_infer_contract.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\nn\\nn_graph_infer_contract.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn/nn_graph_infer_contract.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/nn/CMakeFiles/nn_infer_core.dir/nn_graph_infer_contract.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\nn\\CMakeFiles\\nn_infer_core.dir\\nn_infer_registry.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\nn\\nn_infer_registry.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn/nn_infer_registry.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/nn/CMakeFiles/nn_infer_core.dir/nn_infer_registry.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\nn\\CMakeFiles\\nn_infer_core.dir\\nn_infer_registry_autogen.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\build\\sanitized\\src\\nn\\nn_infer_registry_autogen.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/nn/nn_infer_registry_autogen.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/nn/CMakeFiles/nn_infer_core.dir/nn_infer_registry_autogen.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\nn\\CMakeFiles\\nn_infer_core.dir\\types\\mlp\\mlp_infer_ops.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\nn\\types\\mlp\\mlp_infer_ops.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn/types/mlp/mlp_infer_ops.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/nn/CMakeFiles/nn_infer_core.dir/types/mlp/mlp_infer_ops.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\nn\\CMakeFiles\\nn_infer_core.dir\\types\\transformer\\transformer_infer_ops.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\nn\\types\\transformer\\transformer_infer_ops.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn/types/transformer/transformer_infer_ops.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/nn/CMakeFiles/nn_infer_core.dir/types/transformer/transformer_infer_ops.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\nn\\CMakeFiles\\nn_infer_core.dir\\types\\transformer\\transformer_forward.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\nn\\types\\transformer\\transformer_forward.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn/types/transformer/transformer_forward.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/nn/CMakeFiles/nn_infer_core.dir/types/transformer/transformer_forward.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\nn\\CMakeFiles\\nn_infer_core.dir\\types\\cnn\\cnn_infer_ops.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\nn\\types\\cnn\\cnn_infer_ops.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn/types/cnn/cnn_infer_ops.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/nn/CMakeFiles/nn_infer_core.dir/types/cnn/cnn_infer_ops.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\nn\\CMakeFiles\\nn_infer_core.dir\\types\\rnn\\rnn_infer_ops.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\nn\\types\\rnn\\rnn_infer_ops.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn/types/rnn/rnn_infer_ops.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/nn/CMakeFiles/nn_infer_core.dir/types/rnn/rnn_infer_ops.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\nn\\CMakeFiles\\nn_infer_core.dir\\types\\gnn\\gnn_infer_ops.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\nn\\types\\gnn\\gnn_infer_ops.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn/types/gnn/gnn_infer_ops.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/nn/CMakeFiles/nn_infer_core.dir/types/gnn/gnn_infer_ops.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\nn\\CMakeFiles\\nn_infer_core.dir\\types\\mlp\\nn_type_mlp_infer.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\nn\\types\\mlp\\nn_type_mlp_infer.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn/types/mlp/nn_type_mlp_infer.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/nn/CMakeFiles/nn_infer_core.dir/types/mlp/nn_type_mlp_infer.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\nn\\CMakeFiles\\nn_infer_core.dir\\types\\transformer\\nn_type_transformer_infer.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\nn\\types\\transformer\\nn_type_transformer_infer.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn/types/transformer/nn_type_transformer_infer.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/nn/CMakeFiles/nn_infer_core.dir/types/transformer/nn_type_transformer_infer.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\nn\\CMakeFiles\\nn_infer_core.dir\\types\\cnn\\nn_type_cnn_dual_pool_infer.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\nn\\types\\cnn\\nn_type_cnn_dual_pool_infer.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn/types/cnn/nn_type_cnn_dual_pool_infer.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/nn/CMakeFiles/nn_infer_core.dir/types/cnn/nn_type_cnn_dual_pool_infer.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\nn\\CMakeFiles\\nn_infer_core.dir\\types\\cnn\\nn_type_cnn_infer.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\nn\\types\\cnn\\nn_type_cnn_infer.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn/types/cnn/nn_type_cnn_infer.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/nn/CMakeFiles/nn_infer_core.dir/types/cnn/nn_type_cnn_infer.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\nn\\CMakeFiles\\nn_infer_core.dir\\types\\rnn\\nn_type_rnn_infer.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\nn\\types\\rnn\\nn_type_rnn_infer.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn/types/rnn/nn_type_rnn_infer.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/nn/CMakeFiles/nn_infer_core.dir/types/rnn/nn_type_rnn_infer.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\nn\\CMakeFiles\\nn_infer_core.dir\\types\\gnn\\nn_type_gnn_infer.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\nn\\types\\gnn\\nn_type_gnn_infer.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn/types/gnn/nn_type_gnn_infer.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/nn/CMakeFiles/nn_infer_core.dir/types/gnn/nn_type_gnn_infer.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\nn\\CMakeFiles\\nn_infer_core.dir\\types\\mlp\\mlp_layers.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\nn\\types\\mlp\\mlp_layers.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn/types/mlp/mlp_layers.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/nn/CMakeFiles/nn_infer_core.dir/types/mlp/mlp_layers.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\nn\\CMakeFiles\\nn_train_core.dir\\nn_graph_train_contract.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\nn\\nn_graph_train_contract.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn/nn_graph_train_contract.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/nn/CMakeFiles/nn_train_core.dir/nn_graph_train_contract.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\nn\\CMakeFiles\\nn_train_core.dir\\nn_train_registry.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\nn\\nn_train_registry.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn/nn_train_registry.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/nn/CMakeFiles/nn_train_core.dir/nn_train_registry.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\nn\\CMakeFiles\\nn_train_core.dir\\nn_train_registry_autogen.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\build\\sanitized\\src\\nn\\nn_train_registry_autogen.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/nn/nn_train_registry_autogen.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/nn/CMakeFiles/nn_train_core.dir/nn_train_registry_autogen.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\nn\\CMakeFiles\\nn_train_core.dir\\types\\mlp\\mlp_train_ops.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\nn\\types\\mlp\\mlp_train_ops.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn/types/mlp/mlp_train_ops.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/nn/CMakeFiles/nn_train_core.dir/types/mlp/mlp_train_ops.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\nn\\CMakeFiles\\nn_train_core.dir\\types\\transformer\\transformer_train_ops.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\nn\\types\\transformer\\transformer_train_ops.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn/types/transformer/transformer_train_ops.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/nn/CMakeFiles/nn_train_core.dir/types/transformer/transformer_train_ops.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\nn\\CMakeFiles\\nn_train_core.dir\\types\\cnn\\cnn_train_ops.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\nn\\types\\cnn\\cnn_train_ops.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn/types/cnn/cnn_train_ops.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/nn/CMakeFiles/nn_train_core.dir/types/cnn/cnn_train_ops.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\nn\\CMakeFiles\\nn_train_core.dir\\types\\rnn\\rnn_train_ops.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\nn\\types\\rnn\\rnn_train_ops.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn/types/rnn/rnn_train_ops.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/nn/CMakeFiles/nn_train_core.dir/types/rnn/rnn_train_ops.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\nn\\CMakeFiles\\nn_train_core.dir\\types\\gnn\\gnn_train_ops.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\nn\\types\\gnn\\gnn_train_ops.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn/types/gnn/gnn_train_ops.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/nn/CMakeFiles/nn_train_core.dir/types/gnn/gnn_train_ops.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\nn\\CMakeFiles\\nn_train_core.dir\\types\\mlp\\nn_type_mlp_train.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\nn\\types\\mlp\\nn_type_mlp_train.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn/types/mlp/nn_type_mlp_train.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/nn/CMakeFiles/nn_train_core.dir/types/mlp/nn_type_mlp_train.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\nn\\CMakeFiles\\nn_train_core.dir\\types\\transformer\\nn_type_transformer_train.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\nn\\types\\transformer\\nn_type_transformer_train.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn/types/transformer/nn_type_transformer_train.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/nn/CMakeFiles/nn_train_core.dir/types/transformer/nn_type_transformer_train.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\nn\\CMakeFiles\\nn_train_core.dir\\types\\cnn\\nn_type_cnn_dual_pool_train.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\nn\\types\\cnn\\nn_type_cnn_dual_pool_train.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn/types/cnn/nn_type_cnn_dual_pool_train.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/nn/CMakeFiles/nn_train_core.dir/types/cnn/nn_type_cnn_dual_pool_train.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\nn\\CMakeFiles\\nn_train_core.dir\\types\\cnn\\nn_type_cnn_train.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\nn\\types\\cnn\\nn_type_cnn_train.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn/types/cnn/nn_type_cnn_train.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/nn/CMakeFiles/nn_train_core.dir/types/cnn/nn_type_cnn_train.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\nn\\CMakeFiles\\nn_train_core.dir\\types\\rnn\\nn_type_rnn_train.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\nn\\types\\rnn\\nn_type_rnn_train.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn/types/rnn/nn_type_rnn_train.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/nn/CMakeFiles/nn_train_core.dir/types/rnn/nn_type_rnn_train.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\nn\\CMakeFiles\\nn_train_core.dir\\types\\gnn\\nn_type_gnn_train.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\nn\\types\\gnn\\nn_type_gnn_train.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn/types/gnn/nn_type_gnn_train.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/nn/CMakeFiles/nn_train_core.dir/types/gnn/nn_type_gnn_train.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/infer -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\infer\\CMakeFiles\\infer_core.dir\\infer_runtime.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\infer\\infer_runtime.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/infer/infer_runtime.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/infer/CMakeFiles/infer_core.dir/infer_runtime.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/train -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/infer -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\train\\CMakeFiles\\train_core.dir\\train_runtime.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\train\\train_runtime.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/train/train_runtime.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/train/CMakeFiles/train_core.dir/train_runtime.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/infer -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\profiler\\CMakeFiles\\profiler_core.dir\\profiler.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\profiler\\profiler.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler/profiler.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/profiler/CMakeFiles/profiler_core.dir/profiler.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/infer -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\profiler\\CMakeFiles\\profiler_core.dir\\profiler_types.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\profiler\\profiler_types.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler/profiler_types.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/profiler/CMakeFiles/profiler_core.dir/profiler_types.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/infer -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\profiler\\CMakeFiles\\profiler_core.dir\\prof_error.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\profiler\\prof_error.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler/prof_error.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/profiler/CMakeFiles/profiler_core.dir/prof_error.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/infer -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\profiler\\CMakeFiles\\profiler_core.dir\\prof_path.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\profiler\\prof_path.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler/prof_path.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/profiler/CMakeFiles/profiler_core.dir/prof_path.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/infer -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\profiler\\CMakeFiles\\profiler_core.dir\\network_def.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\profiler\\network_def.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler/network_def.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/profiler/CMakeFiles/profiler_core.dir/network_def.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/infer -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\profiler\\CMakeFiles\\profiler_core.dir\\prof_flatten.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\profiler\\prof_flatten.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler/prof_flatten.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/profiler/CMakeFiles/profiler_core.dir/prof_flatten.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/infer -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\profiler\\CMakeFiles\\profiler_core.dir\\prof_hash.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\profiler\\prof_hash.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler/prof_hash.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/profiler/CMakeFiles/profiler_core.dir/prof_hash.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/infer -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\profiler\\CMakeFiles\\profiler_core.dir\\prof_validate.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\profiler\\prof_validate.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler/prof_validate.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/profiler/CMakeFiles/profiler_core.dir/prof_validate.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/infer -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o src\\profiler\\CMakeFiles\\profiler_core.dir\\prof_codegen.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\profiler\\prof_codegen.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler/prof_codegen.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/src/profiler/CMakeFiles/profiler_core.dir/prof_codegen.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/tests -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o tests\\CMakeFiles\\test_harness_smoke.dir\\smoke_test.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\tests\\smoke_test.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/tests/smoke_test.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/tests/CMakeFiles/test_harness_smoke.dir/smoke_test.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/tests -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o tests\\CMakeFiles\\test_error.dir\\utils\\test_error.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\tests\\utils\\test_error.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/tests/utils/test_error.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/tests/CMakeFiles/test_error.dir/utils/test_error.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/tests -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o tests\\CMakeFiles\\test_log.dir\\utils\\test_log.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\tests\\utils\\test_log.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/tests/utils/test_log.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/tests/CMakeFiles/test_log.dir/utils/test_log.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/tests -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o tests\\CMakeFiles\\test_safe_math.dir\\utils\\test_safe_math.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\tests\\utils\\test_safe_math.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/tests/utils/test_safe_math.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/tests/CMakeFiles/test_safe_math.dir/utils/test_safe_math.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/tests -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o tests\\CMakeFiles\\test_arena.dir\\utils\\test_arena.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\tests\\utils\\test_arena.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/tests/utils/test_arena.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/tests/CMakeFiles/test_arena.dir/utils/test_arena.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/tests -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o tests\\CMakeFiles\\test_mlp_arena_integration.dir\\nn\\test_mlp_arena_integration.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\tests\\nn\\test_mlp_arena_integration.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/tests/nn/test_mlp_arena_integration.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/tests/CMakeFiles/test_mlp_arena_integration.dir/nn/test_mlp_arena_integration.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/tests -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o tests\\CMakeFiles\\test_gnn_arena_integration.dir\\nn\\test_gnn_arena_integration.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\tests\\nn\\test_gnn_arena_integration.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/tests/nn/test_gnn_arena_integration.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/tests/CMakeFiles/test_gnn_arena_integration.dir/nn/test_gnn_arena_integration.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/tests -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o tests\\CMakeFiles\\test_rnn_pointer_swap.dir\\nn\\test_rnn_pointer_swap.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\tests\\nn\\test_rnn_pointer_swap.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/tests/nn/test_rnn_pointer_swap.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/tests/CMakeFiles/test_rnn_pointer_swap.dir/nn/test_rnn_pointer_swap.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/tests -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o tests\\CMakeFiles\\test_transformer_arena.dir\\nn\\test_transformer_arena.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\tests\\nn\\test_transformer_arena.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/tests/nn/test_transformer_arena.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/tests/CMakeFiles/test_transformer_arena.dir/nn/test_transformer_arena.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/tests -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o tests\\CMakeFiles\\test_safe_alloc_size.dir\\nn\\test_safe_alloc_size.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\tests\\nn\\test_safe_alloc_size.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/tests/nn/test_safe_alloc_size.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/tests/CMakeFiles/test_safe_alloc_size.dir/nn/test_safe_alloc_size.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/tests -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o tests\\CMakeFiles\\test_backend_struct_size.dir\\nn\\test_backend_struct_size.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\tests\\nn\\test_backend_struct_size.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/tests/nn/test_backend_struct_size.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/tests/CMakeFiles/test_backend_struct_size.dir/nn/test_backend_struct_size.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -D_CRT_SECURE_NO_WARNINGS -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/tests -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o tests\\CMakeFiles\\test_weight_header.dir\\nn\\test_weight_header.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\tests\\nn\\test_weight_header.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/tests/nn/test_weight_header.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/tests/CMakeFiles/test_weight_header.dir/nn/test_weight_header.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -D_CRT_SECURE_NO_WARNINGS -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/tests -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o tests\\CMakeFiles\\test_weight_header.dir\\__\\src\\nn\\nn_weight_header.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\nn\\nn_weight_header.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn/nn_weight_header.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/tests/CMakeFiles/test_weight_header.dir/__/src/nn/nn_weight_header.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -DNN_REGISTRY_BUILD_TEST -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/tests -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o tests\\CMakeFiles\\test_infer_registry.dir\\nn\\test_infer_registry.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\tests\\nn\\test_infer_registry.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/tests/nn/test_infer_registry.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/tests/CMakeFiles/test_infer_registry.dir/nn/test_infer_registry.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -DNN_REGISTRY_BUILD_TEST -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/tests -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o tests\\CMakeFiles\\test_infer_registry.dir\\__\\src\\nn\\nn_infer_registry.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\nn\\nn_infer_registry.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn/nn_infer_registry.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/tests/CMakeFiles/test_infer_registry.dir/__/src/nn/nn_infer_registry.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/tests -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o tests\\CMakeFiles\\test_mlp_vtable.dir\\nn\\test_mlp_vtable.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\tests\\nn\\test_mlp_vtable.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/tests/nn/test_mlp_vtable.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/tests/CMakeFiles/test_mlp_vtable.dir/nn/test_mlp_vtable.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/tests -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o tests\\CMakeFiles\\test_mnist_dataset.dir\\nn\\test_mnist_dataset.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\tests\\nn\\test_mnist_dataset.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/tests/nn/test_mnist_dataset.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/tests/CMakeFiles/test_mnist_dataset.dir/nn/test_mnist_dataset.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/tests -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o tests\\CMakeFiles\\test_mnist_dataset.dir\\__\\demo\\dataset\\mnist_dataset.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\demo\\dataset\\mnist_dataset.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/demo/dataset/mnist_dataset.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/tests/CMakeFiles/test_mnist_dataset.dir/__/demo/dataset/mnist_dataset.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/tests -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o tests\\CMakeFiles\\test_all_vtables.dir\\nn\\test_all_vtables.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\tests\\nn\\test_all_vtables.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/tests/nn/test_all_vtables.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/tests/CMakeFiles/test_all_vtables.dir/nn/test_all_vtables.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/tests -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/infer -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o tests\\CMakeFiles\\test_flatten.dir\\profiler\\test_flatten.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\tests\\profiler\\test_flatten.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/tests/profiler/test_flatten.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/tests/CMakeFiles/test_flatten.dir/profiler/test_flatten.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/tests -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/infer -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o tests\\CMakeFiles\\test_validate_pipeline.dir\\profiler\\test_validate_pipeline.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\tests\\profiler\\test_validate_pipeline.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/tests/profiler/test_validate_pipeline.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/tests/CMakeFiles/test_validate_pipeline.dir/profiler/test_validate_pipeline.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/tests -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o tests\\CMakeFiles\\test_pipeline_types.dir\\profiler\\test_pipeline_types.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\tests\\profiler\\test_pipeline_types.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/tests/profiler/test_pipeline_types.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/tests/CMakeFiles/test_pipeline_types.dir/profiler/test_pipeline_types.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/tests -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o tests\\CMakeFiles\\test_pipeline_types.dir\\__\\src\\profiler\\prof_pipeline.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\profiler\\prof_pipeline.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler/prof_pipeline.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/tests/CMakeFiles/test_pipeline_types.dir/__/src/profiler/prof_pipeline.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/tests -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o tests\\CMakeFiles\\test_string_hash_map.dir\\profiler\\test_string_hash_map.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\tests\\profiler\\test_string_hash_map.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/tests/profiler/test_string_hash_map.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/tests/CMakeFiles/test_string_hash_map.dir/profiler/test_string_hash_map.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/tests -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o tests\\CMakeFiles\\test_string_hash_map.dir\\__\\src\\profiler\\prof_flatten.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\profiler\\prof_flatten.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler/prof_flatten.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/tests/CMakeFiles/test_string_hash_map.dir/__/src/profiler/prof_flatten.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/tests -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o tests\\CMakeFiles\\test_string_hash_map.dir\\__\\src\\profiler\\prof_hash.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\profiler\\prof_hash.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler/prof_hash.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/tests/CMakeFiles/test_string_hash_map.dir/__/src/profiler/prof_hash.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/tests -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o tests\\CMakeFiles\\test_string_hash_map.dir\\__\\src\\profiler\\profiler_types.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\profiler\\profiler_types.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler/profiler_types.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/tests/CMakeFiles/test_string_hash_map.dir/__/src/profiler/profiler_types.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/tests -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o tests\\CMakeFiles\\test_string_hash_map.dir\\__\\src\\profiler\\network_def.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\profiler\\network_def.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler/network_def.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/tests/CMakeFiles/test_string_hash_map.dir/__/src/profiler/network_def.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/tests -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o tests\\CMakeFiles\\test_string_hash_map.dir\\__\\src\\profiler\\prof_error.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\src\\profiler\\prof_error.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler/prof_error.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/tests/CMakeFiles/test_string_hash_map.dir/__/src/profiler/prof_error.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -D_CRT_SECURE_NO_WARNINGS -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/tests -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o tests\\CMakeFiles\\test_write_file.dir\\profiler\\test_write_file.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\tests\\profiler\\test_write_file.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/tests/profiler/test_write_file.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/tests/CMakeFiles/test_write_file.dir/profiler/test_write_file.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/tests -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/profiler -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/nn -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/infer -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src/utils -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o tests\\CMakeFiles\\test_pipeline_e2e.dir\\integration\\test_pipeline_e2e.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\tests\\integration\\test_pipeline_e2e.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/tests/integration/test_pipeline_e2e.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/tests/CMakeFiles/test_pipeline_e2e.dir/integration/test_pipeline_e2e.c.obj"
+},
+{
+  "directory": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized",
+  "command": "C:\\PROGRA~1\\LLVM\\bin\\clang.exe -D_CRT_SECURE_NO_WARNINGS -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/tests -IC:/Users/ASUS/Desktop/ai-build-ai/action_c/src -fsanitize=address,undefined -fno-omit-frame-pointer -O0 -g -Xclang -gcodeview -std=c11 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -Wpedantic -Werror -o tests\\CMakeFiles\\test_cs_json_parse.dir\\demo\\test_cs_json_parse.c.obj -c C:\\Users\\ASUS\\Desktop\\ai-build-ai\\action_c\\tests\\demo\\test_cs_json_parse.c",
+  "file": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/tests/demo/test_cs_json_parse.c",
+  "output": "C:/Users/ASUS/Desktop/ai-build-ai/action_c/build/sanitized/tests/CMakeFiles/test_cs_json_parse.dir/demo/test_cs_json_parse.c.obj"
+}
+]

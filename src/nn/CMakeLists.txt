@@ -116,6 +116,9 @@ target_include_directories(nn_infer_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/src/profiler
 )
+target_link_libraries(nn_infer_core PUBLIC
+    utils_core
+)
 
 add_library(nn_train_core STATIC
     nn_graph_train_contract.c

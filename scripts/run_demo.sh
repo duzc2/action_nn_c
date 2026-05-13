@@ -31,14 +31,27 @@ if [ ! -d "$ROOT/demo/$DEMO" ]; then
     exit 1
 fi
 
+# Shared generated-code directory (generate phase writes here,
+# train and infer read from here).
+data_dir() {
+    echo "$ROOT/build/demo/$1/data"
+}
+
 build_and_run() {
     local demo=$1 phase=$2
     local build_dir="$ROOT/build/demo/$demo/$phase"
     local exe_path="$build_dir/$BUILD_TYPE/${demo}_${phase}${EXE}"
+    local extra_args=""
+
+    # Point train/infer to the shared generated-code directory.
+    if [ "$phase" != "generate" ]; then
+        extra_args="-DACTION_C_GENERATED_DIR=$(data_dir "$demo")"
+    fi
 
     echo "[$demo] configure + build $phase"
+    # shellcheck disable=SC2086
     cmake -S "$ROOT/demo/$demo/$phase" -B "$build_dir" \
-        -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
+        -DCMAKE_BUILD_TYPE="$BUILD_TYPE" $extra_args
     cmake --build "$build_dir" --config "$BUILD_TYPE"
 
     echo "[$demo] run $phase"

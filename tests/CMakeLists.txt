@@ -20,26 +20,23 @@ action_c_add_test(test_harness_smoke smoke_test.c)
 
 # utils tests
 action_c_add_test(test_error utils/test_error.c)
-action_c_add_test(test_log utils/test_log.c ${CMAKE_SOURCE_DIR}/src/utils/log.c)
+action_c_add_test(test_log utils/test_log.c)
+target_link_libraries(test_log utils_core)
 action_c_add_test(test_safe_math utils/test_safe_math.c)
-action_c_add_test(test_arena utils/test_arena.c
-    ${CMAKE_SOURCE_DIR}/src/utils/arena.c
-    ${CMAKE_SOURCE_DIR}/src/utils/log.c)
+action_c_add_test(test_arena utils/test_arena.c)
+target_link_libraries(test_arena utils_core)
 
 # nn tests
-action_c_add_test(test_mlp_arena_integration nn/test_mlp_arena_integration.c
-    ${CMAKE_SOURCE_DIR}/src/utils/arena.c
-    ${CMAKE_SOURCE_DIR}/src/utils/log.c)
+action_c_add_test(test_mlp_arena_integration nn/test_mlp_arena_integration.c)
+target_link_libraries(test_mlp_arena_integration utils_core)
 
-action_c_add_test(test_gnn_arena_integration nn/test_gnn_arena_integration.c
-    ${CMAKE_SOURCE_DIR}/src/utils/arena.c
-    ${CMAKE_SOURCE_DIR}/src/utils/log.c)
+action_c_add_test(test_gnn_arena_integration nn/test_gnn_arena_integration.c)
+target_link_libraries(test_gnn_arena_integration utils_core)
 
 action_c_add_test(test_rnn_pointer_swap nn/test_rnn_pointer_swap.c)
 
-action_c_add_test(test_transformer_arena nn/test_transformer_arena.c
-    ${CMAKE_SOURCE_DIR}/src/utils/arena.c
-    ${CMAKE_SOURCE_DIR}/src/utils/log.c)
+action_c_add_test(test_transformer_arena nn/test_transformer_arena.c)
+target_link_libraries(test_transformer_arena utils_core)
 
 # Track B: VTable and deduplication tests
 action_c_add_test(test_safe_alloc_size nn/test_safe_alloc_size.c)
@@ -47,38 +44,33 @@ action_c_add_test(test_safe_alloc_size nn/test_safe_alloc_size.c)
 action_c_add_test(test_backend_struct_size nn/test_backend_struct_size.c)
 
 action_c_add_test(test_weight_header nn/test_weight_header.c
-    ${CMAKE_SOURCE_DIR}/src/nn/nn_weight_header.c
-    ${CMAKE_SOURCE_DIR}/src/utils/log.c)
+    ${CMAKE_SOURCE_DIR}/src/nn/nn_weight_header.c)
+target_link_libraries(test_weight_header utils_core)
+target_compile_definitions(test_weight_header PRIVATE _CRT_SECURE_NO_WARNINGS)
 
 action_c_add_test(test_infer_registry nn/test_infer_registry.c
-    ${CMAKE_SOURCE_DIR}/src/nn/nn_infer_registry.c
-    ${CMAKE_SOURCE_DIR}/src/utils/log.c)
+    ${CMAKE_SOURCE_DIR}/src/nn/nn_infer_registry.c)
+target_link_libraries(test_infer_registry utils_core)
 target_compile_definitions(test_infer_registry PRIVATE NN_REGISTRY_BUILD_TEST)
 
 # Track B: MLP VTable tests
-action_c_add_test(test_mlp_vtable nn/test_mlp_vtable.c
-    ${CMAKE_SOURCE_DIR}/src/utils/log.c
-    ${CMAKE_SOURCE_DIR}/src/utils/arena.c)
-target_link_libraries(test_mlp_vtable nn_train_core)
+action_c_add_test(test_mlp_vtable nn/test_mlp_vtable.c)
+target_link_libraries(test_mlp_vtable nn_train_core utils_core)
 
 # Track B: MNIST dataset merge (B9)
 action_c_add_test(test_mnist_dataset nn/test_mnist_dataset.c
     ${CMAKE_SOURCE_DIR}/demo/dataset/mnist_dataset.c)
 
 # Track B: All backends VTable tests
-action_c_add_test(test_all_vtables nn/test_all_vtables.c
-    ${CMAKE_SOURCE_DIR}/src/utils/log.c
-    ${CMAKE_SOURCE_DIR}/src/utils/arena.c)
-target_link_libraries(test_all_vtables nn_train_core)
+action_c_add_test(test_all_vtables nn/test_all_vtables.c)
+target_link_libraries(test_all_vtables nn_train_core utils_core)
 
 # Phase 2: Profiler pipeline tests
 action_c_add_test(test_flatten profiler/test_flatten.c)
 target_link_libraries(test_flatten profiler_core)
 
-action_c_add_test(test_validate_pipeline profiler/test_validate_pipeline.c
-    ${CMAKE_SOURCE_DIR}/src/utils/arena.c
-    ${CMAKE_SOURCE_DIR}/src/utils/log.c)
-target_link_libraries(test_validate_pipeline profiler_core)
+action_c_add_test(test_validate_pipeline profiler/test_validate_pipeline.c)
+target_link_libraries(test_validate_pipeline profiler_core utils_core)
 
 action_c_add_test(test_pipeline_types profiler/test_pipeline_types.c
     ${CMAKE_SOURCE_DIR}/src/profiler/prof_pipeline.c)
@@ -96,10 +88,8 @@ target_link_libraries(test_string_hash_map nn_infer_core)
 action_c_add_test(test_write_file profiler/test_write_file.c)
 target_compile_definitions(test_write_file PRIVATE _CRT_SECURE_NO_WARNINGS)
 
-action_c_add_test(test_pipeline_e2e integration/test_pipeline_e2e.c
-    ${CMAKE_SOURCE_DIR}/src/utils/arena.c
-    ${CMAKE_SOURCE_DIR}/src/utils/log.c)
-target_link_libraries(test_pipeline_e2e profiler_core)
+action_c_add_test(test_pipeline_e2e integration/test_pipeline_e2e.c)
+target_link_libraries(test_pipeline_e2e profiler_core utils_core)
 
 # Phase 3: CS tool tests
 action_c_add_test(test_cs_json_parse demo/test_cs_json_parse.c)

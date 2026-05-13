@@ -106,5 +106,6 @@ int main(void) {
     printf("1..%d\n", _tests_run);
     printf("Results: %d pass, %d fail, %d total\n",
            _tests_pass, _tests_fail, _tests_run);
+    (void)&dummy2_backend;  /* reserved for future overflow test */
     return _tests_fail > 0 ? 1 : 0;
 }
