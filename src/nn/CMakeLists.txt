@@ -33,6 +33,8 @@ endif()
 if(ACTION_C_ENABLE_NN_TRANSFORMER)
     list(APPEND NN_ENABLED_TYPES transformer)
     action_c_append_type_sources(transformer)
+    # Unified forward pass (shared by infer + train)
+    list(APPEND NN_INFER_OP_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/types/transformer/transformer_forward.c")
 endif()
 
 if(ACTION_C_ENABLE_NN_CNN)
