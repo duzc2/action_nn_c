@@ -137,10 +137,10 @@ static void cnn_apply_parameter_update(CnnTrainContext* context) {
  * @brief Backpropagate one externally supplied dL/dY through the CNN leaf.
  */
 static int cnn_backpropagate(
-    CnnTrainContext* context,
-    const float* input,
-    const float* output_gradient,
-    float* input_gradient
+    CnnTrainContext* restrict context,
+    const float* restrict input,
+    const float* restrict output_gradient,
+    float* restrict input_gradient
 ) {
     CnnInferContext* infer_ctx;
     const CnnConfig* config;

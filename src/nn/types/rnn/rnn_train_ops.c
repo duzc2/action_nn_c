@@ -96,10 +96,10 @@ static void rnn_apply_parameter_update(RnnTrainContext* context) {
  * @brief Backpropagate one externally supplied dL/dY through the recurrent leaf.
  */
 static int rnn_backpropagate(
-    RnnTrainContext* context,
-    const float* input,
-    const float* output_gradient,
-    float* input_gradient
+    RnnTrainContext* restrict context,
+    const float* restrict input,
+    const float* restrict output_gradient,
+    float* restrict input_gradient
 ) {
     RnnInferContext* infer_ctx;
     const RnnConfig* config;

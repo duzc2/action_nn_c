@@ -188,8 +188,8 @@ static float cross_entropy_loss(const float* pred, const float* target,
  * @param size Number of elements
  */
 static void activation_derivative(MlpActivationType activation,
-                                   const float* output,
-                                   float* grad, size_t size) {
+                                   const float* restrict output,
+                                   float* restrict grad, size_t size) {
     size_t i;
 
     /* Gradients are modified in place because the caller already owns dL/dY. */
@@ -245,8 +245,8 @@ static void activation_derivative(MlpActivationType activation,
  * vectors. Weight decay is injected directly into the weight gradient, while
  * bias updates intentionally skip decay to match common dense-layer practice.
  */
-static void update_sgd(float* weights, float* bias,
-                       const MlpLayerGrad* grad,
+static void update_sgd(float* restrict weights, float* restrict bias,
+                       const MlpLayerGrad* restrict grad,
                        float lr, float momentum, float weight_decay,
                        size_t weight_count, size_t bias_count) {
     size_t i;
@@ -274,8 +274,8 @@ static void update_sgd(float* weights, float* bias,
  * correction uses the effective step count supplied by the caller, which keeps
  * the helper stateless apart from the moment buffers themselves.
  */
-static void update_adam(float* weights, float* bias,
-                        const MlpLayerGrad* grad,
+static void update_adam(float* restrict weights, float* restrict bias,
+                        const MlpLayerGrad* restrict grad,
                         float lr, float weight_decay,
                         size_t t,
                         size_t weight_count, size_t bias_count) {

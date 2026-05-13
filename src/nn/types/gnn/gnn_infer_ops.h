@@ -49,10 +49,10 @@ void nn_gnn_infer_get_output(void* context, float* output, size_t size);
 int nn_gnn_infer_step(void* context);
 int nn_gnn_infer_auto_run(void* context, const float* input, float* output);
 int nn_gnn_forward_pass(
-    GnnInferContext* context,
-    const float* input,
-    float* output,
-    float* hidden_cache
+    GnnInferContext* restrict context,
+    const float* restrict input,
+    float* restrict output,
+    float* restrict hidden_cache
 );
 int nn_gnn_load_weights(void* context, FILE* fp);
 int nn_gnn_save_weights(void* context, FILE* fp);

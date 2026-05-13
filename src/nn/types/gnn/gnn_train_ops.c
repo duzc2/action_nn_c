@@ -268,10 +268,10 @@ static void gnn_apply_parameter_update(GnnTrainContext* context) {
  * @brief Backpropagate one externally supplied dL/dY through the GNN leaf.
  */
 static int gnn_backpropagate(
-    GnnTrainContext* context,
-    const float* input,
-    const float* output_gradient,
-    float* input_gradient
+    GnnTrainContext* restrict context,
+    const float* restrict input,
+    const float* restrict output_gradient,
+    float* restrict input_gradient
 ) {
     GnnInferContext* infer_ctx;
     const GnnConfig* config;

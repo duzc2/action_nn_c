@@ -64,7 +64,10 @@
       "Bash(./build/demo/move/train/Debug/move_train.exe:*)",
       "Bash(./build/demo/move/infer/Debug/move_infer.exe:*)",
       "Bash(bash:*)",
-      "Bash(tests/Debug/test_mnist_dataset.exe:*)"
+      "Bash(tests/Debug/test_mnist_dataset.exe:*)",
+      "Bash(tests/Debug/test_safe_alloc_size.exe:*)",
+      "Bash(tests/Debug/test_mlp_vtable.exe:*)",
+      "Bash(tests/Debug/test_all_vtables.exe)"
     ]
   }
 }

@@ -39,11 +39,11 @@ void nn_rnn_infer_get_output(void* context, float* output, size_t size);
 int nn_rnn_infer_step(void* context);
 int nn_rnn_infer_auto_run(void* context, const float* input, float* output);
 int nn_rnn_forward_pass(
-    RnnInferContext* context,
-    const float* input,
-    float* output,
-    float* hidden_cache,
-    float* output_linear_cache
+    RnnInferContext* restrict context,
+    const float* restrict input,
+    float* restrict output,
+    float* restrict hidden_cache,
+    float* restrict output_linear_cache
 );
 int nn_rnn_load_weights(void* context, FILE* fp);
 int nn_rnn_save_weights(void* context, FILE* fp);

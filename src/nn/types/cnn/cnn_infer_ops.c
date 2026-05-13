@@ -325,13 +325,13 @@ void nn_cnn_infer_get_output(void* ctx, float* output, size_t size) {
  * @brief Run the CNN forward pipeline with optional training caches.
  */
 int nn_cnn_forward_pass(
-    CnnInferContext* context,
-    const float* input,
-    float* output,
-    float* pooled_linear_cache,
-    float* pooled_activation_cache,
-    size_t* max_index_cache,
-    float* output_linear_cache
+    CnnInferContext* restrict context,
+    const float* restrict input,
+    float* restrict output,
+    float* restrict pooled_linear_cache,
+    float* restrict pooled_activation_cache,
+    size_t* restrict max_index_cache,
+    float* restrict output_linear_cache
 ) {
     const CnnConfig* config;
     size_t frame_stride;

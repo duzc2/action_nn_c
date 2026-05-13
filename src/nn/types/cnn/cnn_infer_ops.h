@@ -47,13 +47,13 @@ int nn_cnn_infer_auto_run(void* context, const float* input, float* output);
  * Any cache pointer may be NULL when the caller only needs the final output.
  */
 int nn_cnn_forward_pass(
-    CnnInferContext* context,
-    const float* input,
-    float* output,
-    float* pooled_linear_cache,
-    float* pooled_activation_cache,
-    size_t* max_index_cache,
-    float* output_linear_cache
+    CnnInferContext* restrict context,
+    const float* restrict input,
+    float* restrict output,
+    float* restrict pooled_linear_cache,
+    float* restrict pooled_activation_cache,
+    size_t* restrict max_index_cache,
+    float* restrict output_linear_cache
 );
 
 int nn_cnn_load_weights(void* context, FILE* fp);

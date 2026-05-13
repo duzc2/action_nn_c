@@ -50,7 +50,7 @@ typedef float (*ActivationFn)(float x);
  * @param size Number of elements
  * @param act_type Activation type
  */
-void mlp_activation(float* output, const float* input, size_t size, MlpActivationType act_type);
+void mlp_activation(float* restrict output, const float* restrict input, size_t size, MlpActivationType act_type);
 
 /**
  * @brief Dense layer forward propagation: output = activation(W * input + b)
@@ -59,7 +59,7 @@ void mlp_activation(float* output, const float* input, size_t size, MlpActivatio
  * @param output Output array (size: layer->output_size)
  * @param input Input array (size: layer->input_size)
  */
-void mlp_dense_forward(const MlpDenseLayer* layer, float* output, const float* input);
+void mlp_dense_forward(const MlpDenseLayer* restrict layer, float* restrict output, const float* restrict input);
 
 /**
  * @brief Initialize layer with Xavier/Glorot initialization

@@ -557,10 +557,10 @@ void nn_gnn_infer_get_output(void* ctx, float* output, size_t size) {
  * @brief Run the full node-encoding, message-passing, and configurable readout pipeline.
  */
 int nn_gnn_forward_pass(
-    GnnInferContext* context,
-    const float* input,
-    float* output,
-    float* hidden_cache
+    GnnInferContext* restrict context,
+    const float* restrict input,
+    float* restrict output,
+    float* restrict hidden_cache
 ) {
     const GnnConfig* config;
     float* cache = hidden_cache;

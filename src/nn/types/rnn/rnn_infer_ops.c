@@ -238,11 +238,11 @@ void nn_rnn_infer_get_output(void* ctx, float* output, size_t size) {
  * @brief Run the RNN forward pipeline with optional hidden-state caches.
  */
 int nn_rnn_forward_pass(
-    RnnInferContext* context,
-    const float* input,
-    float* output,
-    float* hidden_cache,
-    float* output_linear_cache
+    RnnInferContext* restrict context,
+    const float* restrict input,
+    float* restrict output,
+    float* restrict hidden_cache,
+    float* restrict output_linear_cache
 ) {
     const RnnConfig* config;
     float* previous_hidden;

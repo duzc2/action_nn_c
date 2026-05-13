@@ -59,9 +59,9 @@ float  transformer_vector_norm(const float* values, size_t count);
 /* ─── Unified forward pass ───────────────────────────────────────────── */
 
 int transformer_run_forward(
-    const TransformerInferContext* context,
-    const char* question,
-    struct TransformerForwardCache* cache
+    const TransformerInferContext* restrict context,
+    const char* restrict question,
+    struct TransformerForwardCache* restrict cache
 );
 
 #ifdef __cplusplus

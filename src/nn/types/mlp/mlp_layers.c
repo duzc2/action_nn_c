@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include "../../../utils/safe_math.h"
 
 #define LEAKY_RELU_ALPHA 0.01f
 
@@ -96,7 +97,7 @@ ActivationFn mlp_get_activation(MlpActivationType act_type) {
  * Softmax is handled inline because it needs vector-wide normalization rather
  * than the scalar callback used by the other activation functions.
  */
-void mlp_activation(float* output, const float* input, size_t size, MlpActivationType act_type) {
+void mlp_activation(float* restrict output, const float* restrict input, size_t size, MlpActivationType act_type) {
     size_t i;
 
     if (output == NULL || input == NULL) {
@@ -166,7 +167,7 @@ void mlp_activation(float* output, const float* input, size_t size, MlpActivatio
  * The helper computes the affine transform first and only then applies the
  * activation policy, which keeps raw weighted sums available for MLP_ACT_NONE.
  */
-void mlp_dense_forward(const MlpDenseLayer* layer, float* output, const float* input) {
+void mlp_dense_forward(const MlpDenseLayer* restrict layer, float* restrict output, const float* restrict input) {
     size_t i;
     size_t j;
 
@@ -249,8 +250,15 @@ MlpDenseLayer* mlp_dense_create(
     uint32_t seed
 ) {
     MlpDenseLayer* layer;
+    size_t weight_count;
 
     if (input_size == 0 || output_size == 0) {
+        return NULL;
+    }
+
+    /* Overflow-safe weight element count. */
+    weight_count = safe_size_mul(input_size, output_size, SIZE_MAX);
+    if (weight_count == 0) {
         return NULL;
     }
 
@@ -262,9 +270,10 @@ MlpDenseLayer* mlp_dense_create(
     layer->input_size = input_size;
     layer->output_size = output_size;
     layer->activation = activation;
-    /* Parameter buffers are split into a weight matrix and bias vector for clarity. */
-    layer->weights = (float*)malloc(input_size * output_size * sizeof(float));
-    layer->bias = (float*)malloc(output_size * sizeof(float));
+    /* Parameter buffers are split into a weight matrix and bias vector for clarity.
+     * Allocation sizes are checked against SIZE_MAX to prevent integer overflow. */
+    layer->weights = (float*)malloc(weight_count * sizeof(float));
+    layer->bias = (float*)malloc(SAFE_ALLOC_SIZE(output_size, float));
 
     if (layer->weights == NULL || layer->bias == NULL) {
         free(layer->weights);
