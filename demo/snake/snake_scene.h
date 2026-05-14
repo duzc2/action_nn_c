@@ -57,6 +57,7 @@ typedef struct {
     int food_y;
     int game_over;
     int steps;
+    unsigned int rng;   /* RNG state for food placement during gameplay */
 } SnakeState;
 
 /* --- LCG RNG (matches nested_nav pattern) --- */
@@ -337,18 +338,24 @@ static inline void snake_init_random(SnakeState* state, unsigned int* rng) {
     state->game_over = 0;
     state->score = 0;
     state->steps = 0;
+    state->rng = *rng;    /* save RNG for later food placements */
 }
 
 /* --- Advance game by one step using a given absolute direction --- */
 static inline void snake_step(SnakeState* state, SnakeDirection dir) {
     int new_x, new_y, i;
+    int old_head_x, old_head_y;
 
     if (state->game_over) return;
 
     state->steps++;
 
-    new_x = state->body_x[0] + snake_dir_dx(dir);
-    new_y = state->body_y[0] + snake_dir_dy(dir);
+    /* Save old head before overwriting — critical for correct body tracking */
+    old_head_x = state->body_x[0];
+    old_head_y = state->body_y[0];
+
+    new_x = old_head_x + snake_dir_dx(dir);
+    new_y = old_head_y + snake_dir_dy(dir);
 
     /* Check wall collision */
     if (new_x < 1 || new_x >= SNAKE_GRID_W - 1 || new_y < 1 || new_y >= SNAKE_GRID_H - 1) {
@@ -362,7 +369,6 @@ static inline void snake_step(SnakeState* state, SnakeDirection dir) {
         int eating_food = (new_x == state->food_x && new_y == state->food_y);
         if (!eating_food) {
             /* Only check against body segments that won't move */
-            /* Tail is at body_x[length-1], body_y[length-1] */
             if (!(new_x == state->body_x[state->length - 1] &&
                   new_y == state->body_y[state->length - 1])) {
                 state->game_over = 1;
@@ -377,8 +383,8 @@ static inline void snake_step(SnakeState* state, SnakeDirection dir) {
         return;
     }
 
-    /* Move head */
-    state->grid[state->body_y[0]][state->body_x[0]] = 2; /* old head -> body */
+    /* Move head: mark old head as body on grid, advance head position */
+    state->grid[old_head_y][old_head_x] = 2; /* old head -> body */
     state->body_x[0] = new_x;
     state->body_y[0] = new_y;
     state->grid[new_y][new_x] = 4; /* new head */
@@ -388,24 +394,28 @@ static inline void snake_step(SnakeState* state, SnakeDirection dir) {
     /* Check food */
     if (new_x == state->food_x && new_y == state->food_y) {
         state->score++;
-        /* Grow: shift all body positions down */
-        for (i = state->length; i > 0; i--) {
+        /* Grow: shift segments right, insert old head at body_x[1] */
+        for (i = state->length; i > 1; i--) {
             state->body_x[i] = state->body_x[i - 1];
             state->body_y[i] = state->body_y[i - 1];
         }
+        state->body_x[1] = old_head_x;
+        state->body_y[1] = old_head_y;
         state->length++;
-        snake_place_food(state, NULL);
+        snake_place_food(state, &state->rng);
     } else {
         /* Move tail */
         int tail_x = state->body_x[state->length - 1];
         int tail_y = state->body_y[state->length - 1];
         state->grid[tail_y][tail_x] = 0; /* clear tail */
 
-        /* Shift body positions (head already updated) */
-        for (i = state->length - 1; i > 0; i--) {
+        /* Shift body positions right, insert old head at body_x[1] */
+        for (i = state->length - 1; i > 1; i--) {
             state->body_x[i] = state->body_x[i - 1];
             state->body_y[i] = state->body_y[i - 1];
         }
+        state->body_x[1] = old_head_x;
+        state->body_y[1] = old_head_y;
     }
 }
 
