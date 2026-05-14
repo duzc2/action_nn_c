@@ -9,7 +9,6 @@
       "WebFetch(domain:127.0.0.1)",
       "Bash(npx:*)",
       "Bash(curl:*)",
-      "Bash(node -e \"\nconst { chromium } = require\\(''playwright''\\);\n\\(async \\(\\) => {\n  const browser = await chromium.connectOverCDP\\(''http://127.0.0.1:9222''\\);\n  const context = await browser.newContext\\(\\);\n  const page = await context.newPage\\(\\);\n  await page.goto\\(''http://localhost:5173/''\\);\n  const title = await page.title\\(\\);\n  const content = await page.content\\(\\);\n  console.log\\(''Title:'', title\\);\n  console.log\\(''Content length:'', content.length\\);\n  console.log\\(''First 2000 chars:'', content.substring\\(0, 2000\\)\\);\n  await browser.close\\(\\);\n}\\)\\(\\);\n\")",
       "Bash(node -e:*)",
       "Bash(npm root -g)",
       "Bash(where playwright)",
@@ -69,15 +68,12 @@
       "Bash(tests/Debug/test_mlp_vtable.exe:*)",
       "Bash(tests/Debug/test_all_vtables.exe)",
       "Bash(find:*)",
-      "Bash(\"C:\\\\Users\\\\ASUS\\\\Desktop\\\\ai-build-ai\\\\action_c\\\\build\\\\debug\\\\tests\\\\Debug\\\\test_write_file.exe\":*)",
       "Bash(cppcheck:*)",
       "Bash(clang-tidy:*)",
       "Bash(ldd:*)",
       "Bash(dumpbin:*)",
       "Bash(export:*)",
-      "Bash(printf:*)",
-      "Bash(/c/Users/ASUS/Desktop/ai-build-ai/action_c/build/demo/sevenseg/infer/Debug/sevenseg_infer.exe:*)",
-      "Bash(/c/Users/ASUS/Desktop/ai-build-ai/action_c/build/demo/mnist/train/Debug/mnist_train.exe:*)"
+      "Bash(printf:*)"
     ]
   }
 }

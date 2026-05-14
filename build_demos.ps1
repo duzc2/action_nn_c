@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 
-$demos = @("move", "sevenseg", "target", "transformer", "mnist", "mnist_cnn", "nested_nav", "road_graph_nav", "cnn_rnn_react", "hybrid_route", "weather")
+$demos = @("move", "sevenseg", "target", "transformer", "mnist", "mnist_cnn", "nested_nav", "road_graph_nav", "cnn_rnn_react", "hybrid_route", "weather", "snake")
 $failed = @()
 
 Write-Host "=== Building all demos (generate phase) ===" -ForegroundColor Cyan
