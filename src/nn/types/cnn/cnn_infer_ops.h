@@ -31,9 +31,14 @@ typedef struct {
     float* output_buffer;           /**< Owned copy of the latest flattened output. */
     float* pooled_values;           /**< Reusable scratch buffer for pooled filter responses. */
     size_t* max_index_cache;        /**< Argmax positions per filter (used by dual/max pool backprop). */
+    float* bn_running_mean;         /**< Per-filter running mean [filter_count] */
+    float* bn_running_var;          /**< Per-filter running variance [filter_count] */
+    float* bn_gamma;                /**< Per-filter learnable scale [filter_count] */
+    float* bn_beta;                 /**< Per-filter learnable shift [filter_count] */
+    float* bn_training_pre_cache;   /**< Set by train_create: points to spatial BN x_hat buffer for graph_run */
+    float* bn_training_spatial_var; /**< Set by train_create: points to per-filter spatial variance values */
 } CnnInferContext;
 
-CnnInferContext* nn_cnn_infer_create(void);
 CnnInferContext* nn_cnn_infer_create_with_config(const CnnConfig* config, uint32_t seed);
 void nn_cnn_infer_destroy(void* context);
 void nn_cnn_infer_set_input(void* context, const float* input, size_t size);
@@ -53,7 +58,9 @@ int nn_cnn_forward_pass(
     float* restrict pooled_linear_cache,
     float* restrict pooled_activation_cache,
     size_t* restrict max_index_cache,
-    float* restrict output_linear_cache
+    float* restrict output_linear_cache,
+    float* restrict bn_pre_cache,
+    float* restrict bn_spatial_var
 );
 
 int nn_cnn_load_weights(void* context, FILE* fp);

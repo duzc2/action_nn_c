@@ -21,10 +21,20 @@ typedef struct {
     float* output_linear_cache;     /**< Per-step projected feature logits. */
     size_t* max_index_cache;        /**< Per-step argmax positions (used by dual/max pool backprop). */
     float* pooled_gradient_cache;   /**< Scratch dL/d(pool activation) buffer. */
+    float* conv_weight_vel;         /**< Momentum velocity for conv weights. */
+    float* conv_bias_vel;           /**< Momentum velocity for conv biases. */
+    float* projection_weight_vel;   /**< Momentum velocity for projection weights. */
+    float* projection_bias_vel;     /**< Momentum velocity for projection biases. */
     float* conv_weight_grad;        /**< Scratch convolution gradient tensor. */
     float* conv_bias_grad;          /**< Scratch convolution bias gradient tensor. */
     float* projection_weight_grad;  /**< Scratch projection gradient tensor. */
     float* projection_bias_grad;    /**< Scratch projection bias gradient vector. */
+    float* bn_gamma_vel;            /**< Momentum velocity for BN gamma. */
+    float* bn_beta_vel;             /**< Momentum velocity for BN beta. */
+    float* bn_gamma_grad;           /**< Per-filter BN gamma gradient [filter_count] */
+    float* bn_beta_grad;            /**< Per-filter BN beta gradient [filter_count] */
+    float* bn_pre_cache;            /**< Pre-BN cached x_hat values for backward pass */
+    float* bn_spatial_var;          /**< Per-filter spatial variance computed in forward pass */
     size_t total_steps;             /**< Count of successful training updates. */
     size_t total_epochs;            /**< Count reported through train_get_stats. */
     float cumulative_loss;          /**< Running loss accumulator for averages. */

@@ -73,7 +73,29 @@
       "Bash(ldd:*)",
       "Bash(dumpbin:*)",
       "Bash(export:*)",
-      "Bash(printf:*)"
+      "Bash(printf:*)",
+      "Bash(git -C \".\" log --oneline -30)",
+      "Bash(set:*)",
+      "Bash(\"./build/demo/edge_video_preprocess/generate/edge_video_preprocess_generate.exe\":*)",
+      "Bash(\"./build/demo/edge_video_preprocess/train/edge_video_preprocess_train.exe\":*)",
+      "Bash(\"./build/demo/edge_video_preprocess/infer/edge_video_preprocess_infer.exe\":*)",
+      "Bash(.edge_video_preprocess_generate.exe:*)",
+      "Bash(./edge_video_preprocess_generate.exe:*)",
+      "Bash(./edge_video_preprocess_train.exe:*)",
+      "Bash(edge_video_preprocess_train.exe:*)",
+      "Bash(Format-Table:*)",
+      "Bash(\"./build/verify/Release/test_network_e2e.exe\":*)",
+      "Bash(\"./build/verify/Release/quick_train.exe\")",
+      "Bash(./Release/edge_video_preprocess_generate.exe:*)",
+      "Bash(./build/demo/edge_video_preprocess/generate/edge_video_preprocess_generate.exe:*)",
+      "Bash(./build/verify/Release/test_stride.exe:*)",
+      "Bash(./build/verify/Release/test_network_e2e.exe:*)",
+      "Bash(./build/verify/Release/quick_train.exe:*)",
+      "Bash(build/demo/edge_video_preprocess/generate/edge_video_preprocess_generate.exe:*)",
+      "Bash(build/verify/quick_train.exe:*)",
+      "Bash(build/verify/test_network_e2e.exe:*)",
+      "Bash(./test_cnn_backend.exe:*)",
+      "Bash(./quick_train.exe)"
     ]
   }
 }

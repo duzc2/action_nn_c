@@ -2,10 +2,11 @@
  * @file cnn_config.h
  * @brief POD-style configuration shared by the tiny CNN backend and generated code.
  *
- * The CNN supports three global pooling modes controlled by an enum:
+ * The CNN supports four pooling modes controlled by an enum:
  *   CNN_POOL_AVG  – average pooling (original CNN behaviour)
  *   CNN_POOL_MAX  – maximum pooling
  *   CNN_POOL_DUAL – both average and maximum pooling per filter (formerly cnn_dual_pool)
+ *   CNN_POOL_NONE – no pooling, outputs 2D feature maps for multi-layer cascading
  *
  * The profiler only needs stable plain-old-data metadata, so this header keeps
  * the config self-contained and serialization friendly.
@@ -21,9 +22,10 @@
  * @brief Activation types used by the tiny CNN backend.
  */
 typedef enum {
-    CNN_ACT_NONE = 0,
-    CNN_ACT_RELU = 1,
-    CNN_ACT_TANH = 2
+    CNN_ACT_NONE  = 0,
+    CNN_ACT_RELU  = 1,
+    CNN_ACT_TANH  = 2,
+    CNN_ACT_RELU6 = 3   /**< Clipped ReLU: min(max(0, x), 6) */
 } CnnActivationType;
 
 /**
@@ -32,8 +34,17 @@ typedef enum {
 typedef enum {
     CNN_POOL_AVG  = 0, /**< Global average pooling (one scalar per filter). */
     CNN_POOL_MAX  = 1, /**< Global maximum pooling (one scalar per filter). */
-    CNN_POOL_DUAL = 2  /**< Both average and maximum pooling (two scalars per filter). */
+    CNN_POOL_DUAL = 2, /**< Both average and maximum pooling (two scalars per filter). */
+    CNN_POOL_NONE = 3  /**< No pooling – outputs 2D feature maps for multi-layer cascading. */
 } CnnPoolingMode;
+
+/**
+ * @brief Convolution mode.
+ */
+typedef enum {
+    CNN_CONV_STANDARD  = 0,  /**< Standard conv: F filters, each sees all C channels */
+    CNN_CONV_DEPTHWISE = 1   /**< Depthwise: C filters, each sees exactly 1 channel */
+} CnnConvMode;
 
 /**
  * @brief Structural configuration required to build one CNN leaf.
@@ -50,6 +61,11 @@ typedef struct {
     CnnActivationType pooling_activation; /**< Activation applied after global pooling. */
     CnnActivationType output_activation;  /**< Activation applied to projected features. */
     CnnPoolingMode pooling_mode;          /**< Global pooling variant (default AVG). */
+    CnnConvMode conv_mode;                /**< Convolution mode (default STANDARD). */
+    size_t stride;                        /**< Convolution stride (1 = no skip, 2 = half size). */
+    int use_batch_norm;                   /**< 0 = no BN, 1 = BN after conv, before activation */
+    float bn_momentum;                    /**< Running mean/variance update rate (typical 0.9) */
+    float bn_epsilon;                     /**< Numerical stability constant (typical 1e-5) */
     uint32_t seed;                        /**< Deterministic parameter initialization seed. */
 } CnnConfig;
 

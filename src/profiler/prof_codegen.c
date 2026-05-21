@@ -15,7 +15,7 @@
 #include "../utils/error.h"
 
 #define ABI_VERSION 1
-#define CODE_BUFFER_CAPACITY 524288U
+#define CODE_BUFFER_CAPACITY 67108864U  /* 64 MiB — accommodates ~1.5M connections for deep CNNs */
 
 #ifdef _WIN32
 /**
@@ -365,17 +365,17 @@ static int append_leaf_graph_constants(
 ) {
     size_t leaf_index;
 
+    (void)network;  /* used only by append_connection_table for range merge */
+
     /* Publish the basic graph dimensions first because later arrays depend on them. */
     if (append_format(
             buffer,
             buffer_capacity,
             position,
             "#define GENERATED_LEAF_COUNT %zuU\n"
-            "#define GENERATED_CONNECTION_COUNT %zuU\n"
             "#define GENERATED_NETWORK_INPUT_SIZE %zuU\n"
             "#define GENERATED_NETWORK_OUTPUT_SIZE %zuU\n\n",
             graph->leaf_subnets.count,
-            network != NULL ? network->connection_count : (size_t)0U,
             prof_codegen_network_input_size(graph),
             prof_codegen_network_output_size(graph)) != 0) {
         return ACTION_C_ERR_INTERNAL;
@@ -437,81 +437,269 @@ static int append_leaf_graph_constants(
 }
 
 /**
+ * @brief Temp struct for sorting raw connections before range-merging.
+ */
+typedef struct {
+    size_t source_leaf_index;
+    size_t target_leaf_index;
+    size_t source_node_index;
+    size_t target_node_index;
+    int merge_strategy;
+} RawConnectionEntry;
+
+/**
+ * @brief qsort comparator: sort by (source_leaf, target_leaf, merge_strategy,
+ *        source_node, target_node).
+ */
+static int raw_connection_compare(const void* a, const void* b) {
+    const RawConnectionEntry* ca = (const RawConnectionEntry*)a;
+    const RawConnectionEntry* cb = (const RawConnectionEntry*)b;
+    if (ca->source_leaf_index < cb->source_leaf_index) return -1;
+    if (ca->source_leaf_index > cb->source_leaf_index) return 1;
+    if (ca->target_leaf_index < cb->target_leaf_index) return -1;
+    if (ca->target_leaf_index > cb->target_leaf_index) return 1;
+    if (ca->merge_strategy < cb->merge_strategy) return -1;
+    if (ca->merge_strategy > cb->merge_strategy) return 1;
+    if (ca->source_node_index < cb->source_node_index) return -1;
+    if (ca->source_node_index > cb->source_node_index) return 1;
+    if (ca->target_node_index < cb->target_node_index) return -1;
+    if (ca->target_node_index > cb->target_node_index) return 1;
+    return 0;
+}
+
+/**
  * @brief Emit a compact static table that mirrors root-level connection edges.
  *
  * Generated schedulers should not need to walk the original request object at
  * runtime. This table snapshots the validated connection metadata into plain C
  * arrays so infer/train helpers can route values deterministically.
+ *
+ * Connections are sorted and merged into range entries (count > 1) to enable
+ * O(edges_per_leaf) instead of O(leaf_count * total_edges) routing.
  */
 static int append_connection_table(
     char* buffer,
     size_t buffer_capacity,
     size_t* position,
     const NN_NetworkDef* network,
-    const ProfLeafGraph* graph
+    const ProfLeafGraph* graph,
+    int include_target_arrays
 ) {
-    size_t connection_index;
+    RawConnectionEntry* raw = NULL;
+    /* Merged range entries: upper bound is raw connection count. */
+    struct { size_t sl; size_t tl; size_t ss; size_t ts; size_t cnt; int ms; }* merged = NULL;
+    size_t* source_conn_start = NULL;
+    size_t* target_conn_indices = NULL;   /* indirection: sorted by target leaf */
+    size_t* target_conn_start = NULL;
+    size_t raw_count;
+    size_t merged_count;
+    size_t i, leaf_count;
+    int rc = 0;
 
-    /* Reify connection metadata into a tiny POD table consumable by generated helpers. */
-    if (append_format(
-            buffer,
-            buffer_capacity,
-            position,
-            "#if GENERATED_LEAF_COUNT > 1U\n"
+    leaf_count = graph->leaf_subnets.count;
+    raw_count = (network != NULL) ? network->connection_count : 0U;
+
+    if (leaf_count <= 1U) {
+        /* Single-leaf graphs have no routing; emit a minimal stub. */
+        return append_format(buffer, buffer_capacity, position,
+            "#define GENERATED_CONNECTION_COUNT 0U\n\n");
+    }
+
+    /* ── 1. Collect raw connections ── */
+    if (raw_count > 0U) {
+        raw = (RawConnectionEntry*)calloc(raw_count, sizeof(RawConnectionEntry));
+        if (raw == NULL) return ACTION_C_ERR_NULL_POINTER;
+
+        for (i = 0U; i < raw_count; ++i) {
+            NNConnectionDef* conn = network->connections[i];
+            int src_idx, tgt_idx;
+            if (conn == NULL) {
+                raw[i].source_leaf_index = 0U;
+                raw[i].target_leaf_index = 0U;
+                raw[i].source_node_index = 0U;
+                raw[i].target_node_index = 0U;
+                raw[i].merge_strategy = (int)NN_MERGE_SUM;
+                continue;
+            }
+            src_idx = prof_flatten_find_subnet_index(&graph->leaf_subnets, conn->source_subnet_id);
+            tgt_idx = prof_flatten_find_subnet_index(&graph->leaf_subnets, conn->target_subnet_id);
+            raw[i].source_leaf_index = (src_idx >= 0) ? (size_t)src_idx : 0U;
+            raw[i].target_leaf_index = (tgt_idx >= 0) ? (size_t)tgt_idx : 0U;
+            raw[i].source_node_index = conn->source_node_index;
+            raw[i].target_node_index = conn->target_node_index;
+            raw[i].merge_strategy = (int)conn->merge_strategy;
+        }
+    }
+
+    /* ── 2. Sort and merge into range entries ── */
+    merged = (void*)calloc(raw_count + 1U, sizeof(*merged));
+    if (merged == NULL) { rc = ACTION_C_ERR_NULL_POINTER; goto cleanup; }
+
+    if (raw_count > 0U) {
+        qsort(raw, raw_count, sizeof(RawConnectionEntry), raw_connection_compare);
+
+        merged[0].sl = raw[0].source_leaf_index;
+        merged[0].tl = raw[0].target_leaf_index;
+        merged[0].ss = raw[0].source_node_index;
+        merged[0].ts = raw[0].target_node_index;
+        merged[0].cnt = 1U;
+        merged[0].ms = raw[0].merge_strategy;
+        merged_count = 1U;
+
+        for (i = 1U; i < raw_count; ++i) {
+            /* Can we extend the previous range entry? */
+            if (raw[i].source_leaf_index == merged[merged_count - 1U].sl &&
+                raw[i].target_leaf_index == merged[merged_count - 1U].tl &&
+                raw[i].merge_strategy  == merged[merged_count - 1U].ms &&
+                raw[i].source_node_index ==
+                    merged[merged_count - 1U].ss + merged[merged_count - 1U].cnt &&
+                raw[i].target_node_index ==
+                    merged[merged_count - 1U].ts + merged[merged_count - 1U].cnt) {
+                merged[merged_count - 1U].cnt += 1U;
+            } else {
+                merged[merged_count].sl = raw[i].source_leaf_index;
+                merged[merged_count].tl = raw[i].target_leaf_index;
+                merged[merged_count].ss = raw[i].source_node_index;
+                merged[merged_count].ts = raw[i].target_node_index;
+                merged[merged_count].cnt = 1U;
+                merged[merged_count].ms = raw[i].merge_strategy;
+                merged_count += 1U;
+            }
+        }
+    } else {
+        merged_count = 0U;
+    }
+
+    free(raw); raw = NULL;
+
+    /* ── 3. Emit GENERATED_CONNECTION_COUNT ── */
+    if (append_format(buffer, buffer_capacity, position,
+            "#define GENERATED_CONNECTION_COUNT %zuU\n\n", merged_count) != 0)
+    { rc = ACTION_C_ERR_INTERNAL; goto cleanup; }
+
+    /* ── 4. Emit struct definition and g_connections table ── */
+    if (append_format(buffer, buffer_capacity, position,
             "typedef struct {\n"
             "    size_t source_leaf_index;\n"
             "    size_t target_leaf_index;\n"
-            "    size_t source_node_index;\n"
-            "    size_t target_node_index;\n"
+            "    size_t source_node_start;\n"
+            "    size_t target_node_start;\n"
+            "    size_t count;\n"
             "    int merge_strategy;\n"
-            "} GeneratedConnection;\n\n"
-            "static const GeneratedConnection g_connections[(GENERATED_CONNECTION_COUNT == 0U) ? 1U : GENERATED_CONNECTION_COUNT] = {\n") != 0) {
-        return ACTION_C_ERR_DIM_MISMATCH;
-    }
+            "} GeneratedConnection;\n\n") != 0)
+    { rc = ACTION_C_ERR_DIM_MISMATCH; goto cleanup; }
 
-    if (network->connection_count == 0U) {
-        if (append_format(
-                buffer,
-                buffer_capacity,
-                position,
-                "    { 0U, 0U, 0U, 0U, %d },\n",
-                (int)NN_MERGE_SUM) != 0) {
-            return ACTION_C_ERR_INTERNAL;
-        }
-    }
+    if (append_format(buffer, buffer_capacity, position,
+            "static const GeneratedConnection g_connections[(GENERATED_CONNECTION_COUNT == 0U) ? 1U : GENERATED_CONNECTION_COUNT] = {\n") != 0)
+    { rc = ACTION_C_ERR_DIM_MISMATCH; goto cleanup; }
 
-    /* Serialize each validated edge in declaration order so debugging stays intuitive. */
-    for (connection_index = 0U; connection_index < network->connection_count; ++connection_index) {
-        NNConnectionDef* connection = network->connections[connection_index];
-        int source_index;
-        int target_index;
-
-        if (connection == NULL) {
-            if (append_format(buffer, buffer_capacity, position,
-                    "    { 0U, 0U, 0U, 0U, %d },\n", (int)NN_MERGE_SUM) != 0) {
-                return ACTION_C_ERR_NULL_POINTER;
-            }
-            continue;
-        }
-
-        source_index = prof_flatten_find_subnet_index(&graph->leaf_subnets, connection->source_subnet_id);
-        target_index = prof_flatten_find_subnet_index(&graph->leaf_subnets, connection->target_subnet_id);
+    if (merged_count == 0U) {
         if (append_format(buffer, buffer_capacity, position,
-                "    { %zuU, %zuU, %zuU, %zuU, %d },\n",
-                source_index >= 0 ? (size_t)source_index : 0U,
-                target_index >= 0 ? (size_t)target_index : 0U,
-                connection->source_node_index,
-                connection->target_node_index,
-                (int)connection->merge_strategy) != 0) {
-            return ACTION_C_ERR_INTERNAL;
+                "    { 0U, 0U, 0U, 0U, 0U, %d },\n", (int)NN_MERGE_SUM) != 0)
+        { rc = ACTION_C_ERR_INTERNAL; goto cleanup; }
+    }
+
+    for (i = 0U; i < merged_count; ++i) {
+        if (append_format(buffer, buffer_capacity, position,
+                "    { %zuU, %zuU, %zuU, %zuU, %zuU, %d },\n",
+                merged[i].sl, merged[i].tl,
+                merged[i].ss, merged[i].ts,
+                merged[i].cnt, merged[i].ms) != 0)
+        { rc = ACTION_C_ERR_INTERNAL; goto cleanup; }
+    }
+
+    if (append_format(buffer, buffer_capacity, position, "};\n\n") != 0)
+    { rc = ACTION_C_ERR_INTERNAL; goto cleanup; }
+
+    /* ── 5. Compute and emit g_source_conn_start ── */
+    source_conn_start = (size_t*)calloc(leaf_count + 1U, sizeof(size_t));
+    if (source_conn_start == NULL) { rc = ACTION_C_ERR_NULL_POINTER; goto cleanup; }
+
+    for (i = 0U; i < merged_count; ++i) {
+        size_t sl = merged[i].sl;
+        if (sl < leaf_count) source_conn_start[sl + 1U] += 1U;
+    }
+    for (i = 1U; i <= leaf_count; ++i) {
+        source_conn_start[i] += source_conn_start[i - 1U];
+    }
+
+    if (append_format(buffer, buffer_capacity, position,
+            "static const size_t g_source_conn_start[GENERATED_LEAF_COUNT + 1U] = {") != 0)
+    { rc = ACTION_C_ERR_INTERNAL; goto cleanup; }
+    for (i = 0U; i <= leaf_count; ++i) {
+        if (append_format(buffer, buffer_capacity, position, "%s%zuU",
+                (i == 0U) ? "" : ", ", source_conn_start[i]) != 0)
+        { rc = ACTION_C_ERR_NULL_POINTER; goto cleanup; }
+    }
+    if (append_format(buffer, buffer_capacity, position, "};\n\n") != 0)
+    { rc = ACTION_C_ERR_INTERNAL; goto cleanup; }
+
+    /* ── 6. Compute g_target_conn_indices and g_target_conn_start (only for train.c) ── */
+    if (include_target_arrays) {
+        target_conn_indices = (size_t*)calloc(merged_count + 1U, sizeof(size_t));
+        target_conn_start  = (size_t*)calloc(leaf_count + 1U, sizeof(size_t));
+        if (target_conn_indices == NULL || target_conn_start == NULL)
+        { rc = ACTION_C_ERR_NULL_POINTER; goto cleanup; }
+
+        /* Count outgoing edges per target leaf. */
+        for (i = 0U; i < merged_count; ++i) {
+            size_t tl = merged[i].tl;
+            if (tl < leaf_count) target_conn_start[tl + 1U] += 1U;
         }
+        for (i = 1U; i <= leaf_count; ++i) {
+            target_conn_start[i] += target_conn_start[i - 1U];
+        }
+
+        /* Fill indirection array by target-leaf order (stable within each leaf). */
+        {
+            size_t* insert_pos = (size_t*)calloc(leaf_count, sizeof(size_t));
+            if (insert_pos == NULL) { rc = ACTION_C_ERR_NULL_POINTER; goto cleanup; }
+            for (i = 0U; i < leaf_count; ++i) insert_pos[i] = target_conn_start[i];
+
+            for (i = 0U; i < merged_count; ++i) {
+                size_t tl = merged[i].tl;
+                size_t pos;
+                if (tl >= leaf_count) continue;
+                pos = insert_pos[tl];
+                if (pos < merged_count) target_conn_indices[pos] = i;
+                insert_pos[tl] += 1U;
+            }
+            free(insert_pos);
+        }
+
+        if (append_format(buffer, buffer_capacity, position,
+                "static const size_t g_target_conn_indices[(GENERATED_CONNECTION_COUNT == 0U) ? 1U : GENERATED_CONNECTION_COUNT] = {") != 0)
+        { rc = ACTION_C_ERR_INTERNAL; goto cleanup; }
+        {
+            size_t emit_count = (merged_count == 0U) ? 1U : merged_count;
+            for (i = 0U; i < emit_count; ++i) {
+                if (append_format(buffer, buffer_capacity, position, "%s%zuU",
+                        (i == 0U) ? "" : ", ", target_conn_indices[i]) != 0)
+                { rc = ACTION_C_ERR_NULL_POINTER; goto cleanup; }
+            }
+        }
+        if (append_format(buffer, buffer_capacity, position, "};\n\n") != 0)
+        { rc = ACTION_C_ERR_INTERNAL; goto cleanup; }
+
+        if (append_format(buffer, buffer_capacity, position,
+                "static const size_t g_target_conn_start[GENERATED_LEAF_COUNT + 1U] = {") != 0)
+        { rc = ACTION_C_ERR_INTERNAL; goto cleanup; }
+        for (i = 0U; i <= leaf_count; ++i) {
+            if (append_format(buffer, buffer_capacity, position, "%s%zuU",
+                    (i == 0U) ? "" : ", ", target_conn_start[i]) != 0)
+            { rc = ACTION_C_ERR_NULL_POINTER; goto cleanup; }
+        }
+        if (append_format(buffer, buffer_capacity, position, "};\n\n") != 0)
+        { rc = ACTION_C_ERR_INTERNAL; goto cleanup; }
     }
 
-    if (append_format(buffer, buffer_capacity, position, "};\n#endif\n\n") != 0) {
-        return ACTION_C_ERR_INTERNAL;
-    }
-
-    return 0;
+cleanup:
+    free(raw);
+    free(merged);
+    free(source_conn_start);
+    free(target_conn_indices);
+    free(target_conn_start);
+    return rc;
 }
 
 /**
@@ -1015,23 +1203,24 @@ static int append_generated_infer_helpers(
             buffer_capacity,
             position,
             "static void generated_infer_route_outputs(InferContext* ctx, size_t source_leaf_index) {\n"
-            "    size_t connection_index;\n"
+            "    size_t ci, ni;\n"
+            "    size_t start, end;\n"
             "    if (ctx == 0) return;\n"
-            "    for (connection_index = 0U; connection_index < GENERATED_CONNECTION_COUNT; ++connection_index) {\n"
-            "        const GeneratedConnection* connection = &g_connections[connection_index];\n"
-            "        GeneratedInferLeaf* target_leaf;\n"
-            "        const GeneratedInferLeaf* source_leaf;\n"
-            "        float value;\n"
-            "        if (connection->source_leaf_index != source_leaf_index) continue;\n"
-            "        source_leaf = &ctx->leaves[connection->source_leaf_index];\n"
-            "        target_leaf = &ctx->leaves[connection->target_leaf_index];\n"
+            "    start = g_source_conn_start[source_leaf_index];\n"
+            "    end   = g_source_conn_start[source_leaf_index + 1U];\n"
+            "    for (ci = start; ci < end; ++ci) {\n"
+            "        const GeneratedConnection* conn = &g_connections[ci];\n"
+            "        GeneratedInferLeaf* target_leaf = &ctx->leaves[conn->target_leaf_index];\n"
+            "        const GeneratedInferLeaf* source_leaf = &ctx->leaves[conn->source_leaf_index];\n"
             "        if (source_leaf->output_buffer == 0 || target_leaf->input_buffer == 0) continue;\n"
-            "        value = source_leaf->output_buffer[connection->source_node_index];\n"
-            "        target_leaf->input_buffer[connection->target_node_index] += value;\n"
-            "        if (connection->merge_strategy == 2 && target_leaf->average_counts != 0) {\n"
-            "            target_leaf->average_counts[connection->target_node_index] += 1U;\n"
-            "        } else if (target_leaf->average_counts != 0 && target_leaf->average_counts[connection->target_node_index] == 0U) {\n"
-            "            target_leaf->average_counts[connection->target_node_index] = 1U;\n"
+            "        for (ni = 0U; ni < conn->count; ++ni) {\n"
+            "            float value = source_leaf->output_buffer[conn->source_node_start + ni];\n"
+            "            target_leaf->input_buffer[conn->target_node_start + ni] += value;\n"
+            "            if (conn->merge_strategy == 2 && target_leaf->average_counts != 0) {\n"
+            "                target_leaf->average_counts[conn->target_node_start + ni] += 1U;\n"
+            "            } else if (target_leaf->average_counts != 0 && target_leaf->average_counts[conn->target_node_start + ni] == 0U) {\n"
+            "                target_leaf->average_counts[conn->target_node_start + ni] = 1U;\n"
+            "            }\n"
             "        }\n"
             "    }\n"
             "}\n\n"
@@ -1163,7 +1352,7 @@ ProfStatus prof_codegen_infer(ProfCodegenContext* ctx) {
             network,
             &graph,
             GENERATED_CONST_TOPOLOGY_ORDER | GENERATED_CONST_EDGE_COUNTS) != 0 ||
-        append_connection_table(content, CODE_BUFFER_CAPACITY, &pos, network, &graph) != 0 ||
+        append_connection_table(content, CODE_BUFFER_CAPACITY, &pos, network, &graph, 0) != 0 ||
         append_infer_type_blobs(content, CODE_BUFFER_CAPACITY, &pos, &graph) != 0 ||
         append_generated_infer_structs(content, CODE_BUFFER_CAPACITY, &pos) != 0 ||
         append_generated_infer_helpers(content, CODE_BUFFER_CAPACITY, &pos) != 0 ||
@@ -1481,15 +1670,16 @@ static int append_generated_train_helpers(char* buffer, size_t buffer_capacity, 
             buffer,
             buffer_capacity,
             position,
-            "static float generated_train_compute_mse(const float* output, const float* target, size_t count) {\n"
+            "static float generated_train_compute_cross_entropy(const float* output, const float* target, size_t count) {\n"
             "    float loss = 0.0f;\n"
             "    size_t index;\n"
             "    if (output == 0 || target == 0 || count == 0U) return 0.0f;\n"
             "    for (index = 0U; index < count; ++index) {\n"
-            "        float diff = output[index] - target[index];\n"
-            "        loss += diff * diff;\n"
+            "        float val = output[index] > 1e-7f ? output[index] : 1e-7f;\n"
+            "        val = val < 1.0f - 1e-7f ? val : 1.0f - 1e-7f;\n"
+            "        loss -= target[index] * logf(val);\n"
             "    }\n"
-            "    return loss / (float)count;\n"
+            "    return loss;\n"
             "}\n\n"
             "static void generated_train_prepare_inputs(InferContext* infer_ctx, const float* input) {\n"
             "    size_t leaf_index;\n"
@@ -1525,23 +1715,24 @@ static int append_generated_train_helpers(char* buffer, size_t buffer_capacity, 
             "    }\n"
             "}\n\n"
             "static void generated_train_route_outputs(InferContext* infer_ctx, size_t source_leaf_index) {\n"
-            "    size_t connection_index;\n"
+            "    size_t ci, ni;\n"
+            "    size_t start, end;\n"
             "    if (infer_ctx == 0) return;\n"
-            "    for (connection_index = 0U; connection_index < GENERATED_CONNECTION_COUNT; ++connection_index) {\n"
-            "        const GeneratedConnection* connection = &g_connections[connection_index];\n"
-            "        GeneratedInferLeaf* target_leaf;\n"
-            "        const GeneratedInferLeaf* source_leaf;\n"
-            "        float value;\n"
-            "        if (connection->source_leaf_index != source_leaf_index) continue;\n"
-            "        source_leaf = &infer_ctx->leaves[connection->source_leaf_index];\n"
-            "        target_leaf = &infer_ctx->leaves[connection->target_leaf_index];\n"
+            "    start = g_source_conn_start[source_leaf_index];\n"
+            "    end   = g_source_conn_start[source_leaf_index + 1U];\n"
+            "    for (ci = start; ci < end; ++ci) {\n"
+            "        const GeneratedConnection* conn = &g_connections[ci];\n"
+            "        GeneratedInferLeaf* target_leaf = &infer_ctx->leaves[conn->target_leaf_index];\n"
+            "        const GeneratedInferLeaf* source_leaf = &infer_ctx->leaves[conn->source_leaf_index];\n"
             "        if (source_leaf->output_buffer == 0 || target_leaf->input_buffer == 0) continue;\n"
-            "        value = source_leaf->output_buffer[connection->source_node_index];\n"
-            "        target_leaf->input_buffer[connection->target_node_index] += value;\n"
-            "        if (connection->merge_strategy == 2 && target_leaf->average_counts != 0) {\n"
-            "            target_leaf->average_counts[connection->target_node_index] += 1U;\n"
-            "        } else if (target_leaf->average_counts != 0 && target_leaf->average_counts[connection->target_node_index] == 0U) {\n"
-            "            target_leaf->average_counts[connection->target_node_index] = 1U;\n"
+            "        for (ni = 0U; ni < conn->count; ++ni) {\n"
+            "            float value = source_leaf->output_buffer[conn->source_node_start + ni];\n"
+            "            target_leaf->input_buffer[conn->target_node_start + ni] += value;\n"
+            "            if (conn->merge_strategy == 2 && target_leaf->average_counts != 0) {\n"
+            "                target_leaf->average_counts[conn->target_node_start + ni] += 1U;\n"
+            "            } else if (target_leaf->average_counts != 0 && target_leaf->average_counts[conn->target_node_start + ni] == 0U) {\n"
+            "                target_leaf->average_counts[conn->target_node_start + ni] = 1U;\n"
+            "            }\n"
             "        }\n"
             "    }\n"
             "}\n\n") != 0) {
@@ -1593,8 +1784,7 @@ static int append_generated_train_helpers(char* buffer, size_t buffer_capacity, 
             "        size_t node_index;\n"
             "        if (g_outgoing_counts[leaf_index] != 0U || train_leaf->output_grad_buffer == 0 || infer_leaf->output_buffer == 0) continue;\n"
             "        for (node_index = 0U; node_index < infer_leaf->output_size; ++node_index) {\n"
-            "            float diff = infer_leaf->output_buffer[node_index] - target[output_offset + node_index];\n"
-            "            train_leaf->output_grad_buffer[node_index] = (2.0f * diff) / (float)GENERATED_NETWORK_OUTPUT_SIZE;\n"
+            "            train_leaf->output_grad_buffer[node_index] = infer_leaf->output_buffer[node_index] - target[output_offset + node_index];\n"
             "        }\n"
             "        output_offset += infer_leaf->output_size;\n"
             "    }\n"
@@ -1607,27 +1797,27 @@ static int append_generated_train_helpers(char* buffer, size_t buffer_capacity, 
         buffer_capacity,
         position,
         "static void generated_train_route_input_gradients(TrainContext* ctx, const InferContext* infer_ctx, size_t target_leaf_index) {\n"
-        "    size_t connection_index;\n"
+        "    size_t ci, ni;\n"
+        "    size_t start, end;\n"
         "    if (ctx == 0 || infer_ctx == 0) return;\n"
-        "    for (connection_index = 0U; connection_index < GENERATED_CONNECTION_COUNT; ++connection_index) {\n"
-        "        const GeneratedConnection* connection = &g_connections[connection_index];\n"
-        "        const GeneratedInferLeaf* target_infer_leaf;\n"
-        "        const GeneratedTrainLeaf* target_train_leaf;\n"
-        "        GeneratedTrainLeaf* source_train_leaf;\n"
-        "        float grad_value;\n"
-        "        size_t avg_count = 1U;\n"
-        "        if (connection->target_leaf_index != target_leaf_index) continue;\n"
-        "        target_infer_leaf = &infer_ctx->leaves[target_leaf_index];\n"
-        "        target_train_leaf = &ctx->leaves[target_leaf_index];\n"
-        "        source_train_leaf = &ctx->leaves[connection->source_leaf_index];\n"
+        "    start = g_target_conn_start[target_leaf_index];\n"
+        "    end   = g_target_conn_start[target_leaf_index + 1U];\n"
+        "    for (ci = start; ci < end; ++ci) {\n"
+        "        const GeneratedConnection* conn = &g_connections[g_target_conn_indices[ci]];\n"
+        "        const GeneratedInferLeaf* target_infer_leaf = &infer_ctx->leaves[target_leaf_index];\n"
+        "        const GeneratedTrainLeaf* target_train_leaf = &ctx->leaves[target_leaf_index];\n"
+        "        GeneratedTrainLeaf* source_train_leaf = &ctx->leaves[conn->source_leaf_index];\n"
         "        if (target_train_leaf->input_grad_buffer == 0 || source_train_leaf->output_grad_buffer == 0) continue;\n"
-        "        grad_value = target_train_leaf->input_grad_buffer[connection->target_node_index];\n"
-        "        if (connection->merge_strategy == 2 && target_infer_leaf->average_counts != 0) {\n"
-        "            avg_count = target_infer_leaf->average_counts[connection->target_node_index];\n"
-        "            if (avg_count == 0U) avg_count = 1U;\n"
-        "            grad_value /= (float)avg_count;\n"
+        "        for (ni = 0U; ni < conn->count; ++ni) {\n"
+        "            float grad_value = target_train_leaf->input_grad_buffer[conn->target_node_start + ni];\n"
+        "            size_t avg_count = 1U;\n"
+        "            if (conn->merge_strategy == 2 && target_infer_leaf->average_counts != 0) {\n"
+        "                avg_count = target_infer_leaf->average_counts[conn->target_node_start + ni];\n"
+        "                if (avg_count == 0U) avg_count = 1U;\n"
+        "                grad_value /= (float)avg_count;\n"
+        "            }\n"
+        "            source_train_leaf->output_grad_buffer[conn->source_node_start + ni] += grad_value;\n"
         "        }\n"
-        "        source_train_leaf->output_grad_buffer[connection->source_node_index] += grad_value;\n"
         "    }\n"
         "}\n\n") != 0) {
         return ACTION_C_ERR_INTERNAL;
@@ -1679,6 +1869,7 @@ ProfStatus prof_codegen_train(ProfCodegenContext* ctx) {
             "#include \"infer.h\"\n"
             "#include \"nn/nn_codegen_hooks.h\"\n"
             "#include \"nn/nn_graph_contract.h\"\n"
+            "#include <math.h>\n"
             "#include <stdlib.h>\n"
             "#include <string.h>\n\n") != 0) {
         free(content);
@@ -1709,7 +1900,7 @@ ProfStatus prof_codegen_train(ProfCodegenContext* ctx) {
             network,
             &graph,
             GENERATED_CONST_TOPOLOGY_ORDER | GENERATED_CONST_EDGE_COUNTS) != 0 ||
-        append_connection_table(content, CODE_BUFFER_CAPACITY, &pos, network, &graph) != 0 ||
+        append_connection_table(content, CODE_BUFFER_CAPACITY, &pos, network, &graph, 1) != 0 ||
         append_train_type_blobs(content, CODE_BUFFER_CAPACITY, &pos, &graph) != 0 ||
         append_generated_train_infer_mirror(content, CODE_BUFFER_CAPACITY, &pos) != 0 ||
         append_generated_train_helpers(content, CODE_BUFFER_CAPACITY, &pos) != 0 ||
@@ -1850,7 +2041,7 @@ ProfStatus prof_codegen_train(ProfCodegenContext* ctx) {
             "            generated_train_route_outputs(infer_ctx, idx);\n"
             "        }\n"
             "        generated_train_collect_outputs(infer_ctx, ctx->last_output);\n"
-            "        ctx->last_loss = generated_train_compute_mse(ctx->last_output, target_values, GENERATED_NETWORK_OUTPUT_SIZE);\n"
+            "        ctx->last_loss = generated_train_compute_cross_entropy(ctx->last_output, target_values, GENERATED_NETWORK_OUTPUT_SIZE);\n"
             "        generated_train_clear_gradients(ctx);\n"
             "        generated_train_seed_output_gradients(ctx, infer_ctx, target_values);\n"
             "        for (order_index = GENERATED_LEAF_COUNT; order_index > 0U; --order_index) {\n"
