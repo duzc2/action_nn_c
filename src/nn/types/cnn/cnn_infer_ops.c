@@ -48,7 +48,7 @@ static uint32_t cnn_next_random(uint32_t* state) {
  * @brief Generate a small centered random weight.
  */
 static float cnn_random_weight(uint32_t* state, float scale) {
-    float normalized = (float)(cnn_next_random(state) & 0xFFFFU) / 65535.0f;
+    float normalized = (float)cnn_next_random(state) / 4294967295.0f;
     return (normalized - 0.5f) * scale;
 }
 
@@ -485,7 +485,7 @@ int nn_cnn_forward_pass(
                         float spatial_var = spatial_sum_sq * inv_n - spatial_mean * spatial_mean;
                         if (spatial_var < 0.0f) spatial_var = 0.0f; /* clamp catastrophic cancellation */
                         float var_eps = spatial_var + config->bn_epsilon;
-                        float inv_std = 1.0f / sqrtf(var_eps > 0.0f ? var_eps : 1e-8f);
+                        float inv_std = 1.0f / sqrtf(var_eps > 0.0f ? var_eps : config->bn_epsilon);
                         float gamma = context->bn_gamma[filter_index];
                         float beta = context->bn_beta[filter_index];
                         float momentum = config->bn_momentum;
@@ -546,7 +546,7 @@ int nn_cnn_forward_pass(
                                 float bn_mean = context->bn_running_mean[filter_index];
                                 float bn_var  = context->bn_running_var[filter_index];
                                 float bn_eps  = config->bn_epsilon;
-                                float x_hat   = (conv_value - bn_mean) / sqrtf((bn_var + bn_eps) > 0.0f ? (bn_var + bn_eps) : 1e-8f);
+                                float x_hat   = (conv_value - bn_mean) / sqrtf((bn_var + bn_eps) > 0.0f ? (bn_var + bn_eps) : bn_eps);
                                 conv_value    = context->bn_gamma[filter_index] * x_hat +
                                                 context->bn_beta[filter_index];
                             }
@@ -615,7 +615,7 @@ int nn_cnn_forward_pass(
                     float bn_var  = context->bn_running_var[filter_index];
                     float bn_eps  = config->bn_epsilon;
                     float pooled_linear_raw = pooled_sum;
-                    float x_hat   = (pooled_sum - bn_mean) / sqrtf((bn_var + bn_eps) > 0.0f ? (bn_var + bn_eps) : 1e-8f);
+                    float x_hat   = (pooled_sum - bn_mean) / sqrtf((bn_var + bn_eps) > 0.0f ? (bn_var + bn_eps) : bn_eps);
                     pooled_sum    = context->bn_gamma[filter_index] * x_hat +
                                     context->bn_beta[filter_index];
                     /* In training mode store pre-BN raw value for batch statistics */
@@ -696,7 +696,7 @@ int nn_cnn_forward_pass(
                         float bn_var  = context->bn_running_var[filter_index];
                         float bn_eps  = config->bn_epsilon;
                         float pooled_max_raw = pooled_max;
-                        float x_hat   = (pooled_max - bn_mean) / sqrtf((bn_var + bn_eps) > 0.0f ? (bn_var + bn_eps) : 1e-8f);
+                        float x_hat   = (pooled_max - bn_mean) / sqrtf((bn_var + bn_eps) > 0.0f ? (bn_var + bn_eps) : bn_eps);
                         pooled_max    = context->bn_gamma[filter_index] * x_hat +
                                         context->bn_beta[filter_index];
                         if (pooled_linear_cache != NULL) {
@@ -728,11 +728,11 @@ int nn_cnn_forward_pass(
                         bn_gamma_val = context->bn_gamma[filter_index];
                         bn_beta_val  = context->bn_beta[filter_index];
                         {
-                            float x_hat_avg = (pooled_avg_linear - bn_mean) / sqrtf((bn_var + bn_eps) > 0.0f ? (bn_var + bn_eps) : 1e-8f);
+                            float x_hat_avg = (pooled_avg_linear - bn_mean) / sqrtf((bn_var + bn_eps) > 0.0f ? (bn_var + bn_eps) : bn_eps);
                             pooled_avg_linear = bn_gamma_val * x_hat_avg + bn_beta_val;
                         }
                         {
-                            float x_hat_max = (pooled_max - bn_mean) / sqrtf((bn_var + bn_eps) > 0.0f ? (bn_var + bn_eps) : 1e-8f);
+                            float x_hat_max = (pooled_max - bn_mean) / sqrtf((bn_var + bn_eps) > 0.0f ? (bn_var + bn_eps) : bn_eps);
                             pooled_max = bn_gamma_val * x_hat_max + bn_beta_val;
                         }
                     }
@@ -842,7 +842,7 @@ int nn_cnn_forward_pass(
                 float gamma     = context->bn_gamma[filt];
                 float beta      = context->bn_beta[filt];
                 float inv_std = 1.0f / sqrtf(bvar + config->bn_epsilon > 0.0f
-                    ? bvar + config->bn_epsilon : 1e-8f);
+                    ? bvar + config->bn_epsilon : config->bn_epsilon);
 
                 for (si = 0U; si < config->sequence_length; ++si) {
                     for (sii = 0U; sii < (size_t)(is_dual ? 2U : 1U); ++sii) {

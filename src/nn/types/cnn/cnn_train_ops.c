@@ -24,7 +24,7 @@ static float cnn_activation_derivative_from_output(float output, CnnActivationTy
         case CNN_ACT_RELU:
             return output > 0.0f ? 1.0f : 0.0f;
         case CNN_ACT_TANH:
-            return 1.0f - (output * output);
+            return (1.0f - output) * (1.0f + output);
         case CNN_ACT_RELU6:
             return (output > 0.0f && output < 6.0f) ? 1.0f : 0.0f;
         case CNN_ACT_NONE:
@@ -199,6 +199,42 @@ static int cnn_backpropagate(
                 size_t out_row;
                 size_t out_column;
 
+                /* ── Pass 1: accumulate BN correction sums over all spatial positions ── */
+                float sum_dz = 0.0f;
+                float sum_dz_xh = 0.0f;
+                float bn_scale = 1.0f;
+                float bn_const_term = 0.0f;
+                float bn_xh_coeff = 0.0f;
+                float N = (float)(output_grid_height * output_grid_width);
+
+                if (has_bn) {
+                    for (out_row = 0U; out_row < output_grid_height; ++out_row) {
+                        for (out_column = 0U; out_column < output_grid_width; ++out_column) {
+                            size_t flat_index = ((filter_index * output_grid_height) + out_row) * output_grid_width + out_column;
+                            float out_val = step_out[flat_index];
+                            float act_deriv = cnn_activation_derivative_from_output(out_val, config->output_activation);
+                            float dz = step_grad[flat_index] * act_deriv;
+                            if (dz != 0.0f) {
+                                float x_hat = context->bn_pre_cache[step_index * config->filter_count * grid_plane + flat_index];
+                                sum_dz += dz;
+                                sum_dz_xh += dz * x_hat;
+                            }
+                        }
+                    }
+
+                    {
+                        float gamma = infer_ctx->bn_gamma[filter_index];
+                        float sp_var = context->bn_spatial_var[step_index * config->filter_count + filter_index];
+                        float var_eps = sp_var + bn_eps;
+                        float inv_std = 1.0f / sqrtf(var_eps > 0.0f ? var_eps : (bn_eps > 0.0f ? bn_eps : 1e-8f));
+                        float factor = gamma * inv_std / N;
+                        bn_scale = gamma * inv_std;
+                        bn_const_term = -factor * sum_dz;
+                        bn_xh_coeff = -factor * sum_dz_xh;
+                    }
+                }
+
+                /* ── Pass 2: full BN gradient through convolution weights ── */
                 for (out_row = 0U; out_row < output_grid_height; ++out_row) {
                     for (out_column = 0U; out_column < output_grid_width; ++out_column) {
                         size_t flat_index = ((filter_index * output_grid_height) + out_row) * output_grid_width + out_column;
@@ -208,17 +244,15 @@ static int cnn_backpropagate(
                         float dconv;
                         size_t channel_index;
 
-                        /* Batch Normalization backward:
-                         * x_hat is stored in bn_pre_cache from the forward pass.
-                         * spatial_var is used for the gradient scale factor. */
-                        if (has_bn && dz != 0.0f) {
-                            float gamma = infer_ctx->bn_gamma[filter_index];
+                        /* Batch Normalization backward (full training formula):
+                         * dL/dx_i = (gamma/(N*sqrt(var+eps))) * [N*dz_i - sum_j(dz_j) - x_hat_i*sum_j(dz_j*x_hat_j)]
+                         * = dz_i*scale + const_term + xh_coeff*x_hat_i
+                         * where scale=gamma/sqrt(var+eps), const_term=-factor*sum_dz, xh_coeff=-factor*sum_dz_xh */
+                        if (has_bn) {
                             float x_hat = context->bn_pre_cache[step_index * config->filter_count * grid_plane + flat_index];
-                            float sp_var = context->bn_spatial_var[step_index * config->filter_count + filter_index];
-                            float scale = gamma / sqrtf((sp_var + bn_eps) > 0.0f ? (sp_var + bn_eps) : 1e-8f);
                             context->bn_gamma_grad[filter_index] += dz * x_hat;
                             context->bn_beta_grad[filter_index] += dz;
-                            dconv = dz * scale;
+                            dconv = dz * bn_scale + bn_const_term + bn_xh_coeff * x_hat;
                         } else {
                             dconv = dz;
                         }
@@ -315,7 +349,7 @@ static int cnn_backpropagate(
                         float bn_var = context->bn_spatial_var ? context->bn_spatial_var[filter_index] : infer_ctx->bn_running_var[filter_index];
                         float linear_val = context->pooled_linear_cache[pooled_index];
                         float x_hat = (linear_val - beta) / gamma;
-                        float scale = gamma / sqrtf((bn_var + bn_eps) > 0.0f ? (bn_var + bn_eps) : 1e-8f);
+                        float scale = gamma / sqrtf((bn_var + bn_eps) > 0.0f ? (bn_var + bn_eps) : (bn_eps > 0.0f ? bn_eps : 1e-8f));
                         context->bn_gamma_grad[filter_index] += dpool_act * x_hat;
                         context->bn_beta_grad[filter_index] += dpool_act;
                         dpool_linear = dpool_act * scale;
@@ -382,7 +416,7 @@ static int cnn_backpropagate(
                         float gamma = infer_ctx->bn_gamma[filter_index];
                         float beta  = infer_ctx->bn_beta[filter_index];
                         float bn_var = context->bn_spatial_var ? context->bn_spatial_var[filter_index] : infer_ctx->bn_running_var[filter_index];
-                        float scale = gamma / sqrtf((bn_var + bn_eps) > 0.0f ? (bn_var + bn_eps) : 1e-8f);
+                        float scale = gamma / sqrtf((bn_var + bn_eps) > 0.0f ? (bn_var + bn_eps) : (bn_eps > 0.0f ? bn_eps : 1e-8f));
                         float x_hat_avg, x_hat_max;
                         float dbn_gamma = 0.0f;
                         float dbn_beta  = 0.0f;
@@ -454,7 +488,6 @@ static int cnn_backpropagate(
                             position_counter += 1U;
                         }
                     }
-                }
                 } else {
                     /* MAX pooling: gradient routed to argmax position only. */
                     size_t pooled_index = (step_index * config->filter_count) + filter_index;
@@ -476,7 +509,7 @@ static int cnn_backpropagate(
                         float bn_var = context->bn_spatial_var ? context->bn_spatial_var[filter_index] : infer_ctx->bn_running_var[filter_index];
                         float linear_val = context->pooled_linear_cache[pooled_index];
                         float x_hat = (linear_val - beta) / gamma;
-                        float scale = gamma / sqrtf((bn_var + bn_eps) > 0.0f ? (bn_var + bn_eps) : 1e-8f);
+                        float scale = gamma / sqrtf((bn_var + bn_eps) > 0.0f ? (bn_var + bn_eps) : (bn_eps > 0.0f ? bn_eps : 1e-8f));
                         context->bn_gamma_grad[filter_index] += dpool_act * x_hat;
                         context->bn_beta_grad[filter_index] += dpool_act;
                         dmax_linear = dpool_act * scale;

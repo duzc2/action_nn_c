@@ -17,8 +17,9 @@ static void* nn_type_cnn_dual_pool_train_create_codegen(void* infer_ctx, const N
     CnnInferContext* typed_infer_ctx;
 
     if (infer_ctx == 0 || config == 0 || config->type_config == 0 ||
-        config->type_config_size < sizeof(CnnTrainConfig) ||
-        config->type_config_type_name == 0) {
+        config->type_config_size != sizeof(CnnTrainConfig) ||
+        config->type_config_type_name == 0 ||
+        strcmp(config->type_config_type_name, "CnnTrainConfig") != 0) {
         return 0;
     }
 

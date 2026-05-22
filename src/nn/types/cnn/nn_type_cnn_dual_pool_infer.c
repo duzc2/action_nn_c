@@ -17,8 +17,9 @@ static void* nn_type_cnn_dual_pool_infer_create_codegen(const NNCodegenInferConf
     uint32_t seed;
 
     if (config == 0 || config->type_config == 0 ||
-        config->type_config_size < sizeof(CnnConfig) ||
-        config->type_config_type_name == 0) {
+        config->type_config_size != sizeof(CnnConfig) ||
+        config->type_config_type_name == 0 ||
+        strcmp(config->type_config_type_name, "CnnConfig") != 0) {
         return 0;
     }
 
