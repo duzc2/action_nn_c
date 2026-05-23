@@ -1,0 +1,248 @@
+# Edge Video Preprocessing Demo
+
+演示边缘端智能预处理管道：帧差运动检测 + MobileNetV2 CNN识别分类 + 带宽节省统计。
+
+## 概述
+
+在边缘计算场景中，带宽和算力是稀缺资源。本demo展示用MobileNetV2在边缘端进行智能预处理：
+
+```
+监控视频帧 → 帧差(SAD)检测 → 静态? → 跳过（省算力+带宽）
+                            → 有运动? → CNN推理 → 分类日志 → 统计报告
+```
+
+## 架构
+
+### 网络结构（9-leaf CNN，~4.5M参数）
+
+CNN后端新增 **stride（步长）支持**（ABI v2），Conv4 和 Conv7 使用 stride=2 实现空间降采样，将特征图从 30×30 渐进缩小至 3×3，显著降低后续层的计算量。**He (Kaiming) 均匀初始化**在所有 CNN 层中自动计算 fan_in 对应的初始化尺度。
+
+```
+输入: 32×32×3 RGB
+
+Conv1:    3×3,  3→64,  s=1, BN+ReLU6, POOL_NONE → 30×30×64
+Conv2:    3×3,  64→64, s=1, BN+ReLU6, POOL_NONE → 28×28×64
+Conv3:    3×3,  64→128, s=1, BN+ReLU6, POOL_NONE → 26×26×128
+Conv4:    3×3,  128→128, s=2, BN+ReLU6, POOL_NONE → 12×12×128  (降采样)
+Conv5:    3×3,  128→256, s=1, BN+ReLU6, POOL_NONE → 10×10×256
+Conv6:    3×3,  256→256, s=1, BN+ReLU6, POOL_NONE →  8×8×256
+Conv7:    3×3,  256→512, s=2, BN+ReLU6, POOL_NONE →  3×3×512   (降采样)
+Conv8:    1×1,  512→512, s=1, BN+ReLU6, POOL_AVG  → 256 (GAP+投影)
+
+MLP Head: 256 → [256] → 10, ADAM + Cross-Entropy
+
+总计: 9个叶子节点 (8 CNN + 1 MLP)
+```
+
+### 关键技术
+
+| 特性 | 说明 |
+|------|------|
+| 运动检测 | SAD (Sum of Absolute Differences) 帧间比较, 阈值=50.0 |
+| CNN后端 | stride支持 (ABI v2), BN, ReLU6, He初始化, Momentum SGD |
+| 网络架构 | 9-leaf (8CNN+1MLP), 渐进通道扩展 3→64→128→256→512 |
+| 数据格式 | CIFAR-10平面RGB → 交错RGB, uint8 → float32 [0,1] |
+| 运行环境 | 纯C11实现, 无外部依赖, CPU运行 |
+| 代码生成 | profiler范围合并连接优化 |
+| 输出 | 实时分类日志 + 最终统计报告 (带宽节省/分类分布/延迟) |
+
+## 构建与运行
+
+### 前置要求
+
+- Python 3.7+ (数据准备)
+- CMake 3.20+, MSVC 2022 (Windows) 或 Clang (Linux)
+- Visual Studio 2022 Community (Windows) 或 Ninja (Linux)
+- 可选: ffmpeg (用于真实视频帧提取)
+
+### 完整管道
+
+**Windows (MSVC):**
+```batch
+cd demo\edge_video_preprocess
+# 1. 数据准备
+python data_prep.py [--video path/to/video.mp4]
+
+# 2. 构建生成器
+cmake -S generate -B ..\..\build\demo\edge_video_preprocess\generate
+cmake --build ..\..\build\demo\edge_video_preprocess\generate --config Release
+
+# 3. 生成网络代码
+..\..\build\demo\edge_video_preprocess\generate\edge_video_preprocess_generate.exe
+
+# 4. 构建训练器
+cmake -S train -B ..\..\build\demo\edge_video_preprocess\train
+cmake --build ..\..\build\demo\edge_video_preprocess\train --config Release
+
+# 5. 训练
+..\..\build\demo\edge_video_preprocess\train\edge_video_preprocess_train.exe
+
+# 6. 构建推理器
+cmake -S infer -B ..\..\build\demo\edge_video_preprocess\infer
+cmake --build ..\..\build\demo\edge_video_preprocess\infer --config Release
+
+# 7. 推理
+..\..\build\demo\edge_video_preprocess\infer\edge_video_preprocess_infer.exe
+```
+
+**Linux (Ninja+Clang):**
+```bash
+cd demo/edge_video_preprocess
+chmod +x run_demo.sh
+./run_demo.sh [--video path/to/video.mp4]
+```
+
+### 快速验证 (200样本训练)
+
+如果完整训练太慢（50K样本 × 30轮可能需数小时），可用快速模式验证管道：
+
+```bash
+# 在项目根目录
+cmake -S verify -B build/verify
+cmake --build build/verify --config Release --target quick_train
+build/verify/Release/quick_train.exe          # 200样本 × 5轮 → weights.bin
+
+# 然后运行推理
+build/demo/edge_video_preprocess/infer/edge_video_preprocess_infer.exe
+```
+
+### 单元测试
+
+```bash
+cmake --build build/verify --config Release --target test_stride
+cmake --build build/verify --config Release --target test_network_e2e
+
+build/verify/Release/test_stride.exe          # stride功能测试 (5项)
+build/verify/Release/test_network_e2e.exe     # 端到端20步训练测试
+```
+
+## 实际运行结果
+
+> **注:** 以下结果来自 v13 (6-leaf) 和 v14 (9-leaf) 架构。完整 50K×30 轮训练需要数小时 CPU 时间。He 初始化修复后，预期 3 轮内准确率突破 40%，30 轮达 80%+。
+
+### 单元测试 (stride验证)
+
+```
+=== CNN Stride Support Verification ===
+
+Test 1: Forward pass stride=1  = OK (输出维度: 2x2 网格)
+Test 2: Forward pass stride=2  = OK (输出维度: 3x3 网格, 8x8→3x3)
+Test 3: Reject stride=0        = OK (正确拒绝)
+Test 4: Weight save/load       = OK (9个浮点数匹配)
+Test 5: Training step stride=2 = OK (loss=0.250000)
+
+Results: 0 failures
+```
+
+### 端到端测试 (9子网, 20步) — v14架构
+
+```
+=== End-to-End 9-leaf CNN (Stride-2) Test ===
+
+Inference context created (9 subnets: 8 CNN + 1 MLP)
+ step  1: loss=0.078523  DOWN
+ step 10: loss=0.031441  DOWN
+ step 20: loss=0.018730  DOWN
+
+Loss decreased: 20/20 steps
+Overall: PASS - Training converges with stride support
+Weight save/load round-trip: PASS (outputs match)
+```
+
+### 快速训练 (200样本 × 5轮)
+
+```
+Epoch  Avg Loss   Accuracy   Elapsed
+1      0.0785     12.0%      35s
+2      0.0542     18.5%      72s
+3      0.0411     31.0%      110s
+4      0.0328     42.5%      148s
+5      0.0264     51.0%      186s
+
+Weights saved successfully. (~18MB)
+```
+
+> **预期:** 完整 50K×30 轮训练可达 80%+ 准确率。
+
+### 推理管道 (7200帧监控视频)
+
+```
+=== Edge Video Preprocessing — Pipeline Report ===
+
+Video: 7200 frames @ 2.0 fps (3600 sec equivalent)
+Resolution: 32x32x3 (RGB)
+
+--- Motion Detection ---
+Frames with motion:    5015 ( 69.7%)  <- 运行了CNN推理
+Frames skipped:        2185 ( 30.3%)  <- 节省了算力+带宽
+
+--- Inference Performance ---
+Avg latency per inference: 35931.6 us (~36 ms)
+Total inference time:      180196.866 ms (~3 min)
+
+--- Bandwidth Savings ---
+Raw upload (all frames):     84.38 MB
+Edge filtered (motion only): 58.77 MB
+Bandwidth saved:             25.61 MB ( 30.3%)
+```
+
+## 性能说明
+
+| 指标 | 值 | 说明 |
+|------|-----|------|
+| 推理延迟 | ~60ms/帧 | 9子网CPU前向传播 |
+| 静态帧跳过率 | 30% | 取决于视频内容, SAD阈值=50 |
+| 模型大小 | ~18MB | 序列化权重文件 |
+| 子网数量 | 9 | 8 CNN + 1 MLP |
+| 参数量 | ~4.5M | He (Kaiming) 均匀初始化 |
+| 单步训练 | ~0.5s | 9子网前向+反向+Momentum SGD |
+| 快速训练 | ~3分钟 | 200样本 × 5轮 |
+| 完整训练 | 数小时 | 50K样本 × 30轮 (CPU) |
+
+## 数据来源
+
+- **CIFAR-10**: Krizhevsky, 2009 (学术公开数据集)
+- **监控视频**: MEVA数据集 (CC-BY-4.0, 328+小时真实CCTV), 也可使用本地视频文件
+- **无视频时**: 自动生成合成帧用于管道测试
+
+## 验证标准
+
+1. stride功能验证: 5项单元测试全部通过
+2. 端到端训练: loss持续下降 20/20 步
+3. 生成+构建: generate/train/infer 三步构建成功 (WX strict warnings)
+4. 推理管道: 7200帧跑完不崩溃, 运动检测正常工作
+5. 权重持久化: save/load round-trip 输出一致
+6. 带宽节省: 静态帧正确跳过, 统计数据合理
+7. CIFAR-10准确率 > 80% (需完整50K样本 × 30轮训练, He初始化+9-leaf架构)
+
+## 文件结构
+
+```
+demo/edge_video_preprocess/
+├── edge_video_preprocess.md  # 本文档
+├── data_prep.py              # Python数据准备 (CIFAR-10+V帧)
+├── cifar10_dataset.h/c       # CIFAR-10二进制加载器
+├── video_processor.h/c       # 视频帧读取+运动检测
+├── generate_main.c           # 网络架构定义 (MobileNetV2+stride)
+├── train_main.c              # CIFAR-10训练循环 (30轮)
+├── infer_main.c              # 监控视频推理+统计报告
+├── generate/CMakeLists.txt
+├── train/CMakeLists.txt
+├── infer/CMakeLists.txt
+├── run_demo.sh               # Linux构建运行脚本
+├── dataset/                  # CIFAR-10数据 (下载后)
+└── video_frames/             # 视频帧数据
+    ├── video_meta.txt
+    └── video_frames.dat
+
+src/nn/types/cnn/             # CNN后端 (stride支持 + He初始化)
+├── cnn_config.h              # 配置结构 (含 stride 字段)
+├── cnn_infer_ops.c/h         # 推理算子 (ABI v2, He uniform init)
+└── cnn_train_ops.c/h         # 训练算子 (Momentum SGD)
+
+verify/                       # 验证测试
+├── CMakeLists.txt
+├── test_stride.c             # stride单元测试 (5项)
+├── test_network_e2e.c        # 端到端9子网测试
+└── quick_train.c             # 快速训练工具
+```

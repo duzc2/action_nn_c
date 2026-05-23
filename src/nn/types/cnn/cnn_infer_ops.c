@@ -384,7 +384,9 @@ int nn_cnn_forward_pass(
     size_t* restrict max_index_cache,
     float* restrict output_linear_cache,
     float* restrict bn_pre_cache,
-    float* restrict bn_spatial_var
+    float* restrict bn_spatial_var,
+    float dropout_rate,
+    float* restrict dropout_mask
 ) {
     const CnnConfig* config;
     size_t frame_stride;
@@ -438,9 +440,12 @@ int nn_cnn_forward_pass(
                     (filter_index * grid_plane);
 
                 if (training_mode) {
-                    /* ── Training: two-pass spatial BN ──
-                     * Pass 1: compute all conv values, store in bn_pre_cache,
-                     *         accumulate sum and sum-of-squares for statistics. */
+                    /* ── Training: conv + running-statistics BN ──
+                     * Pass 1: compute all conv values, accumulate spatial stats
+                     *         for running statistic EMA updates.
+                     * Pass 2: normalize using RUNNING statistics (not per-sample
+                     *         spatial stats) — preserves per-sample variation
+                     *         which is critical for batch_size=1 classification. */
                     float spatial_sum = 0.0f;
                     float spatial_sum_sq = 0.0f;
                     size_t pos = 0U;
@@ -478,24 +483,23 @@ int nn_cnn_forward_pass(
                         }
                     }
 
-                    /* Compute spatial statistics */
+                    /* Compute per-sample spatial stats for running statistic update.
+                     * We use RUNNING mean/var for normalization (not spatial stats)
+                     * to preserve per-sample variation. The spatial stats are only
+                     * used to update the EMA running estimates. */
                     {
                         float inv_n = 1.0f / (float)output_positions;
                         float spatial_mean = spatial_sum * inv_n;
                         float spatial_var = spatial_sum_sq * inv_n - spatial_mean * spatial_mean;
-                        if (spatial_var < 0.0f) spatial_var = 0.0f; /* clamp catastrophic cancellation */
-                        float var_eps = spatial_var + config->bn_epsilon;
-                        float inv_std = 1.0f / sqrtf(var_eps > 0.0f ? var_eps : config->bn_epsilon);
-                        float gamma = context->bn_gamma[filter_index];
-                        float beta = context->bn_beta[filter_index];
+                        if (spatial_var < 0.0f) spatial_var = 0.0f;
                         float momentum = config->bn_momentum;
 
-                        /* Store spatial variance for backward pass (per-step) */
+                        /* Store spatial variance (for pooled-path backward compatibility) */
                         if (bn_spatial_var != NULL) {
                             bn_spatial_var[step_index * config->filter_count + filter_index] = spatial_var;
                         }
 
-                        /* Update running statistics */
+                        /* Update running statistics via EMA with per-sample spatial stats */
                         context->bn_running_mean[filter_index] =
                             momentum * context->bn_running_mean[filter_index] +
                             (1.0f - momentum) * spatial_mean;
@@ -503,15 +507,25 @@ int nn_cnn_forward_pass(
                             momentum * context->bn_running_var[filter_index] +
                             (1.0f - momentum) * spatial_var;
 
-                        /* Pass 2: normalize, store x_hat in bn_pre_cache, apply BN + activation */
-                        for (pos = 0U; pos < output_positions; ++pos) {
-                            float x_hat = (filter_cache[pos] - spatial_mean) * inv_std;
-                            filter_cache[pos] = x_hat;  /* store x_hat for backward pass */
-                            float bn_out = gamma * x_hat + beta;
-                            step_output[((filter_index * output_grid_height) +
-                                (pos / output_grid_width)) * output_grid_width +
-                                (pos % output_grid_width)] =
-                                cnn_apply_activation(bn_out, config->output_activation);
+                        /* Pass 2: normalize using RUNNING statistics (global averages),
+                         * store x_hat for backward pass, apply BN + activation */
+                        {
+                            float gamma = context->bn_gamma[filter_index];
+                            float beta  = context->bn_beta[filter_index];
+                            float bn_mean = context->bn_running_mean[filter_index];
+                            float bn_var  = context->bn_running_var[filter_index];
+                            float var_eps = bn_var + config->bn_epsilon;
+                            float inv_std = 1.0f / sqrtf(var_eps > 0.0f ? var_eps : config->bn_epsilon);
+
+                            for (pos = 0U; pos < output_positions; ++pos) {
+                                float x_hat = (filter_cache[pos] - bn_mean) * inv_std;
+                                filter_cache[pos] = x_hat;  /* store x_hat for backward pass */
+                                float bn_out = gamma * x_hat + beta;
+                                step_output[((filter_index * output_grid_height) +
+                                    (pos / output_grid_width)) * output_grid_width +
+                                    (pos % output_grid_width)] =
+                                    cnn_apply_activation(bn_out, config->output_activation);
+                            }
                         }
                     }
                 } else {
@@ -758,6 +772,21 @@ int nn_cnn_forward_pass(
             }
         }
 
+        /* ── Dropout: apply between pooling and projection ──
+         * Inverted dropout: keep prob = 1-rate, scale kept by 1/(1-rate).
+         * Mask stored for backward pass. Only active when pooling is used. */
+        if (dropout_rate > 0.0f && dropout_mask != NULL) {
+            float keep_prob = 1.0f - dropout_rate;
+            float scale = 1.0f / (keep_prob > 0.0f ? keep_prob : 0.001f);
+            size_t pool_idx;
+            for (pool_idx = 0U; pool_idx < pooled_value_count; ++pool_idx) {
+                float r = (float)cnn_next_random(&context->rng_state) / 4294967295.0f;
+                float mask = (r < keep_prob) ? scale : 0.0f;
+                pooled_values[pool_idx] *= mask;
+                dropout_mask[(step_index * pooled_value_count) + pool_idx] = mask;
+            }
+        }
+
         /* Project pooled filter responses into a compact feature vector for the downstream leaf. */
         for (feature_index = 0U; feature_index < config->feature_size; ++feature_index) {
             float linear_value = context->projection_bias[feature_index];
@@ -780,13 +809,24 @@ int nn_cnn_forward_pass(
     /* ── BN training post-processing for pooled paths ──
      * During training, re-normalize per-step pooled linear values using
      * batch statistics computed across all sequence_length steps.  This
-     * replaces the per-step inference-style BN that uses running stats only. */
+     * replaces the per-step inference-style BN that uses running stats only.
+     *
+     * NOTE: Skip when batch statistics are unreliable (single value per
+     * filter → variance is always zero → normalization collapses output
+     * to a constant beta).  The running-stats BN applied during the
+     * initial forward pass is sufficient in this case. */
     if (config->pooling_mode != CNN_POOL_NONE &&
         config->use_batch_norm && context->bn_gamma != NULL &&
         bn_spatial_var != NULL && bn_pre_cache != NULL &&
         pooled_linear_cache != NULL && pooled_activation_cache != NULL) {
         size_t filt;
         int is_dual = (config->pooling_mode == CNN_POOL_DUAL) ? 1 : 0;
+
+        /* Require at least 2 values per filter for meaningful batch statistics.
+         * sequence_length=1 with non-dual pooling → 1 value → skip. */
+        if (config->sequence_length < 2U && !is_dual) {
+            return 0;
+        }
 
         for (filt = 0U; filt < config->filter_count; ++filt) {
             float bmean = 0.0f;
@@ -866,11 +906,7 @@ int nn_cnn_forward_pass(
 
         /* Recompute pooled_values and projection output with corrected activation */
         {
-            size_t step_index;
             for (step_index = 0U; step_index < config->sequence_length; ++step_index) {
-                size_t filt;
-                size_t feature_index;
-
                 /* Refresh pooled_values buffer for current step */
                 for (filt = 0U; filt < config->filter_count; ++filt) {
                     if (is_dual) {
@@ -880,6 +916,15 @@ int nn_cnn_forward_pass(
                     } else {
                         size_t idx = step_index * config->filter_count + filt;
                         context->pooled_values[filt] = pooled_activation_cache[idx];
+                    }
+                }
+
+                /* Re-apply stored dropout mask after pooled_values refresh */
+                if (dropout_rate > 0.0f && dropout_mask != NULL) {
+                    size_t drop_base = step_index * pooled_value_count;
+                    size_t dpi;
+                    for (dpi = 0U; dpi < pooled_value_count; ++dpi) {
+                        context->pooled_values[dpi] *= dropout_mask[drop_base + dpi];
                     }
                 }
 
@@ -924,7 +969,9 @@ int nn_cnn_infer_step(void* ctx) {
         NULL,
         NULL,
         context->bn_training_pre_cache,
-        context->bn_training_spatial_var
+        context->bn_training_spatial_var,
+        0.0f,
+        NULL
     );
 }
 

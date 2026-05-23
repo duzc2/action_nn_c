@@ -60,7 +60,9 @@ int nn_cnn_forward_pass(
     size_t* restrict max_index_cache,
     float* restrict output_linear_cache,
     float* restrict bn_pre_cache,
-    float* restrict bn_spatial_var
+    float* restrict bn_spatial_var,
+    float dropout_rate,
+    float* restrict dropout_mask
 );
 
 int nn_cnn_load_weights(void* context, FILE* fp);

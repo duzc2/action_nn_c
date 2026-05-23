@@ -76,6 +76,8 @@ typedef struct {
     float learning_rate;                  /**< Step size used by the simple SGD update. */
     float momentum;                       /**< Reserved for future optimizer growth. */
     float weight_decay;                   /**< L2-style decay applied to trainable weights. */
+    float bias_weight_decay;              /**< L2-style decay applied to bias vectors. */
+    float dropout_rate;                   /**< Dropout rate (0.0 = disabled). Applied between GAP pooling and MLP projection. */
     uint32_t batch_size;                  /**< Batch size requested by generated wrappers. */
     uint32_t seed;                        /**< Reserved deterministic seed for future train state. */
 } CnnTrainConfig;

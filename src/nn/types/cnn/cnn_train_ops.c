@@ -35,6 +35,10 @@ static float cnn_activation_derivative_from_output(float output, CnnActivationTy
 
 #include "cnn_common.h"
 
+/* ── Diagnostic logging counters ─────────────────────────────────────── */
+static size_t diag_step_counter = 0;
+static int    diag_forward_count  = 0;
+
 static void cnn_zero_gradients(CnnTrainContext* context) {
     const CnnConfig* config;
     size_t conv_weight_count;
@@ -81,6 +85,11 @@ static void cnn_apply_parameter_update(CnnTrainContext* context) {
     float lr = context->config.learning_rate;
     float momentum = context->config.momentum;
     float wd = context->config.weight_decay;
+    float wd_bias = context->config.bias_weight_decay;
+
+    /* No lr scaling needed: gradients are accumulated (summed) over
+     * batch_size samples, so the total update naturally equals batch_size
+     * single-sample updates, preserving the effective per-sample step size. */
 
     infer_ctx = context->infer_ctx;
     config = &infer_ctx->config;
@@ -98,9 +107,10 @@ static void cnn_apply_parameter_update(CnnTrainContext* context) {
         infer_ctx->conv_weights[weight_index] += context->conv_weight_vel[weight_index];
     }
     for (weight_index = 0U; weight_index < config->filter_count; ++weight_index) {
+        float grad_wd_bias = context->conv_bias_grad[weight_index] +
+                             wd_bias * infer_ctx->conv_bias[weight_index];
         context->conv_bias_vel[weight_index] =
-            momentum * context->conv_bias_vel[weight_index] -
-            lr * context->conv_bias_grad[weight_index];
+            momentum * context->conv_bias_vel[weight_index] - lr * grad_wd_bias;
         infer_ctx->conv_bias[weight_index] += context->conv_bias_vel[weight_index];
     }
     if (infer_ctx->projection_weights != NULL && context->projection_weight_vel != NULL) {
@@ -114,9 +124,10 @@ static void cnn_apply_parameter_update(CnnTrainContext* context) {
     }
     if (infer_ctx->projection_bias != NULL && context->projection_bias_vel != NULL) {
         for (weight_index = 0U; weight_index < config->feature_size; ++weight_index) {
+            float grad_wd_bias = context->projection_bias_grad[weight_index] +
+                                 wd_bias * infer_ctx->projection_bias[weight_index];
             context->projection_bias_vel[weight_index] =
-                momentum * context->projection_bias_vel[weight_index] -
-                lr * context->projection_bias_grad[weight_index];
+                momentum * context->projection_bias_vel[weight_index] - lr * grad_wd_bias;
             infer_ctx->projection_bias[weight_index] += context->projection_bias_vel[weight_index];
         }
     }
@@ -135,6 +146,59 @@ static void cnn_apply_parameter_update(CnnTrainContext* context) {
             infer_ctx->bn_beta[weight_index] += context->bn_beta_vel[weight_index];
         }
     }
+
+    /* Diagnostic: per-leaf weight update L2 norm (every 1000 steps) */
+    if (diag_step_counter % 1000U == 0) {
+        size_t diag_i;
+        float diag_conv_w_l2 = 0.0f, diag_conv_b_l2 = 0.0f;
+        float diag_proj_w_l2 = 0.0f, diag_proj_b_l2 = 0.0f;
+        float diag_bn_g_l2 = 0.0f, diag_bn_b_l2 = 0.0f;
+        /* Weight magnitudes (RMS) for health check */
+        float diag_conv_w_rms = 0.0f, diag_conv_b_rms = 0.0f;
+        float diag_proj_w_rms = 0.0f, diag_proj_b_rms = 0.0f;
+
+        for (diag_i = 0U; diag_i < conv_weight_count; ++diag_i) {
+            diag_conv_w_l2 += context->conv_weight_vel[diag_i] * context->conv_weight_vel[diag_i];
+            diag_conv_w_rms += infer_ctx->conv_weights[diag_i] * infer_ctx->conv_weights[diag_i];
+        }
+        for (diag_i = 0U; diag_i < config->filter_count; ++diag_i) {
+            diag_conv_b_l2 += context->conv_bias_vel[diag_i] * context->conv_bias_vel[diag_i];
+            diag_conv_b_rms += infer_ctx->conv_bias[diag_i] * infer_ctx->conv_bias[diag_i];
+        }
+        diag_conv_w_rms = sqrtf(diag_conv_w_rms / (float)conv_weight_count);
+        diag_conv_b_rms = sqrtf(diag_conv_b_rms / (float)(config->filter_count > 0U ? config->filter_count : 1U));
+        if (context->projection_weight_vel != NULL) {
+            for (diag_i = 0U; diag_i < projection_weight_count; ++diag_i) {
+                diag_proj_w_l2 += context->projection_weight_vel[diag_i] * context->projection_weight_vel[diag_i];
+                diag_proj_w_rms += infer_ctx->projection_weights[diag_i] * infer_ctx->projection_weights[diag_i];
+            }
+        }
+        if (context->projection_bias_vel != NULL) {
+            for (diag_i = 0U; diag_i < config->feature_size; ++diag_i) {
+                diag_proj_b_l2 += context->projection_bias_vel[diag_i] * context->projection_bias_vel[diag_i];
+                diag_proj_b_rms += infer_ctx->projection_bias[diag_i] * infer_ctx->projection_bias[diag_i];
+            }
+        }
+        diag_proj_w_rms = (projection_weight_count > 0U && context->projection_weight_vel != NULL)
+            ? sqrtf(diag_proj_w_rms / (float)projection_weight_count) : 0.0f;
+        diag_proj_b_rms = (config->feature_size > 0U && context->projection_bias_vel != NULL)
+            ? sqrtf(diag_proj_b_rms / (float)config->feature_size) : 0.0f;
+        if (context->bn_gamma_vel != NULL) {
+            for (diag_i = 0U; diag_i < config->filter_count; ++diag_i) {
+                diag_bn_g_l2 += context->bn_gamma_vel[diag_i] * context->bn_gamma_vel[diag_i];
+                diag_bn_b_l2 += context->bn_beta_vel[diag_i] * context->bn_beta_vel[diag_i];
+            }
+        }
+        fprintf(stderr, "[DIAG] step=%zu update| weight_rms conv_w=%.4f/%.4f conv_b=%.4f/%.4f proj_w=%.4f/%.4f proj_b=%.4f/%.4f bn_g=%.4f bn_b=%.4f\n",
+                diag_step_counter,
+                (double)diag_conv_w_l2, (double)diag_conv_w_rms,
+                (double)diag_conv_b_l2, (double)diag_conv_b_rms,
+                (double)diag_proj_w_l2, (double)diag_proj_w_rms,
+                (double)diag_proj_b_l2, (double)diag_proj_b_rms,
+                (double)diag_bn_g_l2, (double)diag_bn_b_l2);
+    }
+
+    ++diag_step_counter;
 }
 
 /**
@@ -171,7 +235,18 @@ static int cnn_backpropagate(
         return ACTION_C_ERR_DIM_MISMATCH;
     }
 
-    cnn_zero_gradients(context);
+    /* ── Mini-batch gradient accumulation ──
+     * When batch_size > 1: accumulate gradients across multiple samples,
+     * only zero at batch start. Update is applied at batch end only. */
+    {
+        const uint32_t batch_sz = context->config.batch_size;
+        int batch_start = (batch_sz <= 1U || context->batch_step_count == 0U);
+
+        if (batch_start) {
+            cnn_zero_gradients(context);
+        }
+    }
+
     if (input_gradient != NULL) {
         (void)memset(input_gradient, 0, config->total_input_size * sizeof(float));
     }
@@ -199,42 +274,25 @@ static int cnn_backpropagate(
                 size_t out_row;
                 size_t out_column;
 
-                /* ── Pass 1: accumulate BN correction sums over all spatial positions ── */
-                float sum_dz = 0.0f;
-                float sum_dz_xh = 0.0f;
+                /* ── Running-statistics BN backward (single pass) ──
+                 * When BN normalizes using RUNNING statistics (not per-sample
+                 * spatial stats), gradient simplifies because running mean/var
+                 * are constants (derivatives w.r.t. input are zero):
+                 *   dL/dx_i = dz_i * gamma / sqrt(running_var + eps)
+                 * vs. the full per-sample formula which requires correction
+                 * terms for d(mean)/dx_i and d(var)/dx_i.
+                 *
+                 * bn_scale defaults to 1.0 for the no-BN path. */
                 float bn_scale = 1.0f;
-                float bn_const_term = 0.0f;
-                float bn_xh_coeff = 0.0f;
-                float N = (float)(output_grid_height * output_grid_width);
 
                 if (has_bn) {
-                    for (out_row = 0U; out_row < output_grid_height; ++out_row) {
-                        for (out_column = 0U; out_column < output_grid_width; ++out_column) {
-                            size_t flat_index = ((filter_index * output_grid_height) + out_row) * output_grid_width + out_column;
-                            float out_val = step_out[flat_index];
-                            float act_deriv = cnn_activation_derivative_from_output(out_val, config->output_activation);
-                            float dz = step_grad[flat_index] * act_deriv;
-                            if (dz != 0.0f) {
-                                float x_hat = context->bn_pre_cache[step_index * config->filter_count * grid_plane + flat_index];
-                                sum_dz += dz;
-                                sum_dz_xh += dz * x_hat;
-                            }
-                        }
-                    }
-
-                    {
-                        float gamma = infer_ctx->bn_gamma[filter_index];
-                        float sp_var = context->bn_spatial_var[step_index * config->filter_count + filter_index];
-                        float var_eps = sp_var + bn_eps;
-                        float inv_std = 1.0f / sqrtf(var_eps > 0.0f ? var_eps : (bn_eps > 0.0f ? bn_eps : 1e-8f));
-                        float factor = gamma * inv_std / N;
-                        bn_scale = gamma * inv_std;
-                        bn_const_term = -factor * sum_dz;
-                        bn_xh_coeff = -factor * sum_dz_xh;
-                    }
+                    float gamma = infer_ctx->bn_gamma[filter_index];
+                    float bn_var = infer_ctx->bn_running_var[filter_index];
+                    float var_eps = bn_var + bn_eps;
+                    float inv_std = 1.0f / sqrtf(var_eps > 0.0f ? var_eps : (bn_eps > 0.0f ? bn_eps : 1e-8f));
+                    bn_scale = gamma * inv_std;
                 }
 
-                /* ── Pass 2: full BN gradient through convolution weights ── */
                 for (out_row = 0U; out_row < output_grid_height; ++out_row) {
                     for (out_column = 0U; out_column < output_grid_width; ++out_column) {
                         size_t flat_index = ((filter_index * output_grid_height) + out_row) * output_grid_width + out_column;
@@ -244,18 +302,12 @@ static int cnn_backpropagate(
                         float dconv;
                         size_t channel_index;
 
-                        /* Batch Normalization backward (full training formula):
-                         * dL/dx_i = (gamma/(N*sqrt(var+eps))) * [N*dz_i - sum_j(dz_j) - x_hat_i*sum_j(dz_j*x_hat_j)]
-                         * = dz_i*scale + const_term + xh_coeff*x_hat_i
-                         * where scale=gamma/sqrt(var+eps), const_term=-factor*sum_dz, xh_coeff=-factor*sum_dz_xh */
-                        if (has_bn) {
+                        if (has_bn && dz != 0.0f) {
                             float x_hat = context->bn_pre_cache[step_index * config->filter_count * grid_plane + flat_index];
                             context->bn_gamma_grad[filter_index] += dz * x_hat;
                             context->bn_beta_grad[filter_index] += dz;
-                            dconv = dz * bn_scale + bn_const_term + bn_xh_coeff * x_hat;
-                        } else {
-                            dconv = dz;
                         }
+                        dconv = dz * bn_scale;
 
                         context->conv_bias_grad[filter_index] += dconv;
 
@@ -292,7 +344,45 @@ static int cnn_backpropagate(
             }
         }
 
-        cnn_apply_parameter_update(context);
+        /* Diagnostic: per-leaf gradient L2 norm and weight RMS (every 1000 steps) */
+        if (diag_step_counter % 1000U == 0) {
+            size_t diag_i;
+            float diag_conv_w_l2 = 0.0f, diag_conv_b_l2 = 0.0f;
+            float diag_bn_g_l2 = 0.0f, diag_bn_b_l2 = 0.0f;
+            float diag_conv_w_rms = 0.0f, diag_conv_b_rms = 0.0f;
+            size_t diag_conv_wc = cnn_conv_weight_count(config);
+            for (diag_i = 0U; diag_i < diag_conv_wc; ++diag_i) {
+                diag_conv_w_l2 += context->conv_weight_grad[diag_i] * context->conv_weight_grad[diag_i];
+                diag_conv_w_rms += infer_ctx->conv_weights[diag_i] * infer_ctx->conv_weights[diag_i];
+            }
+            for (diag_i = 0U; diag_i < config->filter_count; ++diag_i) {
+                diag_conv_b_l2 += context->conv_bias_grad[diag_i] * context->conv_bias_grad[diag_i];
+                diag_conv_b_rms += infer_ctx->conv_bias[diag_i] * infer_ctx->conv_bias[diag_i];
+            }
+            diag_conv_w_rms = sqrtf(diag_conv_w_rms / (float)(diag_conv_wc > 0U ? diag_conv_wc : 1U));
+            diag_conv_b_rms = sqrtf(diag_conv_b_rms / (float)(config->filter_count > 0U ? config->filter_count : 1U));
+            if (context->bn_gamma_grad != NULL) {
+                for (diag_i = 0U; diag_i < config->filter_count; ++diag_i) {
+                    diag_bn_g_l2 += context->bn_gamma_grad[diag_i] * context->bn_gamma_grad[diag_i];
+                    diag_bn_b_l2 += context->bn_beta_grad[diag_i] * context->bn_beta_grad[diag_i];
+                }
+            }
+            fprintf(stderr, "[DIAG] step=%zu grad|weight_rms conv_w=%.4f/%.4f conv_b=%.4f/%.4f bn_g=%.4f bn_b=%.4f\n",
+                    diag_step_counter,
+                    (double)diag_conv_w_l2, (double)diag_conv_w_rms,
+                    (double)diag_conv_b_l2, (double)diag_conv_b_rms,
+                    (double)diag_bn_g_l2, (double)diag_bn_b_l2);
+        }
+
+        /* Batch accumulation: only apply update when batch is complete */
+        {
+            const uint32_t batch_sz = context->config.batch_size;
+            context->batch_step_count++;
+            if (context->batch_step_count >= batch_sz) {
+                context->batch_step_count = 0U;
+                cnn_apply_parameter_update(context);
+            }
+        }
         return 0;
     }
 
@@ -315,6 +405,16 @@ static int cnn_backpropagate(
                 context->pooled_gradient_cache[cache_index] +=
                     infer_ctx->projection_weights[weight_index] * dz;
             }
+        }
+    }
+
+    /* Apply dropout mask to pooled gradients before conv backprop.
+     * Mask values are 0 (dropped) or 1/(1-rate) (kept, scale from inverted dropout). */
+    if (context->dropout_mask != NULL && context->config.dropout_rate > 0.0f) {
+        size_t pci;
+        size_t pooled_grad_count = config->sequence_length * pooled_value_count;
+        for (pci = 0U; pci < pooled_grad_count; ++pci) {
+            context->pooled_gradient_cache[pci] *= context->dropout_mask[pci];
         }
     }
 
@@ -560,7 +660,66 @@ static int cnn_backpropagate(
         }
     }
 
-    cnn_apply_parameter_update(context);
+    /* Diagnostic: per-leaf gradient L2 norm and weight RMS (every 1000 steps) */
+    if (diag_step_counter % 1000U == 0) {
+        size_t diag_i;
+        float diag_conv_w_l2 = 0.0f, diag_conv_b_l2 = 0.0f;
+        float diag_proj_w_l2 = 0.0f, diag_proj_b_l2 = 0.0f;
+        float diag_bn_g_l2 = 0.0f, diag_bn_b_l2 = 0.0f;
+        float diag_conv_w_rms = 0.0f, diag_conv_b_rms = 0.0f;
+        float diag_proj_w_rms = 0.0f, diag_proj_b_rms = 0.0f;
+        size_t diag_conv_wc = cnn_conv_weight_count(config);
+        size_t diag_proj_wc = cnn_projection_weight_count(config);
+        for (diag_i = 0U; diag_i < diag_conv_wc; ++diag_i) {
+            diag_conv_w_l2 += context->conv_weight_grad[diag_i] * context->conv_weight_grad[diag_i];
+            diag_conv_w_rms += infer_ctx->conv_weights[diag_i] * infer_ctx->conv_weights[diag_i];
+        }
+        for (diag_i = 0U; diag_i < config->filter_count; ++diag_i) {
+            diag_conv_b_l2 += context->conv_bias_grad[diag_i] * context->conv_bias_grad[diag_i];
+            diag_conv_b_rms += infer_ctx->conv_bias[diag_i] * infer_ctx->conv_bias[diag_i];
+        }
+        diag_conv_w_rms = sqrtf(diag_conv_w_rms / (float)(diag_conv_wc > 0U ? diag_conv_wc : 1U));
+        diag_conv_b_rms = sqrtf(diag_conv_b_rms / (float)(config->filter_count > 0U ? config->filter_count : 1U));
+        if (context->projection_weight_grad != NULL) {
+            for (diag_i = 0U; diag_i < diag_proj_wc; ++diag_i) {
+                diag_proj_w_l2 += context->projection_weight_grad[diag_i] * context->projection_weight_grad[diag_i];
+                diag_proj_w_rms += infer_ctx->projection_weights[diag_i] * infer_ctx->projection_weights[diag_i];
+            }
+        }
+        if (context->projection_bias_grad != NULL) {
+            for (diag_i = 0U; diag_i < config->feature_size; ++diag_i) {
+                diag_proj_b_l2 += context->projection_bias_grad[diag_i] * context->projection_bias_grad[diag_i];
+                diag_proj_b_rms += infer_ctx->projection_bias[diag_i] * infer_ctx->projection_bias[diag_i];
+            }
+        }
+        diag_proj_w_rms = (diag_proj_wc > 0U && context->projection_weight_grad != NULL)
+            ? sqrtf(diag_proj_w_rms / (float)diag_proj_wc) : 0.0f;
+        diag_proj_b_rms = (config->feature_size > 0U && context->projection_bias_grad != NULL)
+            ? sqrtf(diag_proj_b_rms / (float)config->feature_size) : 0.0f;
+        if (context->bn_gamma_grad != NULL) {
+            for (diag_i = 0U; diag_i < config->filter_count; ++diag_i) {
+                diag_bn_g_l2 += context->bn_gamma_grad[diag_i] * context->bn_gamma_grad[diag_i];
+                diag_bn_b_l2 += context->bn_beta_grad[diag_i] * context->bn_beta_grad[diag_i];
+            }
+        }
+        fprintf(stderr, "[DIAG] step=%zu grad|weight_rms conv_w=%.4f/%.4f conv_b=%.4f/%.4f proj_w=%.4f/%.4f proj_b=%.4f/%.4f bn_g=%.4f bn_b=%.4f\n",
+                diag_step_counter,
+                (double)diag_conv_w_l2, (double)diag_conv_w_rms,
+                (double)diag_conv_b_l2, (double)diag_conv_b_rms,
+                (double)diag_proj_w_l2, (double)diag_proj_w_rms,
+                (double)diag_proj_b_l2, (double)diag_proj_b_rms,
+                (double)diag_bn_g_l2, (double)diag_bn_b_l2);
+    }
+
+    /* Batch accumulation: only apply update when batch is complete */
+    {
+        const uint32_t batch_sz = context->config.batch_size;
+        context->batch_step_count++;
+        if (context->batch_step_count >= batch_sz) {
+            context->batch_step_count = 0U;
+            cnn_apply_parameter_update(context);
+        }
+    }
     return 0;
 }
 
@@ -621,6 +780,15 @@ CnnTrainContext* nn_cnn_train_create(void* infer_ctx_ptr, const CnnTrainConfig* 
         context->projection_bias_vel = (float*)calloc(infer_config->feature_size, sizeof(float));
     }
 
+    /* Dropout mask: allocated even when dropout_rate==0 for simplicity,
+     * only used when config.dropout_rate > 0. One mask entry per pooled value
+     * across all sequence steps. */
+    if (infer_config->pooling_mode != CNN_POOL_NONE) {
+        context->dropout_mask = (float*)calloc(pooled_cache_count, sizeof(float));
+    } else {
+        context->dropout_mask = NULL;
+    }
+
     /* Momentum velocity buffers */
     context->conv_weight_vel = (float*)calloc(conv_weight_count, sizeof(float));
     context->conv_bias_vel = (float*)calloc(infer_config->filter_count, sizeof(float));
@@ -672,7 +840,8 @@ CnnTrainContext* nn_cnn_train_create(void* infer_ctx_ptr, const CnnTrainConfig* 
     if (infer_config->pooling_mode != CNN_POOL_NONE) {
         if (context->pooled_linear_cache == NULL || context->pooled_activation_cache == NULL ||
             context->output_linear_cache == NULL || context->pooled_gradient_cache == NULL ||
-            context->projection_weight_grad == NULL || context->projection_bias_grad == NULL) {
+            context->projection_weight_grad == NULL || context->projection_bias_grad == NULL ||
+            context->dropout_mask == NULL) {
             nn_cnn_train_destroy(context);
             return NULL;
         }
@@ -694,6 +863,7 @@ void nn_cnn_train_destroy(CnnTrainContext* context) {
     free(context->max_index_cache);
     free(context->output_linear_cache);
     free(context->pooled_gradient_cache);
+    free(context->dropout_mask);
     free(context->conv_weight_grad);
     free(context->conv_bias_grad);
     free(context->conv_weight_vel);
@@ -741,10 +911,45 @@ int nn_cnn_train_step_with_output_gradient(
         context->max_index_cache,
         context->output_linear_cache,
         context->bn_pre_cache,
-        context->bn_spatial_var
+        context->bn_spatial_var,
+        context->config.dropout_rate,
+        context->dropout_mask
     );
     if (rc != 0) {
         return rc;
+    }
+
+    /* Diagnostic: detailed activation analysis (first ~5 training samples) */
+    if (diag_forward_count < 40) {
+        const CnnConfig* diag_cfg = &infer_ctx->config;
+        size_t diag_out_size = (diag_cfg->pooling_mode == CNN_POOL_NONE) ?
+            (diag_cfg->sequence_length * diag_cfg->filter_count *
+             ((diag_cfg->frame_height - diag_cfg->kernel_size) / diag_cfg->stride + 1U) *
+             ((diag_cfg->frame_width - diag_cfg->kernel_size) / diag_cfg->stride + 1U)) :
+            (diag_cfg->sequence_length * diag_cfg->feature_size);
+        float diag_mean = 0.0f, diag_std = 0.0f, diag_min = 1e9f, diag_max = -1e9f;
+        size_t diag_i, diag_dead = 0U, diag_saturated = 0U, diag_active = 0U;
+        for (diag_i = 0U; diag_i < diag_out_size; ++diag_i) {
+            float diag_v = infer_ctx->output_buffer[diag_i];
+            diag_mean += diag_v;
+            diag_std  += diag_v * diag_v;
+            if (diag_v < diag_min) diag_min = diag_v;
+            if (diag_v > diag_max) diag_max = diag_v;
+            if (diag_v <= 0.0f) diag_dead += 1U;
+            else if (diag_v >= 6.0f) diag_saturated += 1U;
+            else diag_active += 1U;
+        }
+        diag_mean /= (float)diag_out_size;
+        diag_std  = diag_std / (float)diag_out_size - diag_mean * diag_mean;
+        diag_std  = diag_std > 0.0f ? sqrtf(diag_std) : 0.0f;
+        fprintf(stderr, "[DIAG] step=%zu act[%zux%zux%zu,f=%zu] mean=%.4f std=%.4f min=%.4f max=%.4f | dead=%.1f%% sat=%.1f%% active=%.1f%%\n",
+                diag_step_counter, diag_cfg->frame_height, diag_cfg->frame_width,
+                diag_cfg->channel_count, diag_cfg->filter_count,
+                (double)diag_mean, (double)diag_std, (double)diag_min, (double)diag_max,
+                100.0*(double)diag_dead/(double)diag_out_size,
+                100.0*(double)diag_saturated/(double)diag_out_size,
+                100.0*(double)diag_active/(double)diag_out_size);
+        diag_forward_count += 1;
     }
 
     rc = cnn_backpropagate(context, input, output_gradient, input_gradient);
@@ -789,10 +994,39 @@ int nn_cnn_train_step_with_data(CnnTrainContext* context, const float* input, co
         context->max_index_cache,
         context->output_linear_cache,
         context->bn_pre_cache,
-        context->bn_spatial_var
+        context->bn_spatial_var,
+        context->config.dropout_rate,
+        context->dropout_mask
     );
     if (rc != 0) {
         return rc;
+    }
+
+    /* Diagnostic: detailed activation analysis (first ~5 training samples) */
+    if (diag_forward_count < 40) {
+        float diag_mean = 0.0f, diag_std = 0.0f, diag_min = 1e9f, diag_max = -1e9f;
+        size_t diag_i, diag_dead = 0U, diag_saturated = 0U, diag_active = 0U;
+        for (diag_i = 0U; diag_i < output_size; ++diag_i) {
+            float diag_v = infer_ctx->output_buffer[diag_i];
+            diag_mean += diag_v;
+            diag_std  += diag_v * diag_v;
+            if (diag_v < diag_min) diag_min = diag_v;
+            if (diag_v > diag_max) diag_max = diag_v;
+            if (diag_v <= 0.0f) diag_dead += 1U;
+            else if (diag_v >= 6.0f) diag_saturated += 1U;
+            else diag_active += 1U;
+        }
+        diag_mean /= (float)output_size;
+        diag_std  = diag_std / (float)output_size - diag_mean * diag_mean;
+        diag_std  = diag_std > 0.0f ? sqrtf(diag_std) : 0.0f;
+        fprintf(stderr, "[DIAG] step=%zu act[%zux%zux%zu,f=%zu,p=%d] mean=%.4f std=%.4f min=%.4f max=%.4f | dead=%.1f%% sat=%.1f%% active=%.1f%%\n",
+                diag_step_counter, config->frame_height, config->frame_width,
+                config->channel_count, config->filter_count, (int)config->pooling_mode,
+                (double)diag_mean, (double)diag_std, (double)diag_min, (double)diag_max,
+                100.0*(double)diag_dead/(double)output_size,
+                100.0*(double)diag_saturated/(double)output_size,
+                100.0*(double)diag_active/(double)output_size);
+        diag_forward_count += 1;
     }
 
     output_gradient = (float*)calloc(output_size, sizeof(float));

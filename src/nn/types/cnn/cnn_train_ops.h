@@ -35,6 +35,8 @@ typedef struct {
     float* bn_beta_grad;            /**< Per-filter BN beta gradient [filter_count] */
     float* bn_pre_cache;            /**< Pre-BN cached x_hat values for backward pass */
     float* bn_spatial_var;          /**< Per-filter spatial variance computed in forward pass */
+    float* dropout_mask;            /**< Bernoulli mask for dropout (0 or scale), applied between pool and projection */
+    size_t batch_step_count;        /**< Samples accumulated since last batch update. */
     size_t total_steps;             /**< Count of successful training updates. */
     size_t total_epochs;            /**< Count reported through train_get_stats. */
     float cumulative_loss;          /**< Running loss accumulator for averages. */
