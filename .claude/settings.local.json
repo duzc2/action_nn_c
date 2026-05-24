@@ -95,7 +95,13 @@
       "Bash(build/verify/quick_train.exe:*)",
       "Bash(build/verify/test_network_e2e.exe:*)",
       "Bash(./test_cnn_backend.exe:*)",
-      "Bash(./quick_train.exe)"
+      "Bash(./quick_train.exe)",
+      "Bash(python3:*)",
+      "Bash(ForEach-Object:*)",
+      "Bash(ping:*)",
+      "Bash(.edge_video_preprocess_train.exe:*)",
+      "Bash(tee:*)",
+      "Bash(./build/demo/edge_video_preprocess/generate/edge_video_preprocess_generate.exe:*)"
     ]
   }
 }

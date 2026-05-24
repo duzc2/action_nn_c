@@ -22,10 +22,11 @@
  * @brief Activation types used by the tiny CNN backend.
  */
 typedef enum {
-    CNN_ACT_NONE  = 0,
-    CNN_ACT_RELU  = 1,
-    CNN_ACT_TANH  = 2,
-    CNN_ACT_RELU6 = 3   /**< Clipped ReLU: min(max(0, x), 6) */
+    CNN_ACT_NONE       = 0,
+    CNN_ACT_RELU       = 1,
+    CNN_ACT_TANH       = 2,
+    CNN_ACT_RELU6      = 3,  /**< Clipped ReLU: min(max(0, x), 6) */
+    CNN_ACT_LEAKY_RELU = 4   /**< Leaky ReLU: max(x, 0.01*x), alpha=0.01 */
 } CnnActivationType;
 
 /**

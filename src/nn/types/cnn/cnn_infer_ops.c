@@ -63,6 +63,8 @@ static float cnn_apply_activation(float value, CnnActivationType activation) {
             return tanhf(value);
         case CNN_ACT_RELU6:
             return value > 6.0f ? 6.0f : (value > 0.0f ? value : 0.0f);
+        case CNN_ACT_LEAKY_RELU:
+            return value > 0.0f ? value : 0.01f * value;
         case CNN_ACT_NONE:
         default:
             return value;

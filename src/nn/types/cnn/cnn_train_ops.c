@@ -27,6 +27,8 @@ static float cnn_activation_derivative_from_output(float output, CnnActivationTy
             return (1.0f - output) * (1.0f + output);
         case CNN_ACT_RELU6:
             return (output > 0.0f && output < 6.0f) ? 1.0f : 0.0f;
+        case CNN_ACT_LEAKY_RELU:
+            return output > 0.0f ? 1.0f : 0.01f;
         case CNN_ACT_NONE:
         default:
             return 1.0f;
@@ -803,6 +805,17 @@ CnnTrainContext* nn_cnn_train_create(void* infer_ctx_ptr, const CnnTrainConfig* 
         context->bn_gamma_vel  = (float*)calloc(infer_config->filter_count, sizeof(float));
         context->bn_beta_vel   = (float*)calloc(infer_config->filter_count, sizeof(float));
         context->bn_spatial_var = (float*)calloc(infer_config->sequence_length * infer_config->filter_count, sizeof(float));
+        /* Initialize spatial var from running var as fallback so the backward
+         * pass never reads bn_spatial_var==0.0 (which would produce bn_scale
+         * ~316 and blow up the gradient).  The BN post-processing that runs
+         * after nn_cnn_forward_pass will overwrite these values when
+         * batch statistics are reliable. */
+        {
+            size_t bni;
+            for (bni = 0U; bni < infer_config->sequence_length * infer_config->filter_count; ++bni) {
+                context->bn_spatial_var[bni] = infer_ctx->bn_running_var[bni % infer_config->filter_count];
+            }
+        }
         if (infer_config->pooling_mode == CNN_POOL_NONE) {
             size_t grid_h = (infer_config->frame_height - infer_config->kernel_size) / infer_config->stride + 1U;
             size_t grid_w = (infer_config->frame_width - infer_config->kernel_size) / infer_config->stride + 1U;
