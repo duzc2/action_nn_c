@@ -5,9 +5,10 @@
  * Demonstrates edge-level intelligent preprocessing:
  *   1. Read pre-extracted 32x32x3 frames from video_frames.dat
  *   2. Compute SAD (sum of absolute differences) vs previous frame
- *   3. If SAD <= threshold: skip CNN inference (bandwidth saved)
- *   4. If SAD >  threshold: run CNN+MLP inference, log classification
- *   5. Print final report: frames filtered, bandwidth saved, class distribution
+ *   3. Adaptive threshold (EMA-based) + temporal smoothing (debouncing)
+ *   4. If static: skip CNN inference (bandwidth saved)
+ *   5. If motion: run CNN+MLP inference, log classification
+ *   6. Print final report: frames filtered, bandwidth saved, class distribution
  */
 
 #include "infer.h"
@@ -20,7 +21,17 @@
 #include <stdio.h>
 #include <string.h>
 
-#define EVP_MOTION_THRESHOLD  50.0f    /* Tuneable SAD threshold */
+/* ── Motion detection tunables ── */
+#define EVP_ADAPT_BASE              50.0f  /* Minimum (floor) SAD threshold */
+#define EVP_ADAPT_FACTOR            2.0f   /* Multiplier on rolling mean */
+#define EVP_EMA_ALPHA               0.1f   /* EMA smoothing factor */
+#define EVP_MOTION_CONFIRM_FRAMES   3      /* Consecutive motion frames to trigger */
+#define EVP_STATIC_CONFIRM_FRAMES   10     /* Consecutive static frames to go idle */
+#define EVP_MOTION_COOLDOWN_FRAMES  0      /* Min frames between inference triggers (0=off) */
+
+/* ── Logging ── */
+#define EVP_VERBOSE_LOG 0  /* set to 1 for per-motion-frame classification log */
+
 #define EVP_VIDEO_ROOT "../../../../demo/edge_video_preprocess/video_frames"
 
 #ifdef _WIN32
@@ -90,12 +101,12 @@ static void print_report(const VideoMeta* meta, const VideoStats* stats) {
 
     printf("\n");
     printf("============================================================\n");
-    printf("=== Edge Video Preprocessing — Pipeline Report ===\n");
+    printf("=== Edge Video Preprocessing v47 — Pipeline Report ===\n");
     printf("============================================================\n\n");
 
     printf("Video: %zu frames @ %.1f fps (%.0f sec equivalent)\n",
         meta->frame_count, meta->fps, total_seconds);
-    printf("Resolution: %zux%zux%zu (RGB) | MobileNetV2 (17 CNN + 1 MLP) → CIFAR-10\n\n",
+    printf("Resolution: %zux%zux%zu (RGB) | BnConvNet v47 (4 CNN + GAP + 1 MLP) -> CIFAR-10\n\n",
         meta->width, meta->height, meta->channels);
 
     printf("--- Motion Detection ---\n");
@@ -137,26 +148,36 @@ int main(void) {
     FILE* frames_file;
     VideoMeta meta;
     VideoStats stats;
+    MotionAdaptiveThreshold adap_thresh;
+    MotionTemporalSmoother smoother;
     void* infer_ctx;
     char error_buffer[256];
-    float prev_frame[VIDEO_FRAME_SIZE];
-    float curr_frame[VIDEO_FRAME_SIZE];
+    float frame_buf_a[VIDEO_FRAME_SIZE];
+    float frame_buf_b[VIDEO_FRAME_SIZE];
+    float* prev_frame;  /* pointer to whichever buffer holds the previous frame */
+    float* curr_frame;  /* pointer to whichever buffer holds the current frame */
+    float* tmp_frame;   /* temporary for pointer swap */
     size_t frame_index;
     float output[CIFAR10_CLASS_COUNT];
     double t_start_us;
     double t_end_us;
     int has_prev;
+    size_t cooldown_counter;
 
     (void)memset(&meta, 0, sizeof(meta));
     (void)memset(&stats, 0, sizeof(stats));
     error_buffer[0] = '\0';
+
+    /* Initialize motion detection subsystems */
+    motion_threshold_init(&adap_thresh, EVP_ADAPT_BASE, EVP_ADAPT_FACTOR, EVP_EMA_ALPHA);
+    motion_smoother_init(&smoother, EVP_MOTION_CONFIRM_FRAMES, EVP_STATIC_CONFIRM_FRAMES);
 
     if (demo_set_working_directory_to_executable() != 0) {
         fprintf(stderr, "Failed to switch working directory to executable directory\n");
         return 1;
     }
 
-    printf("=== Edge Video Preprocessing — Inference Pipeline ===\n\n");
+    printf("=== Edge Video Preprocessing v47 — Inference Pipeline ===\n\n");
 
     /* ── Load video metadata ── */
     if (video_meta_load(kMetaPath, &meta, error_buffer, sizeof(error_buffer)) != 0) {
@@ -200,8 +221,14 @@ int main(void) {
 
     /* ── Frame-by-frame processing loop ── */
     has_prev = 0;
+    prev_frame = frame_buf_a;
+    curr_frame = frame_buf_b;
+    cooldown_counter = 0U;
+
     for (frame_index = 0U; frame_index < meta.frame_count; ++frame_index) {
         float sad;
+        int raw_motion;
+        int debounced_motion;
 
         if (video_frame_read(frames_file, curr_frame) != 0) {
             break;
@@ -211,6 +238,10 @@ int main(void) {
         if (!has_prev) {
             /* First frame: always run inference */
             has_prev = 1;
+
+            /* Feed SAD=0 to adaptive threshold (no frame comparison possible) */
+            motion_threshold_update(&adap_thresh, 0.0f);
+
             t_start_us = get_time_us();
             if (infer_auto_run(infer_ctx, curr_frame, output) == 0
                 && output_is_valid(output, CIFAR10_CLASS_COUNT)) {
@@ -222,6 +253,12 @@ int main(void) {
                     int pred = cifar10_argmax(output, CIFAR10_CLASS_COUNT);
                     if (pred >= 0 && pred < (int)CIFAR10_CLASS_COUNT) {
                         stats.class_counts[pred]++;
+#if EVP_VERBOSE_LOG
+                        printf("  [FRAME %5zu] SAD=N/A (first)  class=%s  conf=%.3f\n",
+                            frame_index + 1U,
+                            cifar10_class_names[pred],
+                            (double)output[pred]);
+#endif
                     }
                 }
             } else {
@@ -232,24 +269,52 @@ int main(void) {
             /* Compute SAD with previous frame */
             sad = video_frame_sad(prev_frame, curr_frame, VIDEO_FRAME_SIZE);
 
-            if (sad > EVP_MOTION_THRESHOLD) {
-                /* Motion detected: run CNN inference */
-                t_start_us = get_time_us();
-                if (infer_auto_run(infer_ctx, curr_frame, output) == 0
-                    && output_is_valid(output, CIFAR10_CLASS_COUNT)) {
-                    t_end_us = get_time_us();
-                    stats.elapsed_us += (t_end_us - t_start_us);
-                    stats.motion_detected++;
+            /* Feed into adaptive threshold */
+            motion_threshold_update(&adap_thresh, sad);
 
-                    {
-                        int pred = cifar10_argmax(output, CIFAR10_CLASS_COUNT);
-                        if (pred >= 0 && pred < (int)CIFAR10_CLASS_COUNT) {
-                            stats.class_counts[pred]++;
+            /* Raw motion detection */
+            {
+                float threshold = motion_threshold_get(&adap_thresh);
+                raw_motion = (sad > threshold) ? 1 : 0;
+            }
+
+            /* Apply temporal smoothing */
+            debounced_motion = motion_smoother_update(&smoother, raw_motion);
+
+            if (debounced_motion) {
+                /* Debounced motion: check cooldown before running inference */
+                if (EVP_MOTION_COOLDOWN_FRAMES == 0 || cooldown_counter == 0U) {
+                    t_start_us = get_time_us();
+                    if (infer_auto_run(infer_ctx, curr_frame, output) == 0
+                        && output_is_valid(output, CIFAR10_CLASS_COUNT)) {
+                        t_end_us = get_time_us();
+                        stats.elapsed_us += (t_end_us - t_start_us);
+                        stats.motion_detected++;
+
+                        {
+                            int pred = cifar10_argmax(output, CIFAR10_CLASS_COUNT);
+                            if (pred >= 0 && pred < (int)CIFAR10_CLASS_COUNT) {
+                                stats.class_counts[pred]++;
+#if EVP_VERBOSE_LOG
+                                printf("  [FRAME %5zu] SAD=%.1f  thresh=%.1f  class=%s  conf=%.3f\n",
+                                    frame_index + 1U,
+                                    (double)sad,
+                                    (double)motion_threshold_get(&adap_thresh),
+                                    cifar10_class_names[pred],
+                                    (double)output[pred]);
+#endif
+                            }
                         }
+                    } else {
+                        t_end_us = get_time_us();
+                        stats.elapsed_us += (t_end_us - t_start_us);
                     }
+
+                    cooldown_counter = (size_t)EVP_MOTION_COOLDOWN_FRAMES;
                 } else {
-                    t_end_us = get_time_us();
-                    stats.elapsed_us += (t_end_us - t_start_us);
+                    /* In cooldown: skip inference */
+                    stats.frames_skipped++;
+                    if (cooldown_counter > 0U) cooldown_counter--;
                 }
             } else {
                 /* Static frame: skip inference */
@@ -257,8 +322,10 @@ int main(void) {
             }
         }
 
-        /* Save current frame as previous for next iteration */
-        (void)memcpy(prev_frame, curr_frame, sizeof(curr_frame));
+        /* Swap frame pointers instead of memcpy */
+        tmp_frame = prev_frame;
+        prev_frame = curr_frame;
+        curr_frame = tmp_frame;
 
         /* Progress indicator */
         if ((frame_index + 1U) % 500U == 0U) {

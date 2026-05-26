@@ -245,6 +245,84 @@ void cifar10_dataset_shuffle(Cifar10Dataset* dataset, uint32_t seed) {
     }
 }
 
+void cifar10_augment_sample(
+    float* dst, const float* src,
+    size_t w, size_t h, size_t c,
+    const Cifar10Augment* aug, uint32_t* seed)
+{
+    size_t x, y, ch;
+    uint32_t rng = (seed != NULL) ? *seed : 12345U;
+    int do_flip = 0;
+    int pad;
+
+    if (dst == NULL || src == NULL || aug == NULL || w == 0U || h == 0U || c == 0U) return;
+
+    /* Decide whether to flip horizontally (p=0.5) */
+    if (aug->horizontal_flip) {
+        rng = rng * 1103515245U + 12345U;
+        do_flip = ((rng >> 16U) & 1U) ? 1 : 0;
+    }
+
+    /* Pad size */
+    pad = aug->pad_crop;
+    if (pad < 0) pad = 0;
+
+    if (pad == 0) {
+        /* Simple copy with optional horizontal flip — no pad/crop. */
+        for (y = 0U; y < h; ++y) {
+            for (x = 0U; x < w; ++x) {
+                size_t src_x = do_flip ? (w - 1U - x) : x;
+                size_t src_off = (y * w + src_x) * c;
+                size_t dst_off = (y * w + x) * c;
+                for (ch = 0U; ch < c; ++ch) {
+                    dst[dst_off + ch] = src[src_off + ch];
+                }
+            }
+        }
+    } else {
+        /* Pad-and-crop: pad with edge replication, then random crop.
+         * Pad the source image to (w+2*pad, h+2*pad), then crop back to (w,h). */
+        size_t pw = w + (size_t)(2U * (unsigned)pad);
+        size_t ph = h + (size_t)(2U * (unsigned)pad);
+        int crop_x, crop_y;
+
+        rng = rng * 1103515245U + 12345U;
+        crop_x = (int)((rng >> 16U) % ((unsigned)(pw - w + 1U)));
+        rng = rng * 1103515245U + 12345U;
+        crop_y = (int)((rng >> 16U) % ((unsigned)(ph - h + 1U)));
+
+        for (y = 0U; y < h; ++y) {
+            for (x = 0U; x < w; ++x) {
+                int sx, sy;
+                size_t src_x, src_y;
+
+                /* Map crop coordinate to source coordinate */
+                sx = (int)x + crop_x - pad;
+                sy = (int)y + crop_y - pad;
+
+                /* Clamp to source boundaries (edge replication) */
+                if (sx < 0) sx = 0;
+                if (sx >= (int)w) sx = (int)w - 1;
+                if (sy < 0) sy = 0;
+                if (sy >= (int)h) sy = (int)h - 1;
+
+                src_x = do_flip ? (w - 1U - (size_t)sx) : (size_t)sx;
+                src_y = (size_t)sy;
+
+                {
+                    size_t src_off = (src_y * w + src_x) * c;
+                    size_t dst_off = (y * w + x) * c;
+                    for (ch = 0U; ch < c; ++ch) {
+                        dst[dst_off + ch] = src[src_off + ch];
+                    }
+                }
+            }
+        }
+    }
+
+    if (seed != NULL) *seed = rng;
+}
+
 int cifar10_argmax(const float* values, size_t count) {
     size_t i;
     int best_index;

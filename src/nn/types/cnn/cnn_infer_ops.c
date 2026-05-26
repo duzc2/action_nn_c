@@ -17,6 +17,9 @@
 
 #define CNN_ABI_VERSION 2U
 
+/* Diagnostic: forward pass call counter (used for [FWD] log step tracking) */
+static size_t fwd_call_counter = 0;
+
 /**
  * @brief Serialized header written before CNN parameter arrays.
  */
@@ -404,6 +407,8 @@ int nn_cnn_forward_pass(
         return ACTION_C_ERR_NULL_POINTER;
     }
 
+    fwd_call_counter++;
+
     config = &context->config;
     frame_stride = config->frame_width * config->frame_height * config->channel_count;
     output_grid_width = (config->frame_width - config->kernel_size) / config->stride + 1U;
@@ -631,28 +636,60 @@ int nn_cnn_forward_pass(
                     float bn_var  = context->bn_running_var[filter_index];
                     float bn_eps  = config->bn_epsilon;
                     float pooled_linear_raw = pooled_sum;
-                    /* In training mode, update BN running statistics from per-sample pooled value.
-                     * Without this EMA update, running_mean/running_var stay at initialization
-                     * (0.0 and 1.0) forever because the BN post-processing pass is skipped
-                     * for sequence_length=1.  The update uses the pre-BN raw value so that
-                     * running stats track the actual activation distribution. */
+
+                    /* Compute normalization and cache x_hat + inv_std BEFORE the
+                     * EMA running-stat update.  This fixes Bug #5: the backward
+                     * pass now reads these cached values so forward and backward
+                     * use strictly identical BN parameters — no more timing
+                     * mismatch between pre-EMA forward norm and post-EMA backward
+                     * reconstruction. */
+                    float inv_std = 1.0f / sqrtf((bn_var + bn_eps) > 0.0f ? (bn_var + bn_eps) : bn_eps);
+                    float x_hat = (pooled_sum - bn_mean) * inv_std;
+
+                    /* Cache x_hat and inv_std for backward pass (pre-EMA values) */
+                    if (bn_pre_cache != NULL) {
+                        size_t cache_idx = (step_index * config->filter_count) + filter_index;
+                        bn_pre_cache[cache_idx] = x_hat;
+                        if (bn_spatial_var != NULL) {
+                            bn_spatial_var[cache_idx] = inv_std;
+                        }
+                    }
+
+                    float gamma_fwd = context->bn_gamma[filter_index];
+                    float beta_fwd  = context->bn_beta[filter_index];
+                    float bn_out_fwd = gamma_fwd * x_hat + beta_fwd;
+
+                    /* EMA update — running statistics track activation distribution.
+                     * Performed AFTER caching x_hat/inv_std so the backward pass
+                     * always reads the normalization values that were actually used. */
                     if (bn_pre_cache != NULL) {
                         float mom = config->bn_momentum;
-                        float old_mean = context->bn_running_mean[filter_index];
+                        float old_mean = bn_mean;
                         context->bn_running_mean[filter_index] =
                             mom * old_mean + (1.0f - mom) * pooled_linear_raw;
                         float delta = pooled_linear_raw - old_mean;
                         context->bn_running_var[filter_index] =
-                            mom * context->bn_running_var[filter_index] +
+                            mom * bn_var +
                             (1.0f - mom) * delta * delta;
-                        if (bn_spatial_var != NULL) {
-                            bn_spatial_var[step_index * config->filter_count + filter_index] =
-                                context->bn_running_var[filter_index];
-                        }
                     }
-                    float x_hat   = (pooled_sum - bn_mean) / sqrtf((bn_var + bn_eps) > 0.0f ? (bn_var + bn_eps) : bn_eps);
-                    pooled_sum    = context->bn_gamma[filter_index] * x_hat +
-                                    context->bn_beta[filter_index];
+
+                    /* [FWD] Point A: log normalization parameters used (pre-EMA snapshot) */
+                    if (context->debug_level >= 2 && filter_index < 4U) {
+                        fprintf(stderr, "[FWD] layer=%d filter=%zu step=%zu raw=%.6f bn_mean(for_norm)=%.6f bn_var(for_norm)=%.6f x_hat=%.6f gamma=%.6f beta=%.6f bn_out=%.6f\n",
+                                context->debug_layer_index, filter_index, fwd_call_counter,
+                                (double)pooled_linear_raw, (double)bn_mean, (double)bn_var,
+                                (double)x_hat, (double)gamma_fwd, (double)beta_fwd,
+                                (double)bn_out_fwd);
+                    }
+                    /* [FWD] Point B: log running stats after EMA update */
+                    if (context->debug_level >= 2 && filter_index < 4U) {
+                        fprintf(stderr, "[FWD] layer=%d filter=%zu step=%zu bn_mean(after_ema)=%.6f bn_var(after_ema)=%.6f\n",
+                                context->debug_layer_index, filter_index, fwd_call_counter,
+                                (double)context->bn_running_mean[filter_index],
+                                (double)context->bn_running_var[filter_index]);
+                    }
+
+                    pooled_sum = bn_out_fwd;
                     /* In training mode store pre-BN raw value for batch statistics */
                     if (pooled_linear_cache != NULL) {
                         pooled_linear_cache[(step_index * config->filter_count) + filter_index] =

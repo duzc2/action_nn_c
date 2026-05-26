@@ -37,6 +37,8 @@ typedef struct {
     float* bn_beta;                 /**< Per-filter learnable shift [filter_count] */
     float* bn_training_pre_cache;   /**< Set by train_create: points to spatial BN x_hat buffer for graph_run */
     float* bn_training_spatial_var; /**< Set by train_create: points to per-filter spatial variance values */
+    int debug_level;          /**< Copied from train config; 0 in pure inference */
+    int debug_layer_index;    /**< Copied from train config; for [FWD] log tags */
 } CnnInferContext;
 
 CnnInferContext* nn_cnn_infer_create_with_config(const CnnConfig* config, uint32_t seed);

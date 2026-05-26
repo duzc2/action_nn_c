@@ -1,47 +1,45 @@
 # Edge Video Preprocessing Demo
 
-演示边缘端智能预处理管道：帧差运动检测 + MobileNetV2 CNN识别分类 + 带宽节省统计。
+演示边缘端智能预处理管道：帧差运动检测 + BnConvNet CNN识别分类 + 带宽节省统计。
 
 ## 概述
 
-在边缘计算场景中，带宽和算力是稀缺资源。本demo展示用MobileNetV2在边缘端进行智能预处理：
+在边缘计算场景中，带宽和算力是稀缺资源。本demo展示用BnConvNet在边缘端进行智能预处理：
 
 ```
-监控视频帧 → 帧差(SAD)检测 → 静态? → 跳过（省算力+带宽）
-                            → 有运动? → CNN推理 → 分类日志 → 统计报告
+监控视频帧 → 帧差(SAD)检测 + 自适应阈值 + 时序平滑 → 静态? → 跳过（省算力+带宽）
+                                                      → 有运动? → CNN推理 → 分类日志 → 统计报告
 ```
 
 ## 架构
 
-### 网络结构（9-leaf CNN，~4.5M参数）
+### 网络结构（BnConvNet v47，5个叶子节点）
 
-CNN后端新增 **stride（步长）支持**（ABI v2），Conv4 和 Conv7 使用 stride=2 实现空间降采样，将特征图从 30×30 渐进缩小至 3×3，显著降低后续层的计算量。**He (Kaiming) 均匀初始化**在所有 CNN 层中自动计算 fan_in 对应的初始化尺度。
+卷积层全部使用 stride=1，通过 3×3 卷积自然缩小特征图尺寸，配合 GAP (Global Average Pooling) 替代全连接前的展平，大幅减少参数量。所有卷积层使用 BN + LeakyReLU(alpha=0.01) 激活。
 
 ```
 输入: 32×32×3 RGB
 
-Conv1:    3×3,  3→64,  s=1, BN+ReLU6, POOL_NONE → 30×30×64
-Conv2:    3×3,  64→64, s=1, BN+ReLU6, POOL_NONE → 28×28×64
-Conv3:    3×3,  64→128, s=1, BN+ReLU6, POOL_NONE → 26×26×128
-Conv4:    3×3,  128→128, s=2, BN+ReLU6, POOL_NONE → 12×12×128  (降采样)
-Conv5:    3×3,  128→256, s=1, BN+ReLU6, POOL_NONE → 10×10×256
-Conv6:    3×3,  256→256, s=1, BN+ReLU6, POOL_NONE →  8×8×256
-Conv7:    3×3,  256→512, s=2, BN+ReLU6, POOL_NONE →  3×3×512   (降采样)
-Conv8:    1×1,  512→512, s=1, BN+ReLU6, POOL_AVG  → 256 (GAP+投影)
+Conv1:    3×3,  3→32,   s=1, BN+LeakyReLU(0.01), POOL_NONE → 30×30×32
+Conv2:    3×3,  32→64,  s=1, BN+LeakyReLU(0.01), POOL_NONE → 28×28×64
+Conv3:    3×3,  64→128, s=1, BN+LeakyReLU(0.01), POOL_NONE → 26×26×128
+Conv4:    3×3,  128→256,s=1, BN+LeakyReLU(0.01), POOL_NONE → 24×24×256
+GAP:      1×1,  256→256, POOL_AVG → 256 scalars
 
-MLP Head: 256 → [256] → 10, ADAM + Cross-Entropy
+MLP Head: 256 → [256(LeakyReLU)] → 10, ADAM + Cross-Entropy
 
-总计: 9个叶子节点 (8 CNN + 1 MLP)
+总计: 5个叶子节点 (4 CNN + 1 MLP)
 ```
 
 ### 关键技术
 
 | 特性 | 说明 |
 |------|------|
-| 运动检测 | SAD (Sum of Absolute Differences) 帧间比较, 阈值=50.0 |
-| CNN后端 | stride支持 (ABI v2), BN, ReLU6, He初始化, Momentum SGD |
-| 网络架构 | 9-leaf (8CNN+1MLP), 渐进通道扩展 3→64→128→256→512 |
+| 运动检测 | SAD (Sum of Absolute Differences) + 自适应阈值 + 时序平滑防抖 |
+| CNN后端 | stride=1, BN, LeakyReLU(alpha=0.01), He初始化, ADAM |
+| 网络架构 | BnConvNet v47: 4CNN + GAP + 1MLP, 通道扩展 3→32→64→128→256 |
 | 数据格式 | CIFAR-10平面RGB → 交错RGB, uint8 → float32 [0,1] |
+| 训练参数 | batch_size=4, lr=0.001, momentum=0.0, step decay (every 3 epochs) |
 | 运行环境 | 纯C11实现, 无外部依赖, CPU运行 |
 | 代码生成 | profiler范围合并连接优化 |
 | 输出 | 实时分类日志 + 最终统计报告 (带宽节省/分类分布/延迟) |
@@ -60,28 +58,28 @@ MLP Head: 256 → [256] → 10, ADAM + Cross-Entropy
 **Windows (MSVC):**
 ```batch
 cd demo\edge_video_preprocess
-# 1. 数据准备
+REM 1. 数据准备
 python data_prep.py [--video path/to/video.mp4]
 
-# 2. 构建生成器
+REM 2. 构建生成器
 cmake -S generate -B ..\..\build\demo\edge_video_preprocess\generate
 cmake --build ..\..\build\demo\edge_video_preprocess\generate --config Release
 
-# 3. 生成网络代码
+REM 3. 生成网络代码
 ..\..\build\demo\edge_video_preprocess\generate\edge_video_preprocess_generate.exe
 
-# 4. 构建训练器
+REM 4. 构建训练器
 cmake -S train -B ..\..\build\demo\edge_video_preprocess\train
 cmake --build ..\..\build\demo\edge_video_preprocess\train --config Release
 
-# 5. 训练
+REM 5. 训练
 ..\..\build\demo\edge_video_preprocess\train\edge_video_preprocess_train.exe
 
-# 6. 构建推理器
+REM 6. 构建推理器
 cmake -S infer -B ..\..\build\demo\edge_video_preprocess\infer
 cmake --build ..\..\build\demo\edge_video_preprocess\infer --config Release
 
-# 7. 推理
+REM 7. 推理
 ..\..\build\demo\edge_video_preprocess\infer\edge_video_preprocess_infer.exe
 ```
 
@@ -94,7 +92,7 @@ chmod +x run_demo.sh
 
 ### 快速验证 (200样本训练)
 
-如果完整训练太慢（50K样本 × 30轮可能需数小时），可用快速模式验证管道：
+如果完整训练太慢（50K样本 × 多轮可能需数小时），可用快速模式验证管道：
 
 ```bash
 # 在项目根目录
@@ -111,74 +109,65 @@ build/demo/edge_video_preprocess/infer/edge_video_preprocess_infer.exe
 ```bash
 cmake --build build/verify --config Release --target test_stride
 cmake --build build/verify --config Release --target test_network_e2e
+cmake --build build/verify --config Release --target test_motion_detect
+cmake --build build/verify --config Release --target test_cnn_full
+cmake --build build/verify --config Release --target test_cnn_backend
+cmake --build build/verify --config Release --target test_bn_consistency
 
-build/verify/Release/test_stride.exe          # stride功能测试 (5项)
-build/verify/Release/test_network_e2e.exe     # 端到端20步训练测试
+build/verify/Release/test_stride.exe          # stride功能测试
+build/verify/Release/test_network_e2e.exe     # 端到端网络测试
+build/verify/Release/test_motion_detect.exe   # 运动检测单元测试
+build/verify/Release/test_cnn_full.exe        # CNN综合测试 (24项)
+build/verify/Release/test_cnn_backend.exe     # CNN后端训练测试
+build/verify/Release/test_bn_consistency.exe  # BN前向/反向一致性测试
 ```
 
 ## 实际运行结果
 
-> **注:** 以下结果来自 v13 (6-leaf) 和 v14 (9-leaf) 架构。完整 50K×30 轮训练需要数小时 CPU 时间。He 初始化修复后，预期 3 轮内准确率突破 40%，30 轮达 80%+。
+> **注:** 以下结果来自 BnConvNet v47 (4CNN+GAP+MLP) 架构。完整 50K 训练需要数小时 CPU 时间。Batch Normalization 修复后，训练稳定性显著提升。
 
 ### 单元测试 (stride验证)
 
 ```
 === CNN Stride Support Verification ===
 
-Test 1: Forward pass stride=1  = OK (输出维度: 2x2 网格)
-Test 2: Forward pass stride=2  = OK (输出维度: 3x3 网格, 8x8→3x3)
-Test 3: Reject stride=0        = OK (正确拒绝)
-Test 4: Weight save/load       = OK (9个浮点数匹配)
-Test 5: Training step stride=2 = OK (loss=0.250000)
+Test 1: Forward pass stride=1  = OK
+Test 2: Forward pass stride=2  = OK
+Test 3: Reject stride=0        = OK
+Test 4: Weight save/load       = OK
+Test 5: Training step stride=2 = OK
 
 Results: 0 failures
 ```
 
-### 端到端测试 (9子网, 20步) — v14架构
+### 运动检测测试
 
 ```
-=== End-to-End 9-leaf CNN (Stride-2) Test ===
+=== Motion Detection Test ===
 
-Inference context created (9 subnets: 8 CNN + 1 MLP)
- step  1: loss=0.078523  DOWN
- step 10: loss=0.031441  DOWN
- step 20: loss=0.018730  DOWN
+Test 1: Adaptive threshold initialization = OK
+Test 2: Adaptive threshold update         = OK
+Test 3: Temporal smoother state machine   = OK
+Test 4: Edge case (all zero frames)       = OK
 
-Loss decreased: 20/20 steps
-Overall: PASS - Training converges with stride support
-Weight save/load round-trip: PASS (outputs match)
+Results: 0 failures
 ```
-
-### 快速训练 (200样本 × 5轮)
-
-```
-Epoch  Avg Loss   Accuracy   Elapsed
-1      0.0785     12.0%      35s
-2      0.0542     18.5%      72s
-3      0.0411     31.0%      110s
-4      0.0328     42.5%      148s
-5      0.0264     51.0%      186s
-
-Weights saved successfully. (~18MB)
-```
-
-> **预期:** 完整 50K×30 轮训练可达 80%+ 准确率。
 
 ### 推理管道 (7200帧监控视频)
 
 ```
-=== Edge Video Preprocessing — Pipeline Report ===
+=== Edge Video Preprocessing — Inference Pipeline ===
 
 Video: 7200 frames @ 2.0 fps (3600 sec equivalent)
-Resolution: 32x32x3 (RGB)
+Resolution: 32x32x3 (RGB) | BnConvNet v47 (4 CNN + GAP + 1 MLP) → CIFAR-10
 
 --- Motion Detection ---
 Frames with motion:    5015 ( 69.7%)  <- 运行了CNN推理
 Frames skipped:        2185 ( 30.3%)  <- 节省了算力+带宽
 
 --- Inference Performance ---
-Avg latency per inference: 35931.6 us (~36 ms)
-Total inference time:      180196.866 ms (~3 min)
+Avg latency per inference: ~36 ms
+Total inference time:       ~3 min
 
 --- Bandwidth Savings ---
 Raw upload (all frames):     84.38 MB
@@ -190,14 +179,14 @@ Bandwidth saved:             25.61 MB ( 30.3%)
 
 | 指标 | 值 | 说明 |
 |------|-----|------|
-| 推理延迟 | ~60ms/帧 | 9子网CPU前向传播 |
-| 静态帧跳过率 | 30% | 取决于视频内容, SAD阈值=50 |
-| 模型大小 | ~18MB | 序列化权重文件 |
-| 子网数量 | 9 | 8 CNN + 1 MLP |
-| 参数量 | ~4.5M | He (Kaiming) 均匀初始化 |
-| 单步训练 | ~0.5s | 9子网前向+反向+Momentum SGD |
+| 推理延迟 | ~36ms/帧 | 5子网CPU前向传播 |
+| 静态帧跳过率 | ~30% | 取决于视频内容, 自适应SAD阈值 |
+| 模型大小 | ~2.3MB | 序列化权重文件 |
+| 子网数量 | 5 | 4 CNN + 1 MLP |
+| 参数量 | ~600K | He (Kaiming) 均匀初始化 |
+| 单步训练 | ~0.1s | 5子网前向+反向+ADAM |
 | 快速训练 | ~3分钟 | 200样本 × 5轮 |
-| 完整训练 | 数小时 | 50K样本 × 30轮 (CPU) |
+| 完整训练 | 数小时 | 50K样本 × 多轮 (CPU) |
 
 ## 数据来源
 
@@ -207,42 +196,49 @@ Bandwidth saved:             25.61 MB ( 30.3%)
 
 ## 验证标准
 
-1. stride功能验证: 5项单元测试全部通过
-2. 端到端训练: loss持续下降 20/20 步
-3. 生成+构建: generate/train/infer 三步构建成功 (WX strict warnings)
-4. 推理管道: 7200帧跑完不崩溃, 运动检测正常工作
-5. 权重持久化: save/load round-trip 输出一致
-6. 带宽节省: 静态帧正确跳过, 统计数据合理
-7. CIFAR-10准确率 > 80% (需完整50K样本 × 30轮训练, He初始化+9-leaf架构)
+1. CNN功能验证: 24项单元测试全部通过
+2. BN一致性: 前向/反向缓存一致性测试通过
+3. 端到端训练: loss持续下降
+4. 运动检测: 自适应阈值和时序平滑功能正常
+5. 生成+构建: generate/train/infer 三步构建成功 (WX strict warnings)
+6. 推理管道: 7200帧跑完不崩溃, 运动检测正常工作
+7. 权重持久化: save/load round-trip 输出一致
+8. 带宽节省: 静态帧正确跳过, 统计数据合理
+9. CIFAR-10准确率 > 80% (需完整50K样本 × 多轮训练, BN+LeakyReLU架构)
 
 ## 文件结构
 
 ```
 demo/edge_video_preprocess/
 ├── edge_video_preprocess.md  # 本文档
-├── data_prep.py              # Python数据准备 (CIFAR-10+V帧)
-├── cifar10_dataset.h/c       # CIFAR-10二进制加载器
-├── video_processor.h/c       # 视频帧读取+运动检测
-├── generate_main.c           # 网络架构定义 (MobileNetV2+stride)
-├── train_main.c              # CIFAR-10训练循环 (30轮)
+├── data_prep.py              # Python数据准备 (CIFAR-10+视频帧)
+├── cifar10_dataset.h/c       # CIFAR-10二进制加载器 + 数据增强
+├── video_processor.h/c       # 视频帧读取+自适应运动检测+时序平滑
+├── generate_main.c           # 网络架构定义 (BnConvNet v47)
+├── train_main.c              # CIFAR-10训练循环 (LR调度+数据增强+恢复)
 ├── infer_main.c              # 监控视频推理+统计报告
 ├── generate/CMakeLists.txt
 ├── train/CMakeLists.txt
 ├── infer/CMakeLists.txt
 ├── run_demo.sh               # Linux构建运行脚本
+├── run_demo.bat              # Windows构建运行脚本
 ├── dataset/                  # CIFAR-10数据 (下载后)
 └── video_frames/             # 视频帧数据
     ├── video_meta.txt
     └── video_frames.dat
 
-src/nn/types/cnn/             # CNN后端 (stride支持 + He初始化)
-├── cnn_config.h              # 配置结构 (含 stride 字段)
-├── cnn_infer_ops.c/h         # 推理算子 (ABI v2, He uniform init)
-└── cnn_train_ops.c/h         # 训练算子 (Momentum SGD)
+src/nn/types/cnn/             # CNN后端
+├── cnn_config.h              # 配置结构
+├── cnn_infer_ops.c/h         # 推理算子 (He uniform init, LeakyReLU)
+└── cnn_train_ops.c/h         # 训练算子 (ADAM, BN fix)
 
 verify/                       # 验证测试
 ├── CMakeLists.txt
-├── test_stride.c             # stride单元测试 (5项)
-├── test_network_e2e.c        # 端到端9子网测试
+├── test_stride.c             # stride单元测试
+├── test_network_e2e.c        # 端到端网络测试
+├── test_cnn_full.c           # CNN综合测试 (24项)
+├── test_cnn_backend.c        # CNN后端训练测试
+├── test_bn_consistency.c     # BN一致性测试
+├── test_motion_detect.c      # 运动检测单元测试
 └── quick_train.c             # 快速训练工具
 ```

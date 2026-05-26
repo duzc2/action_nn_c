@@ -81,6 +81,8 @@ typedef struct {
     float dropout_rate;                   /**< Dropout rate (0.0 = disabled). Applied between GAP pooling and MLP projection. */
     uint32_t batch_size;                  /**< Batch size requested by generated wrappers. */
     uint32_t seed;                        /**< Reserved deterministic seed for future train state. */
+    int debug_level;          /**< 0=normal, 1=[GRAD] every step, 2=+[FWD] per-filter, 3=+[BWD] per-filter */
+    int debug_layer_index;    /**< Layer ID for log tags: 0=conv1..4=gap */
 } CnnTrainConfig;
 
 #endif

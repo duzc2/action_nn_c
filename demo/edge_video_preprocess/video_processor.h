@@ -4,8 +4,10 @@
  *
  * Reads pre-extracted 32x32x3 raw float32 frames from a binary file
  * and computes SAD (sum of absolute differences) with the previous frame
- * to detect motion. Frames below the threshold are skipped — this
- * simulates edge-node bandwidth-saving logic.
+ * to detect motion. Includes adaptive thresholding (EMA-based) and
+ * temporal smoothing (debouncing) to reduce false triggers.
+ * Frames below the threshold are skipped — this simulates edge-node
+ * bandwidth-saving logic.
  */
 
 #ifndef DEMO_EDGE_VIDEO_PREPROCESS_VIDEO_PROCESSOR_H
@@ -80,5 +82,80 @@ int video_frame_read(FILE* file, float* frame);
  * @return SAD value.
  */
 float video_frame_sad(const float* a, const float* b, size_t count);
+
+/* ========================================================================
+ *  Adaptive motion threshold (EMA-based)
+ * ======================================================================== */
+
+/**
+ * @brief Adaptive threshold state — tracks rolling SAD statistics via EMA
+ *        and computes a dynamic detection threshold.
+ */
+typedef struct {
+    float rolling_mean;    /**< Exponentially weighted SAD mean. */
+    float rolling_std;     /**< Exponentially weighted SAD std. */
+    float base_threshold;  /**< Minimum threshold (floor). */
+    float adapt_factor;    /**< Multiplier on rolling std (default 2.0). */
+    float ema_alpha;       /**< EMA smoothing factor (default 0.1). */
+    int   initialized;     /**< Has enough data been seen? */
+} MotionAdaptiveThreshold;
+
+/**
+ * @brief Initialize adaptive threshold state.
+ * @param t        Pointer to state struct.
+ * @param base     Minimum (floor) threshold.
+ * @param factor   Multiplier on rolling mean.
+ * @param alpha    EMA smoothing factor in (0,1].
+ */
+void motion_threshold_init(MotionAdaptiveThreshold* t,
+    float base, float factor, float alpha);
+
+/**
+ * @brief Feed a new SAD value into the adaptive threshold.
+ * @param t    Pointer to state struct.
+ * @param sad  Latest SAD value.
+ */
+void motion_threshold_update(MotionAdaptiveThreshold* t, float sad);
+
+/**
+ * @brief Get the current detection threshold.
+ * @param t Pointer to state struct.
+ * @return Current threshold (max of base vs adaptive).
+ */
+float motion_threshold_get(const MotionAdaptiveThreshold* t);
+
+/* ========================================================================
+ *  Temporal smoother (debouncing)
+ * ======================================================================== */
+
+/**
+ * @brief Temporal smoothing state — requires N consecutive motion/static
+ *        frames before changing state, preventing flicker.
+ */
+typedef struct {
+    int   consecutive_motion;  /**< Frames with SAD > threshold in a row. */
+    int   consecutive_static;  /**< Frames with SAD <= threshold in a row. */
+    int   motion_confirm_frames; /**< N consecutive motion frames to trigger. */
+    int   static_confirm_frames; /**< N consecutive static frames to go idle. */
+    int   is_active;           /**< Current state: 1=motion active, 0=static. */
+} MotionTemporalSmoother;
+
+/**
+ * @brief Initialize temporal smoother.
+ * @param s              Pointer to state struct.
+ * @param motion_frames  Consecutive motion frames needed to trigger.
+ * @param static_frames  Consecutive static frames needed to return to idle.
+ */
+void motion_smoother_init(MotionTemporalSmoother* s,
+    int motion_frames, int static_frames);
+
+/**
+ * @brief Feed a motion detection result (1=motion, 0=static) into the smoother.
+ *        Returns the debounced state (1=active, 0=inactive).
+ * @param s         Pointer to state struct.
+ * @param detected  1 if raw SAD exceeded threshold, 0 otherwise.
+ * @return Debounced state (1=motion active, 0=static).
+ */
+int motion_smoother_update(MotionTemporalSmoother* s, int detected);
 
 #endif /* DEMO_EDGE_VIDEO_PREPROCESS_VIDEO_PROCESSOR_H */

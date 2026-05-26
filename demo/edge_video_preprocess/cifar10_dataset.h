@@ -105,4 +105,36 @@ int cifar10_argmax(const float* values, size_t count);
  */
 void cifar10_dataset_shuffle(Cifar10Dataset* dataset, uint32_t seed);
 
+/* ========================================================================
+ *  Data augmentation
+ * ======================================================================== */
+
+/**
+ * @brief Augmentation configuration for a single training sample.
+ */
+typedef struct {
+    int horizontal_flip; /**< 0 or 1 (p=0.5 when applied randomly). */
+    int pad_crop;        /**< 0 or 2 (random 2px pad + crop back to 32x32). */
+} Cifar10Augment;
+
+/**
+ * @brief Apply data augmentation to a single CIFAR-10 sample.
+ *
+ * Performs horizontal flip (p=0.5) and random pad-crop (pad 2px, random
+ * crop back to original size) when the corresponding flags are set.
+ * The augmented image is written to dst; src is unchanged.
+ *
+ * @param dst     Output buffer of size w*h*c (interleaved RGB, float [0,1]).
+ * @param src     Input sample (interleaved RGB, float [0,1]).
+ * @param w       Image width (32 for CIFAR-10).
+ * @param h       Image height (32 for CIFAR-10).
+ * @param c       Channels (3 for RGB).
+ * @param aug     Augmentation config (non-NULL).
+ * @param seed    PRNG state pointer — updated across calls for reproducibility.
+ */
+void cifar10_augment_sample(
+    float* dst, const float* src,
+    size_t w, size_t h, size_t c,
+    const Cifar10Augment* aug, uint32_t* seed);
+
 #endif /* DEMO_EDGE_VIDEO_PREPROCESS_CIFAR10_DATASET_H */

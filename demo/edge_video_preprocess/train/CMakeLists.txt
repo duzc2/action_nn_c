@@ -13,10 +13,12 @@ action_c_get_demo_generated_dir(GENERATED_DIR)
 set(GENERATED_INFER_C      "${GENERATED_DIR}/infer.c")
 set(GENERATED_TRAIN_C      "${GENERATED_DIR}/train.c")
 set(GENERATED_WEIGHTS_SAVE_C "${GENERATED_DIR}/weights_save.c")
+set(GENERATED_WEIGHTS_LOAD_C "${GENERATED_DIR}/weights_load.c")
 set_source_files_properties(
     "${GENERATED_INFER_C}"
     "${GENERATED_TRAIN_C}"
     "${GENERATED_WEIGHTS_SAVE_C}"
+    "${GENERATED_WEIGHTS_LOAD_C}"
     PROPERTIES GENERATED TRUE
 )
 
@@ -26,6 +28,7 @@ add_executable(edge_video_preprocess_train
     "${GENERATED_INFER_C}"
     "${GENERATED_TRAIN_C}"
     "${GENERATED_WEIGHTS_SAVE_C}"
+    "${GENERATED_WEIGHTS_LOAD_C}"
 )
 action_c_apply_strict_warnings(edge_video_preprocess_train)
 

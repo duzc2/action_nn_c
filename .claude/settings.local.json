@@ -101,7 +101,17 @@
       "Bash(ping:*)",
       "Bash(.edge_video_preprocess_train.exe:*)",
       "Bash(tee:*)",
-      "Bash(./build/demo/edge_video_preprocess/generate/edge_video_preprocess_generate.exe:*)"
+      "Bash(./build/demo/edge_video_preprocess/generate/edge_video_preprocess_generate.exe:*)",
+      "Bash(grep:*)",
+      "Bash(./train/edge_video_preprocess_train.exe:*)",
+      "Bash(../train/edge_video_preprocess_train.exe:*)",
+      "Bash(edge_video_preprocess_generate.exe:*)",
+      "Bash(./test_bn_consistency.exe:*)",
+      "Bash(build/verify/test_motion_detect.exe:*)",
+      "Bash(build/verify/test_cnn_backend.exe:*)",
+      "Bash(build/verify/test_bn_consistency.exe:*)",
+      "Bash(build/verify/test_motion_accuracy.exe:*)",
+      "Bash(build/verify/test_cnn_full.exe:*)"
     ]
   }
 }

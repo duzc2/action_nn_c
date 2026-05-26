@@ -150,7 +150,7 @@ static void cnn_apply_parameter_update(CnnTrainContext* context) {
     }
 
     /* Diagnostic: per-leaf weight update L2 norm (every 1000 steps) */
-    if (diag_step_counter % 1000U == 0) {
+    if (context->config.debug_level >= 1 || diag_step_counter % 1000U == 0U) {
         size_t diag_i;
         float diag_conv_w_l2 = 0.0f, diag_conv_b_l2 = 0.0f;
         float diag_proj_w_l2 = 0.0f, diag_proj_b_l2 = 0.0f;
@@ -347,7 +347,7 @@ static int cnn_backpropagate(
         }
 
         /* Diagnostic: per-leaf gradient L2 norm and weight RMS (every 1000 steps) */
-        if (diag_step_counter % 1000U == 0) {
+        if (context->config.debug_level >= 1 || diag_step_counter % 1000U == 0U) {
             size_t diag_i;
             float diag_conv_w_l2 = 0.0f, diag_conv_b_l2 = 0.0f;
             float diag_bn_g_l2 = 0.0f, diag_bn_b_l2 = 0.0f;
@@ -374,6 +374,28 @@ static int cnn_backpropagate(
                     (double)diag_conv_w_l2, (double)diag_conv_w_rms,
                     (double)diag_conv_b_l2, (double)diag_conv_b_rms,
                     (double)diag_bn_g_l2, (double)diag_bn_b_l2);
+        }
+
+        /* [GRAD] per-step gradient L2 norm summary */
+        if (context->config.debug_level >= 1) {
+            float gr_conv_w = 0.0f, gr_conv_b = 0.0f;
+            float gr_bn_g = 0.0f, gr_bn_b = 0.0f;
+            size_t gr_i;
+            size_t gr_conv_wc = cnn_conv_weight_count(config);
+            for (gr_i = 0U; gr_i < gr_conv_wc; ++gr_i)
+                gr_conv_w += context->conv_weight_grad[gr_i] * context->conv_weight_grad[gr_i];
+            for (gr_i = 0U; gr_i < config->filter_count; ++gr_i)
+                gr_conv_b += context->conv_bias_grad[gr_i] * context->conv_bias_grad[gr_i];
+            if (context->bn_gamma_grad != NULL) {
+                for (gr_i = 0U; gr_i < config->filter_count; ++gr_i) {
+                    gr_bn_g += context->bn_gamma_grad[gr_i] * context->bn_gamma_grad[gr_i];
+                    gr_bn_b += context->bn_beta_grad[gr_i] * context->bn_beta_grad[gr_i];
+                }
+            }
+            fprintf(stderr, "[GRAD] layer=%d step=%zu conv_w=%.6f conv_b=%.6f bn_g=%.6f bn_b=%.6f\n",
+                    context->config.debug_layer_index, diag_step_counter,
+                    (double)gr_conv_w, (double)gr_conv_b,
+                    (double)gr_bn_g, (double)gr_bn_b);
         }
 
         /* Batch accumulation: only apply update when batch is complete */
@@ -450,15 +472,26 @@ static int cnn_backpropagate(
                      * using the SAME running statistics the forward pass normalized with. */
                     if (has_bn_pool && dpool_act != 0.0f) {
                         float gamma = infer_ctx->bn_gamma[filter_index];
-                        float bn_mean = infer_ctx->bn_running_mean[filter_index];
-                        float bn_var = infer_ctx->bn_running_var[filter_index];
-                        float linear_val = context->pooled_linear_cache[pooled_index];
-                        float inv_std = 1.0f / sqrtf((bn_var + bn_eps) > 0.0f ? (bn_var + bn_eps) : (bn_eps > 0.0f ? bn_eps : 1e-8f));
-                        float x_hat = (linear_val - bn_mean) * inv_std;
+                        /* Bug #5 fix: read x_hat and inv_std cached from the forward pass
+                         * (stored in bn_pre_cache / bn_spatial_var before the EMA update).
+                         * These match the values that were actually used for normalization,
+                         * so forward and backward are strictly consistent.  No longer read
+                         * bn_running_mean or bn_running_var here. */
+                        float x_hat = context->bn_pre_cache[pooled_index];
+                        float inv_std = context->bn_spatial_var[pooled_index];
                         float scale = gamma * inv_std;
                         context->bn_gamma_grad[filter_index] += dpool_act * x_hat;
                         context->bn_beta_grad[filter_index] += dpool_act;
                         dpool_linear = dpool_act * scale;
+
+                        /* [BWD] per-filter diagnostic: log backward BN calculations
+                         * (cached x_hat/inv_std — no longer reads running stats) */
+                        if (context->config.debug_level >= 3 && filter_index < 4U) {
+                            fprintf(stderr, "[BWD] layer=%d filter=%zu step=%zu x_hat(cached)=%.6f inv_std(cached)=%.6f scale=%.6f dpool_act=%.6f dpool_linear=%.6f\n",
+                                    context->config.debug_layer_index, filter_index, diag_step_counter,
+                                    (double)x_hat, (double)inv_std, (double)scale,
+                                    (double)dpool_act, (double)dpool_linear);
+                        }
                     } else {
                         dpool_linear = dpool_act;
                     }
@@ -672,7 +705,7 @@ static int cnn_backpropagate(
     }
 
     /* Diagnostic: per-leaf gradient L2 norm and weight RMS (every 1000 steps) */
-    if (diag_step_counter % 1000U == 0) {
+    if (context->config.debug_level >= 1 || diag_step_counter % 1000U == 0U) {
         size_t diag_i;
         float diag_conv_w_l2 = 0.0f, diag_conv_b_l2 = 0.0f;
         float diag_proj_w_l2 = 0.0f, diag_proj_b_l2 = 0.0f;
@@ -720,6 +753,39 @@ static int cnn_backpropagate(
                 (double)diag_proj_w_l2, (double)diag_proj_w_rms,
                 (double)diag_proj_b_l2, (double)diag_proj_b_rms,
                 (double)diag_bn_g_l2, (double)diag_bn_b_l2);
+    }
+
+    /* [GRAD] per-step gradient L2 norm summary */
+    if (context->config.debug_level >= 1) {
+        float gr_conv_w = 0.0f, gr_conv_b = 0.0f;
+        float gr_proj_w = 0.0f, gr_proj_b = 0.0f;
+        float gr_bn_g = 0.0f, gr_bn_b = 0.0f;
+        size_t gr_i;
+        size_t gr_conv_wc = cnn_conv_weight_count(config);
+        for (gr_i = 0U; gr_i < gr_conv_wc; ++gr_i)
+            gr_conv_w += context->conv_weight_grad[gr_i] * context->conv_weight_grad[gr_i];
+        for (gr_i = 0U; gr_i < config->filter_count; ++gr_i)
+            gr_conv_b += context->conv_bias_grad[gr_i] * context->conv_bias_grad[gr_i];
+        if (context->projection_weight_grad != NULL) {
+            size_t gr_proj_wc = cnn_projection_weight_count(config);
+            for (gr_i = 0U; gr_i < gr_proj_wc; ++gr_i)
+                gr_proj_w += context->projection_weight_grad[gr_i] * context->projection_weight_grad[gr_i];
+        }
+        if (context->projection_bias_grad != NULL) {
+            for (gr_i = 0U; gr_i < config->feature_size; ++gr_i)
+                gr_proj_b += context->projection_bias_grad[gr_i] * context->projection_bias_grad[gr_i];
+        }
+        if (context->bn_gamma_grad != NULL) {
+            for (gr_i = 0U; gr_i < config->filter_count; ++gr_i) {
+                gr_bn_g += context->bn_gamma_grad[gr_i] * context->bn_gamma_grad[gr_i];
+                gr_bn_b += context->bn_beta_grad[gr_i] * context->bn_beta_grad[gr_i];
+            }
+        }
+        fprintf(stderr, "[GRAD] layer=%d step=%zu conv_w=%.6f conv_b=%.6f proj_w=%.6f proj_b=%.6f bn_g=%.6f bn_b=%.6f\n",
+                context->config.debug_layer_index, diag_step_counter,
+                (double)gr_conv_w, (double)gr_conv_b,
+                (double)gr_proj_w, (double)gr_proj_b,
+                (double)gr_bn_g, (double)gr_bn_b);
     }
 
     /* Batch accumulation: only apply update when batch is complete */
@@ -848,6 +914,10 @@ CnnTrainContext* nn_cnn_train_create(void* infer_ctx_ptr, const CnnTrainConfig* 
     infer_ctx->bn_training_pre_cache   = context->bn_pre_cache;
     infer_ctx->bn_training_spatial_var = context->bn_spatial_var;
 
+    /* Copy debug settings to infer context for [FWD] log access */
+    infer_ctx->debug_level       = config->debug_level;
+    infer_ctx->debug_layer_index = config->debug_layer_index;
+
     if (context->conv_weight_grad == NULL || context->conv_bias_grad == NULL ||
         context->conv_weight_vel == NULL || context->conv_bias_vel == NULL) {
         nn_cnn_train_destroy(context);
@@ -903,6 +973,8 @@ void nn_cnn_train_destroy(CnnTrainContext* context) {
     if (context->infer_ctx != NULL) {
         context->infer_ctx->bn_training_pre_cache   = NULL;
         context->infer_ctx->bn_training_spatial_var = NULL;
+        context->infer_ctx->debug_level       = 0;
+        context->infer_ctx->debug_layer_index = -1;
     }
     free(context);
 }

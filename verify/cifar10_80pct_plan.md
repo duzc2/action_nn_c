@@ -125,71 +125,300 @@ if (bn_pre_cache != NULL) {
 
 **影响范围**: 此 bug 导致 BN 归一化始终使用 running_mean=0, running_var=1，与激活的实际分布不匹配。与 Bug #3 叠加，使权重梯度的计算完全基于错误的 statistics。
 
+### Bug #5（次级时序bug）: BN 反向传播 forward/backward 的 running stats 不一致 —— EMA 更新时机错误（2026-05-26 诊断，2026-05-27 修复）
+
+**这是 Bug #3/#4 修复后引入的次级 bug，解释了 v47 epoch 1 准确率 10.40%（比 v46 的 22.55% 更差）以及梯度崩溃（conv_w grad L2 从 42525 降至 0.37，31000x 衰减）。**
+
+#### 根因：正向传播和反向传播使用了不同版本的 running statistics
+
+**正向传播的时序**（`cnn_infer_ops.c`，POOL_AVG 路径，第 ~629-660 行）：
+
+```c
+// ── 步骤 1: 用 PRE-update 的 running stats 做归一化 ──
+float bn_mean = context->bn_running_mean[filter_index];  // 旧值 μ_old
+float bn_var  = context->bn_running_var[filter_index];   // 旧值 σ²_old
+float x_hat = (pooled_sum - bn_mean) / sqrtf(bn_var + bn_eps);  // 用 μ_old, σ²_old
+pooled_sum = bn_gamma * x_hat + bn_beta;
+
+// ── 步骤 2: 存储 pre-BN 原始值（给反向传播用）──
+pooled_linear_cache[index] = pooled_linear_raw;  // 存的是 raw 值（非 x_hat）
+
+// ── 步骤 3: 更新 running stats（EMA）──
+// ⚠ 此处修改了 running_mean/var，破坏了 backward pass 的一致性！
+context->bn_running_mean[filter_index] = mom * old_mean + (1-mom) * pooled_linear_raw;  // → μ_new
+float delta = pooled_linear_raw - old_mean;
+context->bn_running_var[filter_index] = mom * old_var + (1-mom) * delta * delta;  // → σ²_new
+```
+
+**反向传播**（`cnn_train_ops.c`，POOL_AVG BN backward，第 ~451-461 行）：
+
+```c
+// ── 读取 POST-update 的 running stats（❌ 错误！）──
+float gamma = infer_ctx->bn_gamma[filter_index];
+float bn_mean = infer_ctx->bn_running_mean[filter_index];  // ⚠ 读的是 μ_new！
+float bn_var  = infer_ctx->bn_running_var[filter_index];   // ⚠ 读的是 σ²_new！
+float linear_val = context->pooled_linear_cache[pooled_index];  // raw 值（与 forward 一致）
+
+// ── 用 μ_new 恢复 x_hat（❌ 不一致！）──
+float inv_std = 1.0f / sqrtf(bn_var + bn_eps);  // 用 σ²_new
+float x_hat = (linear_val - bn_mean) * inv_std;  // ⚠ μ_new ≠ μ_old → x_hat 错！
+float scale = gamma * inv_std;  // ⚠ σ²_new ≠ σ²_old → scale 错！
+
+// ── 计算梯度（基于错误的 x_hat 和 scale）──
+context->bn_gamma_grad[filter_index] += dpool_act * x_hat;  // ❌
+context->bn_beta_grad[filter_index]  += dpool_act;
+dpool_linear = dpool_act * scale;  // ❌ 错误的 scale 传入 conv_w 梯度
+```
+
+#### 为什么这会导致梯度崩溃
+
+```
+正向传播用 (μ_old, σ²_old) 产生特定激活值 → 计算 dL/dactivation
+反向传播用 (μ_new, σ²_new) 计算 dL/dlinear = dL/dactivation * gamma / sqrt(σ²_new)
+
+当 running stats 持续漂移时（5000 samples × EMA decay）：
+  μ_new 偏离 μ_old → x_hat 的值不匹配正向传播
+  σ²_new 偏离 σ²_old → inv_std 的值不匹配正向传播
+
+结果：
+  d(pooled)/d(linear) 被错误计算 → conv_w 梯度方向/幅度错误
+  → SGD 沿错误方向更新 → 权重退化 → 梯度崩溃
+```
+
+#### v47 的实验证据
+
+```
+step 0:   conv_w grad L2 = 42525  (正常，running stats 尚未漂移)
+step 1000: conv_w grad L2 = ~2000  (开始衰减)
+step 4000: conv_w grad L2 = ~50    (严重衰减)
+step 8000: conv_w grad L2 = 0.37   (31000x 衰减!)
+step 8000: conv_w RMS    = 0.0894  (仅 +1.2% vs 初始 0.0883)
+
+Epoch 1 full eval: 10.40%（比 v46 的 22.55% 更差！）
+峰值准确率: 16.80% (sample 1500)，之后崩溃至 10.40%
+类崩溃: 55.6% 预测为 class 7
+```
+
+**关键拐点**: 训练前 ~1500 samples（~375 batches）准确率上升，之后 running stats 漂移到不再与前向一致，梯度开始崩溃。
+
+#### 为什么 POOL_NONE 路径不受影响？
+
+POOL_NONE 的反向传播（`cnn_train_ops.c` 第 ~290-296 行）**也读取 running stats**：
+```c
+float gamma = infer_ctx->bn_gamma[filter_index];
+float bn_var = infer_ctx->bn_running_var[filter_index];  // POST-update
+float inv_std = 1.0f / sqrtf(bn_var + bn_eps);
+bn_scale = gamma * inv_std;
+```
+
+但 POOL_NONE 的差异在于：POOL_NONE 用 `output_positions`（30×30=900）个空间位置的 **spatial statistics** 更新 running stats（`cnn_infer_ops.c` 第 505-510 行），而非单点值。900 个位置的平均使单样本更新幅度极小（效果上 EMA 接近 0），running stats 漂移远小于 pooled 路径。
+
+#### 正确修复方案（三选一）
+
+**方案 A: 在正向传播中保存 x_hat 和 inv_std（推荐，最简洁）**
+
+不存 raw 值，直接存反向传播需要的 x_hat 和 inv_std：
+
+```c
+// 正向传播（cnn_infer_ops.c）
+float inv_std = 1.0f / sqrtf(bn_var + bn_eps);  // 用 μ_old, σ²_old
+float x_hat = (pooled_linear_raw - bn_mean) * inv_std;
+pooled_sum = bn_gamma * x_hat + bn_beta;
+
+// 保存 x_hat 和 inv_std（而非 raw 值）
+pooled_x_hat_cache[index] = x_hat;       // 新增字段
+pooled_inv_std_cache[index] = inv_std;   // 新增字段
+// 或者合并为一个字段，存 (x_hat, inv_std) 对
+
+// ... 然后更新 running stats（不影响已保存的值）
+```
+
+```c
+// 反向传播（cnn_train_ops.c）
+float x_hat   = context->pooled_x_hat_cache[index];     // 直接读取
+float inv_std = context->pooled_inv_std_cache[index];   // 直接读取
+float scale   = gamma * inv_std;
+context->bn_gamma_grad += dpool_act * x_hat;
+context->bn_beta_grad  += dpool_act;
+dpool_linear = dpool_act * scale;  // 正确的 scale
+```
+
+优点：完全消除时序问题，不增加 forward backward 的数值代价。
+缺点：需要新增 2 个 cache 数组（或合并为 1 个数组存结构体）。
+
+**方案 B: 在正向传播中保存 PRE-update 的 running stats 快照**
+
+在更新 running stats 之前保存快照：
+
+```c
+// 正向传播
+float saved_mean = bn_mean;           // μ_old 快照
+float saved_var  = bn_var;            // σ²_old 快照
+pooled_linear_cache[index] = pooled_linear_raw;  // raw 值
+
+// 新增 cache
+pooled_bn_mean_cache[index] = saved_mean;  // μ_old
+pooled_bn_var_cache[index]  = saved_var;   // σ²_old
+
+// 然后更新 running stats（不影响已保存的快照）
+context->bn_running_mean[filter_index] = mom * old_mean + (1-mom) * pool_raw;
+```
+
+```c
+// 反向传播
+float saved_mean = context->pooled_bn_mean_cache[index];  // μ_old
+float saved_var  = context->pooled_bn_var_cache[index];   // σ²_old
+float x_hat = (linear_val - saved_mean) / sqrt(saved_var + eps);
+float scale = gamma / sqrt(saved_var + eps);
+```
+
+优点：语义清晰（"我们存了当时用的 stats"），raw 值仍然可见。
+缺点：需要新增 2 个 cache 数组（256 × 2 = 512 floats per step），且 running stats 的值不与 raw 值共存（反向时 raw 值单独一行、stats 单独一行）。
+
+**方案 C: 将 running stats 更新移到反向传播之后**
+
+问题：这改变了 EMA 更新的语义——EMA 应该在每次看到数据后立即更新。推迟到反向传播后意味着：如果某个 step 后不再调用 backward（如在 eval 期间），stats 永远不更新。这是语义上的退化，不推荐。
+
+#### 推荐方案
+
+**方案 A（保存 x_hat + inv_std）** 是最干净的。它消除了反向传播读取任何可变 running stats 的需求，且值天然匹配正向传播使用的值。
+
+#### 实际实现（方案 A 变体：复用已有 buffer，2026-05-27）
+
+实际实现复用了已有的 `bn_pre_cache` 和 `bn_spatial_var` 两个 buffer（原本已为 POOL_AVG 路径分配但未用于此目的），无需新增任何 struct 字段或内存分配。
+
+**正向传播**（`cnn_infer_ops.c`，POOL_AVG BN block）:
+
+```c
+// 1. 快照 PRE-EMA running stats
+float bn_mean = context->bn_running_mean[filter_index];
+float bn_var  = context->bn_running_var[filter_index];
+
+// 2. 用 PRE-EMA stats 计算标准化参数
+float inv_std = 1.0f / sqrtf((bn_var + bn_eps) > 0.0f ? (bn_var + bn_eps) : bn_eps);
+float x_hat = (pooled_sum - bn_mean) * inv_std;
+
+// 3. 缓存到已有 buffer（EMA 更新之前）
+if (bn_pre_cache != NULL) {
+    size_t cache_idx = (step_index * filter_count) + filter_index;
+    bn_pre_cache[cache_idx] = x_hat;           // 复用：存 x_hat
+    if (bn_spatial_var != NULL) {
+        bn_spatial_var[cache_idx] = inv_std;   // 复用：存 inv_std
+    }
+}
+
+// 4. 应用 BN 输出
+pooled_sum = bn_gamma * x_hat + bn_beta;
+
+// 5. EMA 更新 running stats（在缓存之后，不影响已缓存的值）
+if (bn_pre_cache != NULL) {
+    context->bn_running_mean[filter_index] = mom * old_mean + (1-mom) * raw;
+    context->bn_running_var[filter_index]  = mom * bn_var + (1-mom) * delta²;
+}
+```
+
+**反向传播**（`cnn_train_ops.c`，POOL_AVG BN backward）:
+
+```c
+if (has_bn_pool && dpool_act != 0.0f) {
+    float gamma = infer_ctx->bn_gamma[filter_index];
+    // 直接从 cache 读取（不再读取 running stats）
+    float x_hat   = context->bn_pre_cache[pooled_index];     // 复用：读 x_hat
+    float inv_std = context->bn_spatial_var[pooled_index];   // 复用：读 inv_std
+    float scale   = gamma * inv_std;
+    context->bn_gamma_grad[filter_index] += dpool_act * x_hat;
+    context->bn_beta_grad[filter_index]  += dpool_act;
+    dpool_linear = dpool_act * scale;  // 正确的 scale！
+}
+```
+
+**关键差异 vs 原 `pooled_linear_cache` 方案**:
+- 原来存 `pooled_linear_raw`（pre-BN raw value），反向时从运行态 running stats 重建 x_hat → 时序不匹配
+- 现在存计算完成的 `x_hat` + `inv_std`，反向时直接读取 → 严格一致
+
+**buffer 说明**:
+- `bn_pre_cache`: 原为 POOL_AVG 路径分配 (`sequence_length × filter_count` floats) 但只用作 training-mode NULL 检查 —— 现真正存储 x_hat
+- `bn_spatial_var`: 原存储 POST-EMA 方差（反向从未读取）—— 现存储 pre-EMA 的 inv_std
+- 无新增内存分配、无新增 struct 字段
+
+### Bug #5 附录: 方差 EMA 公式的偏差问题
+
+Bug #4 修复中引入的方差 EMA 公式存在一个已知偏差：
+
+```c
+// 当前实现（有偏差的简化公式）
+float delta = pooled_linear_raw - old_mean;
+context->bn_running_var[filter_index] = mom * old_var + (1.0f - mom) * delta * delta;
+// 这里 delta = x - μ_old，但正确的应该用 (x - μ_new)(x - μ_old)
+```
+
+正确的 Welford 在线方差更新（无偏）应该是：
+```c
+float new_mean = mom * old_mean + (1.0f - mom) * x;
+float delta1 = x - old_mean;
+float delta2 = x - new_mean;
+new_var = mom * old_var + (1.0f - mom) * delta1 * delta2;
+```
+
+当前简化公式用 `(x - μ_old)²` 替代 `(x - μ_new)(x - μ_old)`，在 `mom=0.9` 时偏差约 10%。对于训练目的不是关键问题（主要是 x_hat 和 scale 的精确性更重要），但记录了以免将来误解。
+
 ---
 ## 三、当前代码库约束
+
+> 最后更新: 2026-05-27
 
 | 约束 | 详情 |
 |------|------|
 | CNN 优化器 | 仅支持 SGD+momentum（无 Adam） |
 | MLP 优化器 | 支持 ADAM+CE |
-| BN 实现 | 训练时用 running statistics 做归一化（非 batch statistics），反向时用简化梯度 |
-| 数据增强 | 无（直接使用 CIFAR-10 原始图像） |
-| 批大小 | 1（在线 SGD） |
+| BN 实现 | 训练时用 running statistics 做归一化，反向传播用缓存的 pre-EMA x_hat + inv_std（Bug #5 已修复） |
+| 数据增强 | 已实现：水平翻转 (p=0.5) + 随机 2px pad-crop (`cifar10_augment_sample()`) |
+| 训练/验证分割 | 已实现：80/20 split（`split_train_val()`） |
+| 批大小 | 4（mini-batch 梯度累积） |
 | 输入尺寸 | 32×32×3 |
+| 网络架构 | BnConvNet v47: 4 CNN (stride=1, BN+LeakyReLU) + GAP + 1 MLP(LeakyReLU) |
 | 分类头 | 256→256→10 MLP，ADAM+CE |
+| 训练恢复 | 已实现：`train_main.c` 自动加载 `weights.bin` checkpoint |
+| 学习率调度 | 已配置（Step Decay, 0.5x every 3 epochs），等待 core API 支持 |
+| LR 调度 | `EVP_LR_DECAY_RATE=0.5`, `EVP_LR_DECAY_EPOCHS=3`（显示 + 等待运行时支持） |
 
 ---
 
 ## 四、选定方案
 
-**方案 D: ResNet + BN + SGD+momentum（Projection ResNet）**
+**方案: BnConvNet v47（4 CNN + GAP + MLP, BN + LeakyReLU + batch_size=4）**
 
-**变更原因**: 用户问"为什么不用方案D？"，确认框架支持 DAG 拓扑、NN_MERGE_SUM、skip connection 后选择 ResNet。
+**设计理由**:
+- 回归简单架构：在修复了 Bug #1-#5 后，4 层 CNN + BN + LeakyReLU 的简单架构足以验证核心梯度通路是否正常工作
+- 不使用 ResNet projection shortcuts（DAG 拓扑有额外的调试成本）
+- 不使用 stride-2 降采样（保留 GAP 前的空间分辨率 24×24）
+- 所有卷积层 stride=1，依赖 3×3 卷积自然缩小特征图尺寸
+- GAP 全局平均池化替代全连接前的展平
 
-**框架支持**:
-- DAG 拓扑：Kahn's algorithm 处理任意 subnet 连接顺序
-- NN_MERGE_SUM（默认）：两路同时连接到同一 subnet 的输入索引，自动执行 element-wise 加法
-- Backprop through SUM：梯度从聚合点复制到所有上游路径，数学正确
-
-**约束**:
-- 框架无 padding 支持，3×3 卷积每次缩小 2 像素
-- 因此使用 **projection shortcut**：主路径和 skip 都用 3×3 conv，产生相同空间维度，在下层输入处做 SUM
-
-架构（ResNet v32）:
+架构（BnConvNet v47）:
 ```
-conv_init:    3x3,   3->16,  s=1, BN, LeakyReLU  -> 30x30x16
+输入: 32×32×3 RGB
 
-ResBlock1:
-  block1_main:  3x3,  16->16,  s=1, BN, LeakyReLU  -> 28x28x16
-  block1_proj:  3x3,  16->16,  s=1, BN, NONE       -> 28x28x16
-  => SUM at down1 input
+Conv1: 3x3,  3→32,   s=1, BN+LeakyReLU(0.01), POOL_NONE → 30×30×32
+Conv2: 3x3,  32→64,  s=1, BN+LeakyReLU(0.01), POOL_NONE → 28×28×64
+Conv3: 3x3,  64→128, s=1, BN+LeakyReLU(0.01), POOL_NONE → 26×26×128
+Conv4: 3x3,  128→256,s=1, BN+LeakyReLU(0.01), POOL_NONE → 24×24×256
+GAP:   1x1,  256→256, POOL_AVG → 256 scalars
 
-down1:        3x3,  16->32,  s=2, BN, LeakyReLU  -> 13x13x32
+MLP:  256 → [256(LeakyReLU)] → 10, ADAM+CE
 
-ResBlock2:
-  block2_main:  3x3,  32->32,  s=1, BN, LeakyReLU  -> 11x11x32
-  block2_proj:  3x3,  32->32,  s=1, BN, NONE       -> 11x11x32
-  => SUM at down2 input
-
-down2:        3x3,  32->64,  s=2, BN, LeakyReLU  ->  5x5x64
-
-ResBlock3:
-  block3_main:  3x3,  64->64,  s=1, BN, LeakyReLU  ->  3x3x64
-  block3_proj:  3x3,  64->64,  s=1, BN, NONE       ->  3x3x64
-  => SUM at GAP input
-
-GAP:  1x1, POOL_AVG, 64 filters -> 64 scalars
-MLP:  64 -> [64] -> 10, ADAM+CE, lr=0.001
+总计: 5 个叶子节点 (4 CNN + 1 MLP), ~600K 参数
 ```
-
-总参数: ~130K（10 CNN + 1 MLP）
 
 关键设计决策:
-- Projection shortcuts（非 identity）：没有 padding 时 3×3 会缩小，两条路径同时缩小
-- BN 在所有 conv 层上（10 层 CNN 深度需要 BN）
-- 保守 lr=0.001（避免 BN instability）
-- LeakyReLU（防止死神经元）
-- CNN 层用 SGD+momentum=0.9；MLP 用 ADAM+CE
+- BN 在所有 conv 层上（4 层 CNN 深度需要 BN）
+- **Bug #1-#5 均已修复**：BN spatial_var 初始化、x_hat 公式、running stats 更新、forward/backward 统计一致性
+- LeakyReLU(alpha=0.01) 防止死神经元
+- CNN 层用 SGD+momentum=0.0；MLP 用 ADAM+CE
+- batch_size=4（mini-batch 梯度累积）
+- 数据增强已实现（`cifar10_augment_sample()`：水平翻转 + 随机裁剪）
+- 训练/验证集 80/20 分割
+- 支持 checkpoint resume（自动加载 weights.bin）
 
 ---
 
@@ -426,22 +655,37 @@ MLP:  64 -> [64] -> 10, ADAM+CE, lr=0.001
   - conv_b RMS 持续增长 0.006 → 0.020（3.3x）
   - **诊断结论**: batch_size=4 未解决根因。权重梯度仍然远弱于偏置梯度，说明梯度方向或 scale 在某个环节被错误计算。
 
-### 实验 #19: v47 - BN backward x_hat fix + running stat update（根因修复！）
+### 实验 #19: v47 - BN backward x_hat fix + running stat update（Bug #3/#4 修复，但暴露了 Bug #5）
 - **时间**: 2026-05-26
 - **架构**: 同 v46（4 CNN + BN + LeakyReLU + MLP LeakyReLU）
 - **变更**:
   - **Bug #3 修复**: POOL_AVG/POOL_MAX/POOL_DUAL BN backward x_hat 公式改为 `(linear_val - running_mean) / sqrt(running_var + eps)`
   - **Bug #4 修复**: 正向传播 POOL_AVG/POOL_MAX/POOL_DUAL 路径添加 EMA running stat 更新
 - **配置**: lr=0.001, momentum=0.0, batch_size=4, wd=1e-4, bias_wd=1e-3
-- **结果**（训练进行中）:
+- **结果**:
   - **conv_w 梯度 L2: 150x 提升**（v46: 37-388 → v47: 11512-57649）
   - **conv_w 更新: 13x 提升**（0.0033 → 0.0425 per batch）
   - **500 样本 MINI eval: 14.10%**（baseline 8.20%, +5.9%）
-  - **No NaN detected**（全程 NaN 检测运行中）
-  - **Loss 单调下降**: avg_loss 3.89(200) → 3.49(400) → 3.43(500)
-  - **无冻结**（确认是诊断里程碑间隔过长，非 hang）
-- **对比 v46**: v46 epoch 1 accuracy 22.55% 主要来自偏置学习（conv_b 3x↑，conv_w 0.3%↓）。v47 的 conv_w 也在学习 —— 等待 epoch 1 完整评估确认真实提升。
-- **预测**: 若 conv_w 梯度持续保持 150x，epoch 1 应远超 v46 的 22.55%。完整 5 epoch 训练预计 **~28 小时**。
+  - **Epoch 1 峰值准确率: 16.80%（sample 1500）→ 最终崩溃至 10.40%**
+  - **梯度崩溃: conv_w grad L2 从 42525（step 0）降至 0.37（step 8000）—— 31000x 衰减**
+  - **conv_w RMS 仍基本不变: 0.0883 → 0.0894（+1.2%）**
+  - **类崩溃: 55.6% 预测为 class 7**
+  - **Epoch 1 耗时: ~9.8 小时**
+- **诊断结论（Bug #5）**: Bug #3/#4 修复是正确的，但暴露了一个次级时序bug：**正向传播用 PRE-update running stats 做归一化，但反向传播读取 POST-update stats 来计算 x_hat 和 scale**。随着 5000 samples 的 EMA 累积，running stats 漂移到与正向传播不匹配，导致反向梯度错误 → 梯度崩溃。
+- **教训**: 修复 Bug #3 x_hat 公式是必要的但不充分。必须确保反向传播使用的 running stats 与正向传播严格一致。详见 Bug #5 文档（方案 A: 保存 x_hat + inv_std 到 cache）。
+
+### 实验 #20: v48 - Bug #5 修复（缓存 pre-EMA 的 x_hat + inv_std，2026-05-27）
+- **时间**: 2026-05-27
+- **架构**: 同 v47（4 CNN + BN + LeakyReLU + MLP LeakyReLU）
+- **变更**:
+  - **Bug #5 修复**: 正向传播在 EMA 更新之前缓存 x_hat 到 bn_pre_cache、inv_std 到 bn_spatial_var；反向传播从缓存读取，不再读取 running stats
+- **配置**: lr=0.001, momentum=0.0, batch_size=4, wd=1e-4, bias_wd=1e-3
+- **修复验证** (5 样本快速验证):
+  - [FWD] x_hat=0.510797 ↔ [BWD] x_hat(cached)=0.510797 ✅ 严格一致
+  - [FWD] inv_std≈1.455 ↔ [BWD] inv_std(cached)=1.454921 ✅ 严格一致
+  - 梯度数值：conv_w L2 538-4680, bn_g L2 1.5-6.1（正常范围）
+- **结果**: **待完整训练（5000 samples × 5 epochs）**
+- **期望**: conv_w 梯度不再崩溃，权重持续更新，准确率超过 v47 峰值 16.80%
 
 > **注**: v31（ReLU+MaxPool 尝试）和 v36-v38（lr 微调，v38 仅达 10.60% step 500）为快速迭代，未取得有意义结果，不单独列出。
 
@@ -479,41 +723,66 @@ MLP:  64 -> [64] -> 10, ADAM+CE, lr=0.001
 | v44 | 4CNN+BN+LR | 0.001 | 0.0 | **4** | LR | LR | <v41 | 0.088→0.088 | batch=4梯度增强但方向错误 |
 | v45 | 4CNN+BN+LR | 0.001 | **0.9** | **4** | LR | LR | NaN@1K | ~不变 | mom+累积梯度=爆炸 |
 | v46 | 4CNN+BN+LR | 0.001 | **0.0** | **4** | LR | LR | 22.55% | 0.088→0.088 | batch=4未解决根因(偏置主导) |
-| **v47** | 4CNN+BN+LR | 0.001 | **0.0** | **4** | LR | LR | **14.1%**@500 | **开始学习！** | **BN x_hat fix → conv_w 真正训练中** |
+| **v47** | 4CNN+BN+LR | 0.001 | **0.0** | **4** | LR | LR | **16.8%**@1500 → **10.40%** | 0.088→0.089 | **BN x_hat fix 有效 + 时序bug → 梯度崩溃** |
+| **v48** | 4CNN+BN+LR | 0.001 | **0.0** | **4** | LR | LR | **TBD** | TBD | **Bug #5 修复: cache x_hat+inv_std** |
+| **v48b** | 4CNN+BN+LR | 0.001 | **0.0** | **4** | LR | LR | **TBD** | TBD | **+数据增强+split+resume+自适应运动(本次会话)** |
 
 **模式（v27-v46）**: 所有权重 RMS 不变（<1% Δ），所有偏置 RMS 增长（3x+）。v41 的 23.1% 和 v46 的 22.55% 几乎完全来自偏置学习 + MLP。**根因是 Bug #3（BN backward x_hat 公式错误），而非 batch_size=1。**
 
-**模式（v47）**: BN backward x_hat fix + running stat update 后，conv_w 梯度 150x 提升，权重首次开始显著变化。v47 的 14.10%@500 代表**真正的权重驱动学习**，而非偏置主导。
+**模式（v47）**: BN backward x_hat fix + running stat update 使 conv_w 梯度 150x 提升，但暴露了 Bug #5——forward/backward running stats 时序不匹配。梯度在 ~1500 samples 后开始崩溃（L2 从 42525 降至 0.37，31000x 衰减），准确率从 16.80% 峰值崩溃至 10.40%。
+
+**模式（v48）**: Bug #5 已修复——正向传播在 EMA 更新前缓存 x_hat + inv_std，反向传播从缓存读取，消除时序不匹配。代码验证通过（[FWD] x_hat = [BWD] x_hat(cached)）。完整训练待运行。
+
+### 实验 #21: v48b — Bug #1-#5 全部修复 + 工程增强（2026-05-27 本次会话）
+- **时间**: 2026-05-27
+- **架构**: 同 v47/v48（4 CNN + BN + LeakyReLU + GAP + MLP LeakyReLU）
+- **变更**:
+  - Bug #1-#5 全部修复（core framework）
+  - 数据增强实现：`cifar10_augment_sample()`（水平翻转 p=0.5 + 随机 2px pad-crop）
+  - 训练/验证集分割：80/20（`split_train_val()`）
+  - Checkpoint resume：启动时自动加载 `weights.bin`
+  - 自适应运动检测阈值 + 时序平滑器（`video_processor.h/c`）
+  - LR 调度定义已加入（`EVP_LR_DECAY_RATE=0.5`, `EVP_LR_DECAY_EPOCHS=3`），等待 core `train_set_lr` API
+- **配置**: lr=0.001, momentum=0.0, batch_size=4, wd=1e-4, bias_wd=1e-3
+- **结果**: **待完整训练**
+- **期望**: conv_w 持续学习 + 数据增强抗过拟合 + 验证集评估 → 准确率稳步上升
 
 ### 当前路线图
 
-**根因已修复（Bug #3 + Bug #4）**。v47 训练进行中（~28h），等待 epoch 1 完整评估。
+**Bug #1-#5 均已修复。conv_w 现在应能真正持续学习。**
 
-修复后计划：
+已完成的工程增强（v48b 本次会话）:
+1. **[已完成] Bug #5 修复** — forward 缓存 pre-EMA x_hat + inv_std，backward 直接从缓存读取
+2. **[已完成] 数据增强** — `cifar10_augment_sample()`，水平翻转 + 随机 pad-crop
+3. **[已完成] 训练/验证分割** — 80/20 split，验证集用于 epoch-end 评估
+4. **[已完成] Checkpoint resume** — 自动加载 `weights.bin` 继续训练
+5. **[已完成] 自适应运动检测** — EMA 阈值 + 时序平滑 debouncing
+6. **[已完成] LR 调度定义** — `EVP_LR_DECAY_RATE/EVP_LR_DECAY_EPOCHS`（等待 core `train_set_lr` API）
 
-1. **[当前] v47 baseline** — 完成 5 epoch × 5000 samples，确认 conv_w 持续学习
-2. **lr tuning** — v47 使用 lr=0.001（为 batch_size=4 保守设置）。若梯度稳定，可提升至 0.002-0.005
-3. **dropout 正则化**（计划已制定）— 在 GAP 层添加，dropout_rate=0.3，防止过拟合
-4. **数据增强**（阶段 2）— 水平翻转、随机裁剪
-5. **更宽/更深的架构变体** — 若 v47 准确率 plateau，增加通道数或层数
+下一步:
+1. **运行完整训练** — 5 epochs × ~4000 train samples (80% of 5000)
+2. **lr tuning** — 当前 lr=0.001。Bug #5 修复后可尝试 0.002-0.005
+3. **dropout 正则化** — 在 GAP 层添加，dropout_rate=0.3
+4. **更宽/更深的架构变体** — 若准确率 plateau，增加通道数（64→128 或 128→256）
 
 ---
 ## 九、下一步行动
 
-**当前**: v47 训练进行中（background task b4daea2），log 在 `build\demo\edge_video_preprocess\train\v47_train_output.log`
+**当前**: v48b 代码就绪（Bug #1-#5 全部修复 + 数据增强 + train/val split + checkpoint resume + 自适应运动检测），待运行完整训练
 
-**立即执行（等 v47 epoch 1 完成后）**:
+**立即执行**:
+1. 运行 `edge_video_preprocess_train.exe` 开始 5 epoch 训练
+2. 监控 epoch 1 的 conv_w 梯度 L2 确认不再崩溃（应保持 >100 而非降至 0.37）
+3. 检查 epoch 1 验证准确率是否超过 v47 峰值 16.80%
 
-1. **[审核] 检查 v47 epoch 1 完整评估**:
-   - 准确率是否超过 v46 的 22.55%（预期大幅超越）
-   - conv_w RMS 是否首次出现 >5% 变化（确认权重真正在学习）
-   - 检查梯度是否在某些 mini-eval 后衰减（可能需要调整 lr）
-2. **如果 v47 epoch 1 > 25%**:
-   - 完成 5 epoch 训练
-   - 添加 dropout_rate=0.3（Task #47）
-   - 调高 lr 至 0.002
-3. **如果 v47 epoch 1 < 20%**:
-   - 检查 BN running stats 是否漂移过大
-   - 考虑增大 lr（当前 0.001 可能仍然偏保守）
-   - 检查 conv_w 梯度是否在后期衰减（lr decay 需要调整）
-4. **持续更新实验日志**
+**中期（epoch 1 通过后）**:
+1. 完成全部 5 epoch 训练
+2. 启用 dropout_rate=0.3
+3. 尝试 lr=0.002（Bug #5 修复后的安全范围应扩大）
+
+**长期（达到 50%+ 准确率后）**:
+1. 增加训练样本数（5K → 10K → 50K）
+2. 增加训练轮数（5 → 20 → 50）
+3. 增加训练轮数（5 → 20+）
+4. 尝试更宽架构（128 起始通道 vs 32）
+5. 尝试更深的卷积层次（5-6 层 CNN）

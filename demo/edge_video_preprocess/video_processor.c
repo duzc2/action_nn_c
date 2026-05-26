@@ -143,3 +143,91 @@ float video_frame_sad(const float* a, const float* b, size_t count) {
 
     return sum;
 }
+
+/* ========================================================================
+ *  Adaptive motion threshold (EMA-based)
+ * ======================================================================== */
+
+void motion_threshold_init(MotionAdaptiveThreshold* t,
+    float base, float factor, float alpha)
+{
+    if (t == NULL) return;
+    t->rolling_mean   = 0.0f;
+    t->rolling_std    = 0.0f;
+    t->base_threshold = base;
+    t->adapt_factor   = factor;
+    t->ema_alpha      = alpha;
+    t->initialized    = 0;
+}
+
+void motion_threshold_update(MotionAdaptiveThreshold* t, float sad) {
+    if (t == NULL) return;
+
+    if (!t->initialized) {
+        /* First sample: seed the mean, zero the variance. */
+        t->rolling_mean = sad;
+        t->rolling_std  = 0.0f;
+        t->initialized  = 1;
+    } else {
+        float delta = sad - t->rolling_mean;
+        /* EMA update for mean */
+        t->rolling_mean += t->ema_alpha * delta;
+        /* EMA update for variance (absolute delta as proxy for std) */
+        {
+            float abs_delta = (delta >= 0.0f) ? delta : -delta;
+            t->rolling_std += t->ema_alpha * (abs_delta - t->rolling_std);
+        }
+    }
+}
+
+float motion_threshold_get(const MotionAdaptiveThreshold* t) {
+    float adaptive;
+
+    if (t == NULL) return 0.0f;
+    if (!t->initialized) return t->base_threshold;
+
+    /* Threshold = base + factor * rolling_std.
+     * This creates a margin above the running mean that's proportional
+     * to the SAD variance, not the absolute SAD level. Sustained motion
+     * (high mean, low std) is detected; noisy static (low mean, high std)
+     * raises the bar. */
+    adaptive = t->base_threshold + t->adapt_factor * t->rolling_std;
+    return adaptive;
+}
+
+/* ========================================================================
+ *  Temporal smoother (debouncing)
+ * ======================================================================== */
+
+void motion_smoother_init(MotionTemporalSmoother* s,
+    int motion_frames, int static_frames)
+{
+    if (s == NULL) return;
+    s->consecutive_motion   = 0;
+    s->consecutive_static   = 0;
+    s->motion_confirm_frames = motion_frames;
+    s->static_confirm_frames = static_frames;
+    s->is_active            = 0;  /* start in static state */
+}
+
+int motion_smoother_update(MotionTemporalSmoother* s, int detected) {
+    if (s == NULL) return 0;
+
+    if (detected) {
+        s->consecutive_motion++;
+        s->consecutive_static = 0;
+
+        if (!s->is_active && s->consecutive_motion >= s->motion_confirm_frames) {
+            s->is_active = 1;
+        }
+    } else {
+        s->consecutive_static++;
+        s->consecutive_motion = 0;
+
+        if (s->is_active && s->consecutive_static >= s->static_confirm_frames) {
+            s->is_active = 0;
+        }
+    }
+
+    return s->is_active;
+}
