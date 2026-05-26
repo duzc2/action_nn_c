@@ -631,6 +631,25 @@ int nn_cnn_forward_pass(
                     float bn_var  = context->bn_running_var[filter_index];
                     float bn_eps  = config->bn_epsilon;
                     float pooled_linear_raw = pooled_sum;
+                    /* In training mode, update BN running statistics from per-sample pooled value.
+                     * Without this EMA update, running_mean/running_var stay at initialization
+                     * (0.0 and 1.0) forever because the BN post-processing pass is skipped
+                     * for sequence_length=1.  The update uses the pre-BN raw value so that
+                     * running stats track the actual activation distribution. */
+                    if (bn_pre_cache != NULL) {
+                        float mom = config->bn_momentum;
+                        float old_mean = context->bn_running_mean[filter_index];
+                        context->bn_running_mean[filter_index] =
+                            mom * old_mean + (1.0f - mom) * pooled_linear_raw;
+                        float delta = pooled_linear_raw - old_mean;
+                        context->bn_running_var[filter_index] =
+                            mom * context->bn_running_var[filter_index] +
+                            (1.0f - mom) * delta * delta;
+                        if (bn_spatial_var != NULL) {
+                            bn_spatial_var[step_index * config->filter_count + filter_index] =
+                                context->bn_running_var[filter_index];
+                        }
+                    }
                     float x_hat   = (pooled_sum - bn_mean) / sqrtf((bn_var + bn_eps) > 0.0f ? (bn_var + bn_eps) : bn_eps);
                     pooled_sum    = context->bn_gamma[filter_index] * x_hat +
                                     context->bn_beta[filter_index];
@@ -712,6 +731,21 @@ int nn_cnn_forward_pass(
                         float bn_var  = context->bn_running_var[filter_index];
                         float bn_eps  = config->bn_epsilon;
                         float pooled_max_raw = pooled_max;
+                        /* Update BN running statistics from per-sample max-pooled value. */
+                        if (bn_pre_cache != NULL) {
+                            float mom = config->bn_momentum;
+                            float old_mean = context->bn_running_mean[filter_index];
+                            context->bn_running_mean[filter_index] =
+                                mom * old_mean + (1.0f - mom) * pooled_max_raw;
+                            float delta = pooled_max_raw - old_mean;
+                            context->bn_running_var[filter_index] =
+                                mom * context->bn_running_var[filter_index] +
+                                (1.0f - mom) * delta * delta;
+                            if (bn_spatial_var != NULL) {
+                                bn_spatial_var[step_index * config->filter_count + filter_index] =
+                                    context->bn_running_var[filter_index];
+                            }
+                        }
                         float x_hat   = (pooled_max - bn_mean) / sqrtf((bn_var + bn_eps) > 0.0f ? (bn_var + bn_eps) : bn_eps);
                         pooled_max    = context->bn_gamma[filter_index] * x_hat +
                                         context->bn_beta[filter_index];
@@ -734,6 +768,23 @@ int nn_cnn_forward_pass(
                     float pooled_avg_linear = pooled_sum / (float)output_positions;
                     float pooled_avg_linear_raw = pooled_avg_linear;
                     float pooled_max_raw = pooled_max;
+                    /* In training mode, update BN running statistics from dual-pooled values.
+                     * Use average of avg and max as a representative sample. */
+                    if (bn_pre_cache != NULL && config->use_batch_norm && context->bn_gamma != NULL) {
+                        float mom = config->bn_momentum;
+                        float raw_avg = (pooled_avg_linear_raw + pooled_max_raw) * 0.5f;
+                        float old_mean = context->bn_running_mean[filter_index];
+                        context->bn_running_mean[filter_index] =
+                            mom * old_mean + (1.0f - mom) * raw_avg;
+                        float delta = raw_avg - old_mean;
+                        context->bn_running_var[filter_index] =
+                            mom * context->bn_running_var[filter_index] +
+                            (1.0f - mom) * delta * delta;
+                        if (bn_spatial_var != NULL) {
+                            bn_spatial_var[step_index * config->filter_count + filter_index] =
+                                context->bn_running_var[filter_index];
+                        }
+                    }
                     float bn_mean = 0.0f, bn_var = 1.0f, bn_eps = 0.0f;
                     float bn_gamma_val = 1.0f, bn_beta_val = 0.0f;
                     /* Apply BN to both avg and max pooled values before activation */

@@ -444,14 +444,18 @@ static int cnn_backpropagate(
                         cnn_activation_derivative_from_output(pooled_output, config->pooling_activation);
                     float dpool_linear;
 
-                    /* BN backward on pooled value */
+                    /* BN backward on pooled value.
+                     * pooled_linear_cache stores the pre-BN raw value during training,
+                     * so recover x_hat = (raw - running_mean) / sqrt(running_var + eps)
+                     * using the SAME running statistics the forward pass normalized with. */
                     if (has_bn_pool && dpool_act != 0.0f) {
                         float gamma = infer_ctx->bn_gamma[filter_index];
-                        float beta  = infer_ctx->bn_beta[filter_index];
-                        float bn_var = context->bn_spatial_var ? context->bn_spatial_var[filter_index] : infer_ctx->bn_running_var[filter_index];
+                        float bn_mean = infer_ctx->bn_running_mean[filter_index];
+                        float bn_var = infer_ctx->bn_running_var[filter_index];
                         float linear_val = context->pooled_linear_cache[pooled_index];
-                        float x_hat = (linear_val - beta) / gamma;
-                        float scale = gamma / sqrtf((bn_var + bn_eps) > 0.0f ? (bn_var + bn_eps) : (bn_eps > 0.0f ? bn_eps : 1e-8f));
+                        float inv_std = 1.0f / sqrtf((bn_var + bn_eps) > 0.0f ? (bn_var + bn_eps) : (bn_eps > 0.0f ? bn_eps : 1e-8f));
+                        float x_hat = (linear_val - bn_mean) * inv_std;
+                        float scale = gamma * inv_std;
                         context->bn_gamma_grad[filter_index] += dpool_act * x_hat;
                         context->bn_beta_grad[filter_index] += dpool_act;
                         dpool_linear = dpool_act * scale;
@@ -513,19 +517,21 @@ static int cnn_backpropagate(
                         argmax_pos = context->max_index_cache[(step_index * config->filter_count) + filter_index];
                     }
 
-                    /* BN backward on dual-pooled values (avg and max separately) */
+                    /* BN backward on dual-pooled values (avg and max separately).
+                     * pooled_linear_cache stores pre-BN raw values during training,
+                     * so recover x_hat using running statistics (matching forward pass). */
                     if (has_bn_pool) {
                         float gamma = infer_ctx->bn_gamma[filter_index];
-                        float beta  = infer_ctx->bn_beta[filter_index];
-                        float bn_var = context->bn_spatial_var ? context->bn_spatial_var[filter_index] : infer_ctx->bn_running_var[filter_index];
-                        float scale = gamma / sqrtf((bn_var + bn_eps) > 0.0f ? (bn_var + bn_eps) : (bn_eps > 0.0f ? bn_eps : 1e-8f));
-                        float x_hat_avg, x_hat_max;
+                        float bn_mean = infer_ctx->bn_running_mean[filter_index];
+                        float bn_var = infer_ctx->bn_running_var[filter_index];
+                        float inv_std = 1.0f / sqrtf((bn_var + bn_eps) > 0.0f ? (bn_var + bn_eps) : (bn_eps > 0.0f ? bn_eps : 1e-8f));
+                        float scale = gamma * inv_std;
                         float dbn_gamma = 0.0f;
                         float dbn_beta  = 0.0f;
 
                         if (davg_act != 0.0f) {
                             float linear_avg = context->pooled_linear_cache[avg_cache_index];
-                            x_hat_avg = (linear_avg - beta) / gamma;
+                            float x_hat_avg = (linear_avg - bn_mean) * inv_std;
                             dbn_gamma += davg_act * x_hat_avg;
                             dbn_beta  += davg_act;
                             davg_linear = davg_act * scale;
@@ -534,7 +540,7 @@ static int cnn_backpropagate(
                         }
                         if (dmax_act != 0.0f) {
                             float linear_max = context->pooled_linear_cache[max_cache_index];
-                            x_hat_max = (linear_max - beta) / gamma;
+                            float x_hat_max = (linear_max - bn_mean) * inv_std;
                             dbn_gamma += dmax_act * x_hat_max;
                             dbn_beta  += dmax_act;
                             dmax_linear = dmax_act * scale;
@@ -604,14 +610,17 @@ static int cnn_backpropagate(
                         argmax_pos = context->max_index_cache[(step_index * config->filter_count) + filter_index];
                     }
 
-                    /* BN backward */
+                    /* BN backward on max-pooled value.
+                     * pooled_linear_cache stores pre-BN raw value during training,
+                     * so recover x_hat using running statistics (matching forward pass). */
                     if (has_bn_pool && dpool_act != 0.0f) {
                         float gamma = infer_ctx->bn_gamma[filter_index];
-                        float beta  = infer_ctx->bn_beta[filter_index];
-                        float bn_var = context->bn_spatial_var ? context->bn_spatial_var[filter_index] : infer_ctx->bn_running_var[filter_index];
+                        float bn_mean = infer_ctx->bn_running_mean[filter_index];
+                        float bn_var = infer_ctx->bn_running_var[filter_index];
                         float linear_val = context->pooled_linear_cache[pooled_index];
-                        float x_hat = (linear_val - beta) / gamma;
-                        float scale = gamma / sqrtf((bn_var + bn_eps) > 0.0f ? (bn_var + bn_eps) : (bn_eps > 0.0f ? bn_eps : 1e-8f));
+                        float inv_std = 1.0f / sqrtf((bn_var + bn_eps) > 0.0f ? (bn_var + bn_eps) : (bn_eps > 0.0f ? bn_eps : 1e-8f));
+                        float x_hat = (linear_val - bn_mean) * inv_std;
+                        float scale = gamma * inv_std;
                         context->bn_gamma_grad[filter_index] += dpool_act * x_hat;
                         context->bn_beta_grad[filter_index] += dpool_act;
                         dmax_linear = dpool_act * scale;
@@ -1040,6 +1049,69 @@ int nn_cnn_train_step_with_data(CnnTrainContext* context, const float* input, co
                 100.0*(double)diag_saturated/(double)output_size,
                 100.0*(double)diag_active/(double)output_size);
         diag_forward_count += 1;
+    }
+
+    /* ── NaN detection: scan output buffer for NaN/inf ── */
+    {
+        int nan_count = 0;
+        size_t nan_i;
+        for (nan_i = 0U; nan_i < output_size; ++nan_i) {
+            float v = infer_ctx->output_buffer[nan_i];
+            if (!(v == v) || v > 1e30f || v < -1e30f) {
+                nan_count++;
+            }
+        }
+        if (nan_count > 0) {
+            fprintf(stderr, "[NAN ] step=%zu  %d NaN/inf values in output of size %zu\n",
+                    diag_step_counter, nan_count, output_size);
+
+            /* Scan weights too */
+            {
+                size_t diag_i;
+                int w_nan = 0;
+                size_t diag_conv_wc = cnn_conv_weight_count(config);
+                for (diag_i = 0U; diag_i < diag_conv_wc; ++diag_i) {
+                    float w = infer_ctx->conv_weights[diag_i];
+                    if (!(w == w) || w > 1e30f || w < -1e30f) w_nan++;
+                }
+                fprintf(stderr, "[NAN ] conv_weights: %d NaN/inf out of %zu\n", w_nan, diag_conv_wc);
+                {
+                    int b_nan = 0;
+                    for (diag_i = 0U; diag_i < config->filter_count; ++diag_i) {
+                        float b = infer_ctx->conv_bias[diag_i];
+                        if (!(b == b) || b > 1e30f || b < -1e30f) b_nan++;
+                    }
+                    fprintf(stderr, "[NAN ] conv_bias:    %d NaN/inf out of %zu\n", b_nan, (size_t)config->filter_count);
+                }
+                {
+                    int bn_nan = 0;
+                    if (infer_ctx->bn_gamma != NULL) {
+                        for (diag_i = 0U; diag_i < config->filter_count; ++diag_i) {
+                            if (!(infer_ctx->bn_gamma[diag_i] == infer_ctx->bn_gamma[diag_i])) bn_nan++;
+                        }
+                        fprintf(stderr, "[NAN ] bn_gamma:     %d NaN\n", bn_nan);
+                        bn_nan = 0;
+                        for (diag_i = 0U; diag_i < config->filter_count; ++diag_i) {
+                            if (!(infer_ctx->bn_beta[diag_i] == infer_ctx->bn_beta[diag_i])) bn_nan++;
+                        }
+                        fprintf(stderr, "[NAN ] bn_beta:      %d NaN\n", bn_nan);
+                        bn_nan = 0;
+                        for (diag_i = 0U; diag_i < config->filter_count; ++diag_i) {
+                            if (!(infer_ctx->bn_running_mean[diag_i] == infer_ctx->bn_running_mean[diag_i])) bn_nan++;
+                        }
+                        fprintf(stderr, "[NAN ] bn_running_mean: %d NaN\n", bn_nan);
+                        bn_nan = 0;
+                        for (diag_i = 0U; diag_i < config->filter_count; ++diag_i) {
+                            if (!(infer_ctx->bn_running_var[diag_i] == infer_ctx->bn_running_var[diag_i])) bn_nan++;
+                        }
+                        fprintf(stderr, "[NAN ] bn_running_var: %d NaN\n", bn_nan);
+                    }
+                }
+            }
+            /* Crash early: return error so caller knows */
+            (void)fflush(stderr);
+            return ACTION_C_ERR_INTERNAL;
+        }
     }
 
     output_gradient = (float*)calloc(output_size, sizeof(float));

@@ -58,6 +58,7 @@ typedef struct {
     float last_loss;
     size_t total_epochs;
     size_t total_steps;
+    size_t batch_step_count;  /**< Samples accumulated since last batch update. */
     uint64_t checkpoint_network_hash;
     uint64_t checkpoint_layout_hash;
     Arena* arena;

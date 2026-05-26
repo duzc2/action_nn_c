@@ -373,11 +373,44 @@ static int train_forward_pass(MlpTrainContext* ctx,
 }
 
 /**
+ * @brief Zero all accumulated parameter gradients at the start of a new batch.
+ *
+ * Only called when batch_step_count == 0 (or batch_size <= 1 for compatibility).
+ * Clears weight_grad and bias_grad for every layer so the subsequent backward
+ * passes can safely use += to accumulate.
+ */
+static void mlp_zero_gradients(MlpTrainContext* ctx) {
+    size_t i;
+    MlpInferContext* infer_ctx;
+
+    if (ctx == NULL || ctx->infer_ctx == NULL) {
+        return;
+    }
+    infer_ctx = (MlpInferContext*)ctx->infer_ctx;
+
+    for (i = 0U; i < infer_ctx->layer_count; ++i) {
+        size_t input_size  = (i == 0U) ? infer_ctx->config->input_size  : infer_ctx->layers[i - 1U]->output_size;
+        size_t output_size = infer_ctx->layers[i]->output_size;
+
+        if (ctx->grads[i].weight_grad != NULL) {
+            (void)memset(ctx->grads[i].weight_grad, 0, input_size * output_size * sizeof(float));
+        }
+        if (ctx->grads[i].bias_grad != NULL) {
+            (void)memset(ctx->grads[i].bias_grad, 0, output_size * sizeof(float));
+        }
+    }
+}
+
+/**
  * @brief Backward stage: propagate gradients through every dense layer.
  *
  * The reverse sweep computes three things in lockstep: activation derivatives,
  * parameter gradients for the current layer, and the input gradient that becomes
  * the next layer's output gradient when moving backward.
+ *
+ * Gradients are accumulated with += to support mini-batch training
+ * (batch_size > 1).  The caller is responsible for zeroing gradients
+ * at batch start and applying updates at batch end.
  */
 static int train_backward_pass(
     MlpTrainContext* ctx,
@@ -428,11 +461,12 @@ static int train_backward_pass(
 
         prev_activation = (layer_index == 0U) ? ctx->input_buffer : ctx->activations[layer_index - 1U];
 
-        /* Compute both parameter gradients and dL/dX for the previous layer. */
+        /* Compute both parameter gradients and dL/dX for the previous layer.
+         * Use += so gradients accumulate across samples in a mini-batch. */
         for (output_index = 0U; output_index < output_size; ++output_index) {
-            grad->bias_grad[output_index] = current_delta[output_index];
+            grad->bias_grad[output_index] += current_delta[output_index];
             for (input_index = 0U; input_index < input_size; ++input_index) {
-                grad->weight_grad[output_index * input_size + input_index] =
+                grad->weight_grad[output_index * input_size + input_index] +=
                     current_delta[output_index] * prev_activation[input_index];
                 next_delta[input_index] +=
                     layer->weights[output_index * input_size + input_index] * current_delta[output_index];
@@ -688,12 +722,18 @@ int nn_mlp_train_step_with_data(MlpTrainContext* ctx, const float* input, const 
     int rc;
     MlpInferContext* infer_ctx;
     size_t i;
+    const size_t batch_sz = ctx->config.batch_size;
 
     if (ctx == NULL || input == NULL || target == NULL) {
         return ACTION_C_ERR_NULL_POINTER;
     }
 
     infer_ctx = (MlpInferContext*)ctx->infer_ctx;
+
+    /* ── Mini-batch gradient accumulation ── */
+    if (batch_sz <= 1U || ctx->batch_step_count == 0U) {
+        mlp_zero_gradients(ctx);
+    }
 
     /* Stage 1: refresh activations and mirrored inference outputs. */
     rc = train_forward_pass(ctx, input);
@@ -717,9 +757,14 @@ int nn_mlp_train_step_with_data(MlpTrainContext* ctx, const float* input, const 
         return rc;
     }
 
-    /* Stage 4: update parameters and training statistics. */
+    /* Stage 4: update parameters and training statistics (conditional on batch). */
     ctx->total_steps++;
-    train_update(ctx, ctx->total_steps);
+    ctx->batch_step_count++;
+    if (ctx->batch_step_count >= batch_sz) {
+        ctx->batch_step_count = 0U;
+        train_update(ctx, ctx->total_steps);
+    }
+
     ctx->last_loss = loss;
     ctx->cumulative_loss += loss;
     ctx->average_loss = ctx->cumulative_loss / (float)ctx->total_steps;
@@ -809,9 +854,17 @@ int nn_mlp_train_step_with_output_gradient(
     float* input_gradient
 ) {
     int rc;
+    const size_t batch_sz = ctx->config.batch_size;
 
     if (ctx == NULL || input == NULL || output_gradient == NULL) {
         return ACTION_C_ERR_NULL_POINTER;
+    }
+
+    /* ── Mini-batch gradient accumulation ──
+     * When batch_size > 1: zero gradients at batch start, accumulate over
+     * multiple samples, apply update only at batch end. */
+    if (batch_sz <= 1U || ctx->batch_step_count == 0U) {
+        mlp_zero_gradients(ctx);
     }
 
     /* Graph mode still needs a fresh forward pass to populate activations. */
@@ -827,7 +880,14 @@ int nn_mlp_train_step_with_output_gradient(
     }
 
     ctx->total_steps++;
-    train_update(ctx, ctx->total_steps);
+    ctx->batch_step_count++;
+
+    /* Apply update when the mini-batch is complete. */
+    if (ctx->batch_step_count >= batch_sz) {
+        ctx->batch_step_count = 0U;
+        train_update(ctx, ctx->total_steps);
+    }
+
     return 0;
 }
 
