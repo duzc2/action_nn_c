@@ -40,7 +40,7 @@ MLP Head: 256 → [256(LeakyReLU)] → 10, ADAM + Cross-Entropy
 | 网络架构 | BnConvNet v48b: 4CNN + GAP + 1MLP, 通道扩展 3→32→64→128→256 |
 | 数据格式 | CIFAR-10平面RGB → 交错RGB, uint8 → float32 [0,1] |
 | 训练参数 | batch_size=4, lr=0.001, momentum=0.0, step decay (every 3 epochs) |
-| 运行环境 | 纯C11实现, 无外部依赖, CPU运行 |
+| 运行环境 | 纯C11实现, 无外部依赖, 推理可部署到桌面/边缘/MCU/Wasm；训练在桌面 CPU 进行 |
 | 代码生成 | profiler范围合并连接优化 |
 | 输出 | 实时分类日志 + 最终统计报告 (带宽节省/分类分布/延迟) |
 
