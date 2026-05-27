@@ -84,6 +84,17 @@ target_include_directories(test_motion_detect PRIVATE
 )
 target_link_libraries(test_motion_detect PRIVATE nn_train_core)
 
+# ── test_motion_trace: frame-by-frame visual trace of motion pipeline ──
+add_executable(test_motion_trace
+    test_motion_trace.c
+    ../demo/edge_video_preprocess/video_processor.c
+)
+target_include_directories(test_motion_trace PRIVATE
+    "${ACTION_C_ROOT}/src"
+    "${ACTION_C_ROOT}/demo/edge_video_preprocess"
+)
+target_link_libraries(test_motion_trace PRIVATE nn_train_core)
+
 # ── test_motion_accuracy: precision/recall/F1 benchmark on synthetic frames ──
 add_executable(test_motion_accuracy
     test_motion_accuracy.c

@@ -10,6 +10,7 @@
 #include "nn/types/cnn/cnn_infer_ops.h"
 #include "nn/types/cnn/cnn_train_ops.h"
 #include <stdio.h>
+#include <string.h>
 #include <stdint.h>
 
 static int test_forward_stride1(void) {

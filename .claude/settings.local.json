@@ -111,7 +111,8 @@
       "Bash(build/verify/test_cnn_backend.exe:*)",
       "Bash(build/verify/test_bn_consistency.exe:*)",
       "Bash(build/verify/test_motion_accuracy.exe:*)",
-      "Bash(build/verify/test_cnn_full.exe:*)"
+      "Bash(build/verify/test_cnn_full.exe:*)",
+      "Bash(\"/build/verify/test_stride.exe\":*)"
     ]
   }
 }
