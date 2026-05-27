@@ -27,6 +27,24 @@ action_c_add_test(test_arena utils/test_arena.c)
 target_link_libraries(test_arena utils_core)
 
 # nn tests
+action_c_add_test(test_rms_norm nn/test_rms_norm.c)
+target_link_libraries(test_rms_norm nn_infer_core utils_core)
+
+action_c_add_test(test_rms_norm_numerical nn/test_rms_norm_numerical.c)
+target_link_libraries(test_rms_norm_numerical nn_infer_core utils_core)
+
+action_c_add_test(test_skip_connection nn/test_skip_connection.c)
+target_link_libraries(test_skip_connection nn_infer_core utils_core)
+
+action_c_add_test(test_skip_connection_numerical nn/test_skip_connection_numerical.c)
+target_link_libraries(test_skip_connection_numerical nn_infer_core utils_core)
+
+action_c_add_test(test_dropout nn/test_dropout.c)
+target_link_libraries(test_dropout nn_infer_core utils_core)
+
+action_c_add_test(test_dropout_numerical nn/test_dropout_numerical.c)
+target_link_libraries(test_dropout_numerical nn_infer_core utils_core)
+
 action_c_add_test(test_mlp_arena_integration nn/test_mlp_arena_integration.c)
 target_link_libraries(test_mlp_arena_integration utils_core)
 

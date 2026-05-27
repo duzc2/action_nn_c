@@ -59,6 +59,15 @@ if(ACTION_C_ENABLE_NN_GNN)
     action_c_append_type_sources(gnn)
 endif()
 
+# Shared normalization module (RMSNorm – available to all network types)
+list(APPEND NN_LAYER_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/norm/rms_norm.c")
+
+# Shared residual connection module (skip connections – available to all network types)
+list(APPEND NN_LAYER_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/residual/skip_connection.c")
+
+# Shared dropout module (Dropout + DropPath – available to all network types)
+list(APPEND NN_LAYER_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/dropout/dropout.c")
+
 if(NOT NN_ENABLED_TYPES)
     message(FATAL_ERROR "No network types are enabled for nn core")
 endif()
