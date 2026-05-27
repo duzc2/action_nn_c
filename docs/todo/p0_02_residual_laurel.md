@@ -26,7 +26,7 @@ LAuReL-RW:    y = α · F(x) + β · x    (α, β 通过 sigmoid/softmax 归一�
 
 ### 3.1 通用 skip 接口设计
 
-- [ ] **定义 skip_mode 枚举** (新增 `src/nn/skip_connection.h`)
+- [x] **定义 skip_mode 枚举** (已创建 `src/nn/residual/skip_connection.h`)
   ```c
   typedef enum {
       SKIP_NONE     = 0,  // y = F(x)
@@ -34,14 +34,23 @@ LAuReL-RW:    y = α · F(x) + β · x    (α, β 通过 sigmoid/softmax 归一�
       SKIP_LAUREL_RW = 2, // y = α·F(x) + β·x, α=sigmoid(α_raw), β=1-α
   } SkipMode;
   ```
-- [ ] **定义 skip 参数结构体**
+- [x] **定义 skip 参数结构体 + 前向/反向 API**
   ```c
   typedef struct {
       SkipMode mode;
-      float alpha_raw;   // 可学习参数，初始化为 0 → α≈0.5, β≈0.5
-      float alpha_cache;  // sigmoid(alpha_raw) 缓存，forward 时更新
+      float alpha_raw;      // 可学习参数，初始化为 0 → α≈0.5, β≈0.5
+      float alpha_cache;    // sigmoid(alpha_raw) 缓存，forward 时更新
+      float beta_cache;     // 1 - alpha_cache
+      float grad_alpha_raw; // backward 累积
   } SkipConnection;
+  void skip_init(SkipConnection *skip, SkipMode mode);
+  void skip_forward(float *restrict out, const float *restrict module_out,
+                     const float *restrict input, size_t n, SkipConnection *skip);
+  void skip_backward(float *restrict d_module_out, float *restrict d_input,
+                      const float *restrict module_out, const float *restrict input,
+                      const float *restrict dout, size_t n, SkipConnection *skip);
   ```
+- [x] **已实现 `src/nn/residual/skip_connection.c`**，集成到 `src/nn/CMakeLists.txt`
 
 ### 3.2 MLP 接入
 
@@ -82,8 +91,27 @@ LAuReL-RW:    y = α · F(x) + β · x    (α, β 通过 sigmoid/softmax 归一�
 
 ### 3.7 测试
 
-- [ ] **单元测试** — `y = LAuReL-RW(F(x), x)` 对已知输入验证输出
-- [ ] **梯度测试** — alpha_raw 的梯度正确
+- [x] **基本单元测试** (`tests/nn/test_skip_connection.c`) — 15 tests, 51 assertions
+  - 三种模式 (NONE/IDENTITY/LAUREL_RW) 前向输出验证
+  - LAuReL-RW sigmoid 缓存及 α+β=1 验证
+  - backward d_fx/dx/grad_alpha_raw 正确性
+  - FD 梯度验证
+  - grad_alpha_raw 累积正确
+
+- [x] **数值验证测试** (`tests/nn/test_skip_connection_numerical.c`) — 16 tests, 1,362 assertions
+  - **前向精确性**: n∈{1,2,4,8,16,32,64,128} 跨维度、跨模式逐元素验证
+  - **alpha_raw 扫查**: 11 个值 (-10 ~ +10)，验证 sigmoid 缓存和输出
+  - **α+β=1**: 21 个 alpha_raw 值验证数学恒等式
+  - **F(x)=x → y=x**: 对任意 α，验证 y ≡ x（5 个 α 值 × 128 维）
+  - **渐近行为**: α→1→y≈F(x), α→0→y≈x, α=0.5 等权重
+  - **FD d_fx/dx**: 16 维分解，每个元素逐一 FD 验证
+  - **FD alpha_raw 蒙特卡洛**: 15 组随机配置，随机 alpha_raw∈[-3,3]
+  - **梯度符号一致性**: F>>x→grad>0, F<<x→grad<0
+  - **复合梯度流**: forward→loss→backward→GD on alpha_raw，loss 下降
+  - **大维度**: n=1024 前向反向 spot-check 验证
+  - **数值稳定性**: ±1e8 量级前向反向无 NaN/Inf
+  - **模式一致性**: SKIP_NONE ≈ LAuReL(α≈1)
+
 - [ ] **MLP mnist** — 同深度，有 skip vs 无 skip，验证 loss 更低/收敛更快
 - [ ] **CNN edge_video_preprocess** — 加深网络 (加入 skip) 后精度提升
 - [ ] **Transformer** — 加入 Peri-LN (Pre-Norm + skip) 后训练更稳定

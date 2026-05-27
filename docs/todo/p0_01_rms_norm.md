@@ -26,21 +26,19 @@ RMSNorm(x) = x / sqrt(mean(x²) + ε) · γ
 
 ### 3.1 新增共享模块
 
-- [ ] **创建 `src/nn/norm/rms_norm.h`**
+- [x] **创建 `src/nn/norm/rms_norm.h`**
   ```c
-  // 前向传播
-  void rms_norm_forward(float *y, const float *x, const float *gamma,
-                         int n, float epsilon);
-  // 反向传播
-  void rms_norm_backward(float *dx, float *dgamma, const float *dy,
-                          const float *x, const float *gamma,
-                          int n, float epsilon);
+  int rms_norm_forward(float *restrict output, const float *restrict input,
+                       const float *restrict gamma, size_t n, float epsilon);
+  int rms_norm_backward(float *restrict d_input, float *restrict d_gamma,
+                        const float *restrict d_output, const float *restrict input,
+                        const float *restrict gamma, size_t n, float epsilon);
   ```
-- [ ] **创建 `src/nn/norm/rms_norm.c`** — 实现上述函数
-  - forward: `rms = sqrt(mean(x²)+ε)` → `y[i] = x[i] / rms * gamma[i % g]`
-  - backward: 对 x 和 gamma 分别求导
-- [ ] **创建 `src/nn/norm/CMakeLists.txt`** — `ACTION_C_ENABLE_NN_NORM` 开关
-- [ ] **更新 `src/nn/CMakeLists.txt`** — 添加 `add_subdirectory(norm)`
+- [x] **创建 `src/nn/norm/rms_norm.c`** — 实现上述函数
+  - forward: `r = 1/sqrt(mean(x²)+eps)` → `y[i] = x[i] * r * gamma[i]`
+  - backward: 对 x 和 gamma 分别求导，正确处理 gamma=NULL/d_gamma=NULL 情况
+- [x] **已集成到 `src/nn/CMakeLists.txt`**（未创建独立 CMakeLists.txt，直接作为 NN_LAYER_SOURCES 的一部分）
+  - 文件列表位于 `src/nn/CMakeLists.txt`，通过 `nn_infer_core` 库导出给各网络类型
 
 ### 3.2 各网络类型接入
 
@@ -70,10 +68,25 @@ RMSNorm(x) = x / sqrt(mean(x²) + ε) · γ
 
 ### 3.3 测试
 
-- [ ] **单元测试** — 验证 RMSNorm forward/backward
-  - 对已知输入验证输出（与 PyTorch/FLAX 参考实现对比）
-  - 验证 gamma 梯度正确性
-  - 验证数值稳定性（极值输入不产生 NaN）
+- [x] **基本单元测试** (`tests/nn/test_rms_norm.c`) — 16 tests, 43 assertions
+  - 对各维度 (n=1~16) 验证 forward 输出正确
+  - 验证 backward d_gamma 累积正确
+  - 验证 gamma=NULL 和 d_gamma=NULL 处理
+  - 验证输入/输出 aliasing 安全
+  - FD 梯度验证（与解析梯度对比）
+  - 前向-反向 roundtrip 验证
+
+- [x] **数值验证测试** (`tests/nn/test_rms_norm_numerical.c`) — 28 tests, 2,814 assertions
+  - **前向跨维度**: n∈{1,2,4,8,16,32,64,128,256}，逐元素与手算对比
+  - **epsilon 扫查**: 6 种 eps (1e-8 ~ 1e10)，验证范数单调性和趋零行为
+  - **尺度不变性**: 验证 RMSNorm(αx, γ, eps=0) == RMSNorm(x, γ, eps=0) 精确成立
+  - **符号保持**: positive→positive, negative→negative, zero→zero
+  - **蒙特卡洛 FD 梯度**: 6 维度 × (5~20) 随机配置，每一组每个元素逐一 FD 验证
+  - **d_gamma FD**: 逐一元素 FD 验证
+  - **数值稳定性**: ±1e10、±1e-30、混合量级、eps=1e-15、eps=0、全相同值
+  - **复合梯度流**: forward→loss→backward→GD，验证 loss 严格下降
+  - **输出 RMS≈1**: n∈{1,4,8,16,32,64} 验证
+  - **确定性**: 同输入 → 同输出
 
 - [ ] **集成测试** — 在现有 demo 上验证
   - 选择 transformer demo：加 RMSNorm 后训练 loss 曲线应更稳定

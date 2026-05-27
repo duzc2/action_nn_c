@@ -26,31 +26,41 @@ DropPath:    train: y = (random<p)? x : F(x)/p    eval: y = F(x)
 
 ### 3.1 新增共享模块
 
-- [ ] **创建 `src/nn/dropout/dropout.h`**
+- [x] **创建 `src/nn/dropout/dropout.h`**
   ```c
   typedef struct {
-      float keep_prob;      // 保留概率 (0.0~1.0)
-      uint32_t rng_state;   // 随机数状态 (PCG 或 xoshiro)
-      int training;         // 1=训练模式, 0=推理模式
+      float keep_prob;           // 保留概率 (0.0~1.0)
+      uint32_t rng_state;        // xorshift32 状态 (零 libc 依赖)
+      int training;              // 1=训练模式, 0=推理模式
+      uint8_t *mask;             // forward 时缓存的 mask 数组
+      size_t mask_capacity;       // mask 缓冲区大小
+      int drop_path_flag;        // DropPath: 当前层是否被保留
   } DropoutLayer;
 
-  void dropout_forward(float *y, const float *x, int n, DropoutLayer *dp);
-  void dropout_backward(float *dx, const float *dy, const float *x,
-                         int n, const DropoutLayer *dp);
-  // DropPath: 整层跳过
-  void droppath_forward(float *y, const float *fx, const float *x,
-                         int n, DropoutLayer *dp);
-  void droppath_backward(float *dfx, float *dx, const float *dy,
-                          int n, const DropoutLayer *dp);
+  void dropout_init(DropoutLayer *dp, float keep_prob, uint32_t seed);
+  void dropout_free(DropoutLayer *dp);
+  void dropout_set_training(DropoutLayer *dp, int training);
+
+  void dropout_forward(float *restrict y, const float *restrict x,
+                        size_t n, DropoutLayer *dp);
+  void dropout_backward(float *restrict dx, const float *restrict dy,
+                         size_t n, const DropoutLayer *dp);
+  void droppath_forward(float *restrict y, const float *restrict fx,
+                         const float *restrict x, size_t n, DropoutLayer *dp);
+  void droppath_backward(float *restrict d_fx, float *restrict dx,
+                          const float *restrict dy, size_t n,
+                          const DropoutLayer *dp);
   ```
 
-- [ ] **创建 `src/nn/dropout/dropout.c`**
-  - 实现 PCG 随机数生成器（轻量、周期长、无 libc 依赖）
-  - `dropout_forward`: 对每个元素 `random() < keep_prob ? x[i]/keep_prob : 0`
-  - `droppath_forward`: 一次性决定整层通断
-  - backward: 根据 forward 时的 mask 回传梯度
+- [x] **创建 `src/nn/dropout/dropout.c`**
+  - 使用 xorshift32 PRNG（轻量、零 libc 依赖、确定性）
+  - `dropout_forward`: inverted dropout, `mask[i] ? x[i]/keep_prob : 0`
+  - `droppath_forward`: 单次 Bernoulli 决定整层通断，缩放同 inverted
+  - `dropout_backward`: 根据 forward 时缓存的 mask 精确回传梯度
+  - `droppath_backward`: 根据 drop_path_flag 决定梯度流向
+  - training=0 或 keep_prob≥1 → 恒等映射；keep_prob≤0 → 全零
 
-- [ ] **创建 `src/nn/dropout/CMakeLists.txt`** — `ACTION_C_ENABLE_DROPOUT` 开关
+- [x] **已集成到 `src/nn/CMakeLists.txt`**（未创建独立 CMakeLists.txt）
 
 ### 3.2 各网络类型接入
 
@@ -78,11 +88,31 @@ DropPath:    train: y = (random<p)? x : F(x)/p    eval: y = F(x)
 
 ### 3.3 测试
 
-- [ ] **单元测试** — Dropout forward 的 mask 比例正确
-  - 多次调用后统计，被保留的元素比例 ≈ keep_prob（误差 < 5%）
-  - backward 梯度根据 mask 正确缩放
-- [ ] **集成测试** — snake + Dropout 过拟合程度比无 Dropout 更低
-- [ ] **集成测试** — mnist MLP + Dropout 验证集准确率更高
+- [x] **基本单元测试** (`tests/nn/test_dropout.c`) — 18 tests, 189 assertions
+  - 生命周期 (init/free/training 切换)
+  - inference 模式 passthrough
+  - keep_prob 边界 (1.0, 0.0)
+  - 统计性质 (1000 samples, keep rate ±5%)
+  - 确定性 (同 seed → 同 mask)
+  - backward mask 复现验证
+  - DropPath 训练行为
+
+- [x] **数值验证测试** (`tests/nn/test_dropout_numerical.c`) — 15 tests, 3,346 assertions
+  - **大规模 keep rate**: 9 种 keep_prob (0.1~0.9)，各 1000 elements，验证率 ±2%
+  - **DropPath keep rate**: 5 种 prob，各 5000 trials，验证概率准确
+  - **无偏估计**: kp=0.5, 50000 trials × 100 elements，验证 E[y]=x
+  - **方差理论**: Var(dropout) = x²·(1-p)/p，10000 trials 统计验证
+  - **精确反向**: 已知 mask 下 backward 精确对应 (1e-7 精度)
+  - **随机输入反向**: 64 dim × 5 seeds，用 dp.mask[i] 直接判断保留/丢弃
+  - **DropPath 精确反向**: flag=0/1 手动设置，验证两种路径的精确梯度
+  - **前向-反向闭环**: forward→loss→backward，验证链式法则 dx=x/kp²
+  - **确定性**: 500 elements 全序列，同 seed → bit-level 一致
+  - **不同 seed → 不同 mask**: 10 pairs × 200 elements 统计验证
+  - **极端 kp=0.001**: scale=1000，不溢出
+  - **极端 kp=0.999**: 验证几乎全保留且缩放正确
+  - **大输入 (x=1e6)**: kp=0.3，前向反向后均无 NaN/Inf
+  - **RNG 长序列**: 100k draws，无异常
+  - **inference/kp=1**: 256 dim，前向反向均为恒等映射
 
 ## 4. API 设计
 

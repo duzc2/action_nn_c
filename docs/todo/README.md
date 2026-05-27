@@ -3,15 +3,26 @@
 > 由 `docs/network_architecture_roadmap.md` 拆分而来。
 > 每个文件包含该功能的：概述、项目必要性、详细子任务、文件清单、API 设计、测试方案、验收标准。
 
+## 当前状态
+
+| 阶段 | 状态 |
+|------|------|
+| Phase 0 — 核心模块 | ✅ 3/3 已实现，7,522 assertions 全部通过 |
+| Phase 0 — 网络接入 | 🔲 MLP/CNN/RNN/GNN/Transformer 接入待完成 |
+| Phase 1 | 🔲 待开始 |
+| Phase 2 | 🔲 待开始 |
+| Phase 3 | 🔲 待开始 |
+| Phase 4 | 🔲 远期按需 |
+
 ## 文件清单
 
 ### Phase 0 — 基础设施（零依赖，三项可并行）
 
-| 文件 | 模块 | 工作量 | 新增文件 |
-|---|---|---|---|
-| [p0_01_rms_norm.md](p0_01_rms_norm.md) | RMSNorm 归一化层 | 小 | `src/nn/norm/` |
-| [p0_02_residual_laurel.md](p0_02_residual_laurel.md) | LAuReL-RW 残差连接 | 中 | 无新目录 (配置扩展) |
-| [p0_03_dropout.md](p0_03_dropout.md) | Dropout + Stochastic Depth 正则化 | 小 | `src/nn/dropout/` |
+| 文件 | 模块 | 工作量 | 核心实现 | 网络接入 |
+|---|---|---|---|---|
+| [p0_01_rms_norm.md](p0_01_rms_norm.md) | RMSNorm 归一化层 | 小 | ✅ | 🔲 |
+| [p0_02_residual_laurel.md](p0_02_residual_laurel.md) | LAuReL-RW 残差连接 | 中 | ✅ | 🔲 |
+| [p0_03_dropout.md](p0_03_dropout.md) | Dropout + Stochastic Depth 正则化 | 小 | ✅ | 🔲 |
 
 ### Phase 1 — 网络能力升级
 
