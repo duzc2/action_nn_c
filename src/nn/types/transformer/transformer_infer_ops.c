@@ -79,6 +79,9 @@ static void transformer_release_parameters(TransformerInferContext* context) {
     context->arena = NULL;
     context->forward_cache = NULL;
 
+    dropout_free(&context->dropout_attn);
+    free(context->norm_gamma_attn);
+
     free(context->token_embedding);
     free(context->position_embedding);
     free(context->query_weight);
@@ -104,6 +107,10 @@ static void transformer_release_parameters(TransformerInferContext* context) {
     context->fallback_answer = 0;
     context->graph_projection_weight = 0;
     context->graph_projection_bias = 0;
+    context->norm_gamma_attn = 0;
+    context->p0_attn_pre_norm = 0;
+    context->p0_skip_x_cache  = 0;
+    context->p0_skip_fx_cache = 0;
 }
 
 void nn_transformer_infer_destroy(void* ctx) {
@@ -139,6 +146,7 @@ static int transformer_forward_cache_init(
     cache->value = ARENA_CALLOC(arena, float, state_count);
     cache->attention = ARENA_CALLOC(arena, float, attention_count);
     cache->attended = ARENA_CALLOC(arena, float, state_count);
+    cache->attn_out = ARENA_CALLOC(arena, float, state_count);
     cache->projected = ARENA_CALLOC(arena, float, state_count);
     cache->hidden = ARENA_CALLOC(arena, float, state_count);
     cache->pooled = ARENA_CALLOC(arena, float, context->model_dim);
@@ -147,8 +155,9 @@ static int transformer_forward_cache_init(
 
     if (cache->tokens == 0 || cache->input_states == 0 || cache->query == 0 ||
         cache->key == 0 || cache->value == 0 || cache->attention == 0 ||
-        cache->attended == 0 || cache->projected == 0 || cache->hidden == 0 ||
-        cache->pooled == 0 || cache->logits == 0 || cache->probabilities == 0) {
+        cache->attended == 0 || cache->attn_out == 0 || cache->projected == 0 ||
+        cache->hidden == 0 || cache->pooled == 0 || cache->logits == 0 ||
+        cache->probabilities == 0) {
         (void)memset(cache, 0, sizeof(*cache));
         return ACTION_C_ERR_INTERNAL;
     }
@@ -342,13 +351,48 @@ int nn_transformer_init_parameters(
         }
     }
 
+    /* ── P0 shared-module initialisation ── */
+    context->use_rms_norm = config->use_rms_norm;
+    context->norm_epsilon  = (config->norm_epsilon > 0.0f) ? config->norm_epsilon : 1e-5f;
+    context->use_dropout   = config->use_dropout;
+    context->use_skip      = config->use_skip;
+
+    /* Allocate and initialise RMSNorm gamma (always allocated for save/load consistency,
+     * but only used in forward when use_rms_norm != 0). */
+    context->norm_gamma_attn = (float*)calloc(context->model_dim, sizeof(float));
+    if (context->norm_gamma_attn == NULL) {
+        transformer_release_parameters(context);
+        return ACTION_C_ERR_NULL_POINTER;
+    }
+    {
+        size_t gamma_i;
+        for (gamma_i = 0U; gamma_i < context->model_dim; ++gamma_i) {
+            context->norm_gamma_attn[gamma_i] = 1.0f;
+        }
+    }
+
+    /* Initialise dropout layer (inference mode by default; training
+     * callers set dropout_attn.training = 1 before the forward pass). */
+    {
+        float kp = config->use_dropout ? config->dropout_rate : 1.0f;
+        (void)memset(&context->dropout_attn, 0, sizeof(context->dropout_attn));
+        dropout_init(&context->dropout_attn, kp, context->rng_state + 7U);
+        context->dropout_attn.training = 0;
+    }
+
+    /* Initialise skip connection (identity default, LAuReL-RW when requested). */
+    {
+        SkipMode sm = config->use_skip ? config->skip_mode : SKIP_NONE;
+        (void)skip_init(&context->skip_attn, sm);
+    }
+
     /* Allocate forward cache from arena once so per-predict calls skip heap allocation. */
     {
         size_t state_count = context->max_seq_length * context->model_dim;
         size_t attention_count = context->max_seq_length * context->max_seq_length;
         size_t total_bytes =
             context->max_seq_length * sizeof(size_t)
-            + (state_count * 5 + attention_count + state_count * 2
+            + (state_count * 6 + attention_count + state_count * 2
                + context->model_dim
                + context->max_response_classes * 2) * sizeof(float)
             + sizeof(TransformerForwardCache);
@@ -369,7 +413,7 @@ int nn_transformer_init_parameters(
 }
 
 int nn_transformer_predict_class(
-    const TransformerInferContext* context,
+    TransformerInferContext* context,
     const char* question,
     float* out_probabilities,
     size_t probability_capacity,
@@ -584,6 +628,12 @@ int nn_transformer_load_weights(void* context, FILE* fp) {
             infer_ctx->graph_projection_bias,
             infer_ctx->graph_output_size * sizeof(float),
             0
+        ) &&
+        transformer_transfer_block(
+            fp,
+            infer_ctx->norm_gamma_attn,
+            infer_ctx->model_dim * sizeof(float),
+            0
         );
 }
 
@@ -683,6 +733,12 @@ int nn_transformer_save_weights(void* context, FILE* fp) {
             fp,
             infer_ctx->graph_projection_bias,
             infer_ctx->graph_output_size * sizeof(float),
+            1
+        ) &&
+        transformer_transfer_block(
+            fp,
+            infer_ctx->norm_gamma_attn,
+            infer_ctx->model_dim * sizeof(float),
             1
         );
 }

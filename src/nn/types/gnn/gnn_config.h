@@ -21,6 +21,7 @@
 #include <stddef.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include "../../residual/skip_connection.h"
 
 #define GNN_FEATURE_INDEX_NONE ((size_t)(~(size_t)0))
 
@@ -70,14 +71,21 @@ typedef struct {
     GnnActivationType hidden_activation;                   /**< Activation used by node-state updates. */
     GnnActivationType output_activation;                   /**< Activation used by the exported readout vector. */
     uint32_t seed;                                         /**< Deterministic seed for reproducible init. */
+    /* ── P0 shared-module switches ── */
+    int      use_rms_norm;               /**< 0 = disabled, 1 = enabled. */
+    float    norm_epsilon;               /**< RMSNorm epsilon (default 1e-5). */
+    int      use_dropout;                /**< 0 = disabled, 1 = enabled. */
+    float    dropout_rate;               /**< keep_prob for shared dropout API. */
+    int      use_skip;                   /**< 0 = disabled, 1 = enabled. */
+    SkipMode skip_mode;                  /**< SKIP_NONE / SKIP_IDENTITY / SKIP_LAUREL_RW. */
     int neighbor_index[];                                  /**< Flattened [node_count * slot_count] neighbor table. */
 } GnnConfig;
 
 /* sizeof(GnnConfig) must cover all fixed fields; the gnn_config_size_for_topology()
  * formula relies on this for the trailing flexible array member offset. Natural
  * alignment padding after the last fixed field is expected and accounted for. */
-static_assert(offsetof(GnnConfig, neighbor_index) >= offsetof(GnnConfig, seed) + sizeof(uint32_t),
-              "GnnConfig seed must be the last fixed field before neighbor_index");
+static_assert(offsetof(GnnConfig, neighbor_index) >= offsetof(GnnConfig, skip_mode) + sizeof(SkipMode),
+              "GnnConfig skip_mode must be the last fixed field before neighbor_index");
 
 /**
  * @brief Return the exact byte size required for one GNN config blob.

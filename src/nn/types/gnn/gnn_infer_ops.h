@@ -7,6 +7,7 @@
 #define GNN_INFER_OPS_H
 
 #include "gnn_config.h"
+#include "../../dropout/dropout.h"
 #include "../../../utils/arena.h"
 
 #include <stddef.h>
@@ -34,6 +35,18 @@ typedef struct {
     float* input_buffer;            /**< Owned copy of the latest flattened graph input. */
     float* output_buffer;           /**< Owned copy of the latest exported graph readout vector. */
     Arena* arena;                   /**< Scratch arena for hot-path temporary buffers in forward pass. */
+    /* ── P0 shared-module state ── */
+    int              use_rms_norm;   /**< Copied from config. */
+    float            norm_epsilon;   /**< Copied from config. */
+    int              use_dropout;    /**< Copied from config. */
+    int              use_skip;       /**< Copied from config. */
+    SkipConnection   skip_msg;       /**< Per-msg-pass skip for hidden state. */
+    float*           norm_gamma_h;   /**< RMSNorm gamma [hidden_size] (init to 1.0). */
+    DropoutLayer     dropout_msg;    /**< Per-msg-pass dropout layer. */
+    /* P0 backward-pass cache (set by train_create, NULL during pure inference) */
+    float*           p0_pre_norm;    /**< hidden before RMSNorm [stages * nodes * hidden_size]. */
+    float*           p0_skip_x_cache;/**< prev_h before skip [stages * nodes * hidden_size]. */
+    float*           p0_skip_fx_cache;/**< normed before skip [stages * nodes * hidden_size]. */
 } GnnInferContext;
 
 GnnInferContext* nn_gnn_infer_create(void);

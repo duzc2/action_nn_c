@@ -62,6 +62,14 @@ typedef struct {
     uint64_t checkpoint_network_hash;
     uint64_t checkpoint_layout_hash;
     Arena* arena;
+    /* ─── P0 shared-module integration ─── */
+    float* norm_gamma_grads;     /* accumulated d_gamma per layer [total_norm_dim] */
+    float* norm_gamma_vel;       /* SGD momentum for gamma  [total_norm_dim]      */
+    float* skip_alpha_raw_grads; /* LAuReL-RW d_alpha_raw per layer [layer_count] */
+    float* skip_alpha_raw_vel;   /* SGD momentum for alpha_raw [layer_count]      */
+    float** norm_input_cache;    /* [layer_count] pre-norm activations (for rms_norm_backward) */
+    float** skip_module_cache;   /* [layer_count] pre-skip module outputs (for skip_backward) */
+    size_t total_norm_dim;       /* sum of output_sizes of all layers (gamma dimension) */
 } MlpTrainContext;
 
 /**

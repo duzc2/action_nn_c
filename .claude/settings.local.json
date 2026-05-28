@@ -115,7 +115,10 @@
       "Bash(\"/build/verify/test_stride.exe\":*)",
       "Bash(build/tests/Debug/test_rms_norm.exe)",
       "Bash(build/tests/Debug/test_skip_connection.exe)",
-      "Bash(build/tests/Debug/test_dropout.exe:*)"
+      "Bash(build/tests/Debug/test_dropout.exe:*)",
+      "Bash(./test_nn_p0_integration.exe:*)",
+      "Bash(./test_transformer_p0.exe:*)",
+      "Bash(./test_tf_debug.exe:*)"
     ]
   }
 }

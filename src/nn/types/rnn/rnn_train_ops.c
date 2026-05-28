@@ -8,6 +8,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include "../../../utils/error.h"
+#include "../../norm/rms_norm.h"
+#include "../../residual/skip_connection.h"
 
 /**
  * @brief Recover d(activation)/d(linear) from the post-activation output value.
@@ -45,6 +47,9 @@ static void rnn_zero_gradients(RnnTrainContext* context) {
     (void)memset(context->hidden_bias_grad, 0, config->hidden_size * sizeof(float));
     (void)memset(context->hidden_to_output_grad, 0, hidden_to_output_count * sizeof(float));
     (void)memset(context->output_bias_grad, 0, config->output_size * sizeof(float));
+    if (context->norm_gamma_grad != NULL) {
+        (void)memset(context->norm_gamma_grad, 0, config->hidden_size * sizeof(float));
+    }
 }
 
 /**
@@ -89,6 +94,22 @@ static void rnn_apply_parameter_update(RnnTrainContext* context) {
     for (value_index = 0U; value_index < config->output_size; ++value_index) {
         infer_ctx->output_bias[value_index] -=
             context->config.learning_rate * context->output_bias_grad[value_index];
+    }
+
+    /* ── P0: RMSNorm gamma update (SGD, no weight decay) ── */
+    if (infer_ctx->use_rms_norm && infer_ctx->norm_gamma_h != NULL
+        && context->norm_gamma_grad != NULL) {
+        for (value_index = 0U; value_index < config->hidden_size; ++value_index) {
+            infer_ctx->norm_gamma_h[value_index] -=
+                context->config.learning_rate * context->norm_gamma_grad[value_index];
+        }
+    }
+
+    /* ── P0: LAuReL-RW skip alpha update ── */
+    if (infer_ctx->use_skip && infer_ctx->skip_recurrent.mode == SKIP_LAUREL_RW) {
+        infer_ctx->skip_recurrent.alpha_raw -= context->config.learning_rate *
+            infer_ctx->skip_recurrent.grad_alpha_raw;
+        infer_ctx->skip_recurrent.grad_alpha_raw = 0.0f;
     }
 }
 
@@ -169,6 +190,37 @@ static int rnn_backpropagate(
         }
         (void)memset(dh_next, 0, config->hidden_size * sizeof(float));
 
+        /* ── P0 backward (reverse of forward: Skip → Dropout → RMSNorm) ── */
+        if (infer_ctx->use_skip && infer_ctx->skip_recurrent.mode != SKIP_NONE
+            && context->skip_x_cache != NULL && context->skip_fx_cache != NULL
+            && context->skip_temp_dF != NULL && context->skip_temp_dX != NULL) {
+            const float* fx_cache = context->skip_fx_cache + (step_index * config->hidden_size);
+            const float* x_cache  = context->skip_x_cache  + (step_index * config->hidden_size);
+
+            (void)skip_backward(context->skip_temp_dF, context->skip_temp_dX,
+                fx_cache, x_cache, dh_current,
+                config->hidden_size, &infer_ctx->skip_recurrent);
+            /* dF replaces dh_current for the dropout/norm path */
+            for (current_index = 0U; current_index < config->hidden_size; ++current_index) {
+                dh_current[current_index] = context->skip_temp_dF[current_index];
+            }
+            /* dX is the gradient flowing directly to prev_h */
+            for (current_index = 0U; current_index < config->hidden_size; ++current_index) {
+                dh_next[current_index] += context->skip_temp_dX[current_index];
+            }
+        }
+        if (infer_ctx->use_dropout) {
+            (void)dropout_backward(dh_current, dh_current,
+                config->hidden_size, &infer_ctx->dropout_rec);
+        }
+        if (infer_ctx->use_rms_norm && infer_ctx->norm_gamma_h != NULL
+            && context->pre_norm_cache != NULL) {
+            const float* pre_norm = context->pre_norm_cache + (step_index * config->hidden_size);
+            (void)rms_norm_backward(dh_current, context->norm_gamma_grad,
+                dh_current, pre_norm, infer_ctx->norm_gamma_h,
+                config->hidden_size, infer_ctx->norm_epsilon);
+        }
+
         for (current_index = 0U; current_index < config->hidden_size; ++current_index) {
             float dz = dh_current[current_index] *
                 rnn_activation_derivative_from_output(
@@ -240,12 +292,24 @@ RnnTrainContext* nn_rnn_train_create(void* infer_ctx_ptr, const RnnTrainConfig* 
     context->hidden_grad_a = (float*)calloc(infer_config->hidden_size, sizeof(float));
     context->hidden_grad_b = (float*)calloc(infer_config->hidden_size, sizeof(float));
     context->output_gradient_buffer = (float*)calloc(infer_config->output_size, sizeof(float));
+    context->norm_gamma_grad = (float*)calloc(infer_config->hidden_size, sizeof(float));
+    context->pre_norm_cache  = (float*)calloc(
+        infer_config->sequence_length * infer_config->hidden_size, sizeof(float));
+    context->skip_x_cache    = (float*)calloc(
+        infer_config->sequence_length * infer_config->hidden_size, sizeof(float));
+    context->skip_fx_cache   = (float*)calloc(
+        infer_config->sequence_length * infer_config->hidden_size, sizeof(float));
+    context->skip_temp_dF = (float*)calloc(infer_config->hidden_size, sizeof(float));
+    context->skip_temp_dX = (float*)calloc(infer_config->hidden_size, sizeof(float));
 
     if (context->hidden_cache == NULL || context->output_linear_cache == NULL ||
         context->input_to_hidden_grad == NULL || context->hidden_to_hidden_grad == NULL ||
         context->hidden_bias_grad == NULL || context->hidden_to_output_grad == NULL ||
         context->output_bias_grad == NULL || context->hidden_grad_a == NULL ||
-        context->hidden_grad_b == NULL || context->output_gradient_buffer == NULL) {
+        context->hidden_grad_b == NULL || context->output_gradient_buffer == NULL ||
+        context->norm_gamma_grad == NULL || context->pre_norm_cache == NULL ||
+        context->skip_x_cache == NULL || context->skip_fx_cache == NULL ||
+        context->skip_temp_dF == NULL || context->skip_temp_dX == NULL) {
         nn_rnn_train_destroy(context);
         return NULL;
     }
@@ -261,6 +325,18 @@ void nn_rnn_train_destroy(RnnTrainContext* context) {
         return;
     }
 
+    /* Clear P0 cache pointers in the borrowed infer context */
+    if (context->infer_ctx != NULL) {
+        context->infer_ctx->p0_pre_norm     = NULL;
+        context->infer_ctx->p0_skip_x_cache  = NULL;
+        context->infer_ctx->p0_skip_fx_cache = NULL;
+    }
+    free(context->norm_gamma_grad);
+    free(context->pre_norm_cache);
+    free(context->skip_x_cache);
+    free(context->skip_fx_cache);
+    free(context->skip_temp_dF);
+    free(context->skip_temp_dX);
     free(context->hidden_cache);
     free(context->output_linear_cache);
     free(context->input_to_hidden_grad);
@@ -291,6 +367,15 @@ int nn_rnn_train_step_with_output_gradient(
     }
 
     infer_ctx = context->infer_ctx;
+
+    /* ── P0 training setup: wire caches + enable dropout training mode ── */
+    infer_ctx->p0_pre_norm     = context->pre_norm_cache;
+    infer_ctx->p0_skip_x_cache  = context->skip_x_cache;
+    infer_ctx->p0_skip_fx_cache = context->skip_fx_cache;
+    if (infer_ctx->use_dropout) {
+        infer_ctx->dropout_rec.training = 1;
+    }
+
     rc = nn_rnn_forward_pass(
         infer_ctx,
         input,
@@ -298,6 +383,15 @@ int nn_rnn_train_step_with_output_gradient(
         context->hidden_cache,
         context->output_linear_cache
     );
+
+    /* Restore inference mode */
+    infer_ctx->p0_pre_norm     = NULL;
+    infer_ctx->p0_skip_x_cache  = NULL;
+    infer_ctx->p0_skip_fx_cache = NULL;
+    if (infer_ctx->use_dropout) {
+        infer_ctx->dropout_rec.training = 0;
+    }
+
     if (rc != 0) {
         return rc;
     }
@@ -332,6 +426,15 @@ int nn_rnn_train_step_with_data(RnnTrainContext* context, const float* input, co
     if (output_gradient == NULL) {
         return ACTION_C_ERR_NULL_POINTER;
     }
+
+    /* ── P0 training setup ── */
+    infer_ctx->p0_pre_norm     = context->pre_norm_cache;
+    infer_ctx->p0_skip_x_cache  = context->skip_x_cache;
+    infer_ctx->p0_skip_fx_cache = context->skip_fx_cache;
+    if (infer_ctx->use_dropout) {
+        infer_ctx->dropout_rec.training = 1;
+    }
+
     rc = nn_rnn_forward_pass(
         infer_ctx,
         input,
@@ -339,6 +442,14 @@ int nn_rnn_train_step_with_data(RnnTrainContext* context, const float* input, co
         context->hidden_cache,
         context->output_linear_cache
     );
+
+    infer_ctx->p0_pre_norm     = NULL;
+    infer_ctx->p0_skip_x_cache  = NULL;
+    infer_ctx->p0_skip_fx_cache = NULL;
+    if (infer_ctx->use_dropout) {
+        infer_ctx->dropout_rec.training = 0;
+    }
+
     if (rc != 0) {
         return rc;
     }

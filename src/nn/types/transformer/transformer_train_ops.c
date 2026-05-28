@@ -10,6 +10,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include "../../../utils/error.h"
+#include "../../norm/rms_norm.h"
+#include "../../residual/skip_connection.h"
 
 static void transformer_apply_gradient(float* parameter, float gradient, float learning_rate) {
     if (gradient > 5.0f) {
@@ -51,6 +53,16 @@ int nn_transformer_train_step(void* context) {
         return ACTION_C_ERR_NULL_POINTER;
     }
     _arena_mark = arena_snapshot(infer_ctx->arena);
+
+    /* Enable dropout in training mode for this forward pass. */
+    if (infer_ctx->use_dropout) {
+        infer_ctx->dropout_attn.training = 1;
+    }
+
+    /* Propagate P0 backward caches from train context to infer context. */
+    infer_ctx->p0_attn_pre_norm = train_ctx->attn_pre_norm;
+    infer_ctx->p0_skip_x_cache  = train_ctx->skip_x_cache;
+    infer_ctx->p0_skip_fx_cache = train_ctx->skip_fx_cache;
 
     if (transformer_run_forward(infer_ctx, train_ctx->current_question, cache) != 0) {
         arena_restore(infer_ctx->arena, _arena_mark);
@@ -202,6 +214,8 @@ int nn_transformer_train_step_with_output_gradient(
 
 #include "../../nn_backend.h"
 
+static void transformer_train_destroy(void* context);
+
 static void* transformer_train_create_vtable(const void* config_blob, size_t config_size,
                                               const void* infer_config_blob, size_t infer_config_size,
                                               struct Arena* arena) {
@@ -228,12 +242,38 @@ static void* transformer_train_create_vtable(const void* config_blob, size_t con
     }
     train_ctx->infer_ctx = infer_ctx;
     train_ctx->learning_rate = tr_cfg->learning_rate;
+
+    /* Allocate P0 backward-pass cache buffers (state_count each). */
+    {
+        size_t state_count = model_cfg->max_seq_length * model_cfg->model_dim;
+        train_ctx->attn_pre_norm = (float*)calloc(state_count, sizeof(float));
+        train_ctx->skip_x_cache  = (float*)calloc(state_count, sizeof(float));
+        train_ctx->skip_fx_cache = (float*)calloc(state_count, sizeof(float));
+        if (train_ctx->attn_pre_norm == NULL || train_ctx->skip_x_cache == NULL ||
+            train_ctx->skip_fx_cache == NULL) {
+            transformer_train_destroy(train_ctx);
+            return NULL;
+        }
+    }
+
     return train_ctx;
 }
 
 static void transformer_train_destroy(void* context) {
     TransformerTrainContext* ctx = (TransformerTrainContext*)context;
     if (ctx == NULL) return;
+
+    /* Null P0 cache pointers in infer context before destroying it. */
+    if (ctx->infer_ctx != NULL) {
+        ctx->infer_ctx->p0_attn_pre_norm = NULL;
+        ctx->infer_ctx->p0_skip_x_cache  = NULL;
+        ctx->infer_ctx->p0_skip_fx_cache = NULL;
+    }
+
+    free(ctx->attn_pre_norm);
+    free(ctx->skip_x_cache);
+    free(ctx->skip_fx_cache);
+
     if (ctx->infer_ctx != NULL) nn_transformer_infer_destroy(ctx->infer_ctx);
     free(ctx);
 }

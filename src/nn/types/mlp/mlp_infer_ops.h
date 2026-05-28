@@ -12,6 +12,8 @@
 #define MLP_INFER_OPS_H
 
 #include "mlp_config.h"
+#include "../../dropout/dropout.h"
+#include "../../residual/skip_connection.h"
 #include "../../../utils/arena.h"
 
 #include <stddef.h>
@@ -35,6 +37,11 @@ typedef struct {
     float* work_buffer_b;
     uint32_t seed;
     Arena* arena;
+    /* ─── P0 shared-module integration ─── */
+    SkipConnection* skips;       /* [layer_count] skip connections       */
+    DropoutLayer** dropouts;     /* [layer_count-1] hidden-dropout layers */
+    float* norm_gamma;           /* concatenated gamma arrays per layer [total_norm_dim] */
+    float* norm_dgamma;          /* concatenated d_gamma arrays per layer (for train)  */
 } MlpInferContext;
 
 /**

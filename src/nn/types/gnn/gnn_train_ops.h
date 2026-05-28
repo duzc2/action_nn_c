@@ -27,6 +27,13 @@ typedef struct {
     float* readout_secondary_grad;  /**< Scratch gradient tensor for secondary-anchor readout weights. */
     float* readout_neighbor_grad;   /**< Scratch gradient tensor for slot-neighbor readout weights. */
     float* output_bias_grad;        /**< Scratch gradient vector for readout bias. */
+    /* ── P0 training buffers ── */
+    float* norm_gamma_grad;         /**< d_gamma accumulator (+= mode) [hidden_size]. */
+    float* pre_norm_cache;          /**< hidden before RMSNorm [stages * nodes * hidden_size]. */
+    float* skip_x_cache;            /**< prev_h before skip [stages * nodes * hidden_size]. */
+    float* skip_fx_cache;           /**< normed before skip [stages * nodes * hidden_size]. */
+    float* skip_temp_dF;            /**< Temporary for skip_backward dF [hidden_size]. */
+    float* skip_temp_dX;            /**< Temporary for skip_backward dX [hidden_size]. */
     size_t total_steps;             /**< Count of successful training updates. */
     size_t total_epochs;            /**< Count reported through train_get_stats. */
     float cumulative_loss;          /**< Running loss accumulator for averages. */

@@ -13,9 +13,11 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../../norm/rms_norm.h"
+#include "../../residual/skip_connection.h"
 #include "../../../utils/error.h"
 
-#define GNN_ABI_VERSION 2U
+#define GNN_ABI_VERSION 3U
 
 /**
  * @brief Serialized header written before the flat GNN parameter arrays.
@@ -395,6 +397,7 @@ GnnInferContext* nn_gnn_infer_create_with_config_blob(
     size_t readout_weight_count;
     size_t input_value_count;
     size_t value_index;
+    size_t hidden_index;
 
     if (!gnn_config_is_valid(config, config_size)) {
         return NULL;
@@ -473,6 +476,39 @@ GnnInferContext* nn_gnn_infer_create_with_config_blob(
         }
     }
 
+    /* ── P0 shared-module initialisation ── */
+    context->use_rms_norm = config->use_rms_norm;
+    context->norm_epsilon = config->norm_epsilon;
+    context->use_dropout  = config->use_dropout;
+    context->use_skip     = config->use_skip;
+    context->p0_pre_norm     = NULL;
+    context->p0_skip_x_cache  = NULL;
+    context->p0_skip_fx_cache = NULL;
+
+    /* RMSNorm gamma: allocate and initialise to 1.0 */
+    if (context->use_rms_norm) {
+        context->norm_gamma_h = (float*)calloc(config->hidden_size, sizeof(float));
+        if (context->norm_gamma_h == NULL) {
+            nn_gnn_infer_destroy(context);
+            return NULL;
+        }
+        for (hidden_index = 0U; hidden_index < config->hidden_size; ++hidden_index) {
+            context->norm_gamma_h[hidden_index] = 1.0f;
+        }
+    } else {
+        context->norm_gamma_h = NULL;
+    }
+
+    /* Dropout: initialise once, same layer used per-node per-pass */
+    if (context->use_dropout) {
+        dropout_init(&context->dropout_msg, config->dropout_rate, context->rng_state);
+    }
+
+    /* Skip: initialise once, same connection used per-node per-pass */
+    if (context->use_skip) {
+        skip_init(&context->skip_msg, config->skip_mode);
+    }
+
     return context;
 }
 
@@ -501,6 +537,12 @@ void nn_gnn_infer_destroy(void* ctx) {
     }
 
     arena_destroy(context->arena);
+
+    /* P0 cleanup */
+    if (context->use_dropout) {
+        dropout_free(&context->dropout_msg);
+    }
+    free(context->norm_gamma_h);
 
     free(context->input_weight);
     free(context->input_bias);
@@ -621,6 +663,21 @@ int nn_gnn_forward_pass(
             }
             stage0_node[hidden_index] = gnn_apply_activation(linear, config->hidden_activation);
         }
+
+        /* ── P0: RMSNorm → Dropout (per-node, no skip for encoder) ── */
+        if (context->use_rms_norm && context->norm_gamma_h != NULL) {
+            if (context->p0_pre_norm != NULL) {
+                (void)memcpy(context->p0_pre_norm + (node_index * config->hidden_size),
+                             stage0_node, config->hidden_size * sizeof(float));
+            }
+            (void)rms_norm_forward(stage0_node, stage0_node,
+                                   context->norm_gamma_h, config->hidden_size,
+                                   context->norm_epsilon);
+        }
+        if (context->use_dropout) {
+            dropout_forward(stage0_node, stage0_node, config->hidden_size,
+                           &context->dropout_msg);
+        }
     }
 
     /* Each message-passing stage mixes the node's own state with the mean of active neighbors. */
@@ -673,6 +730,38 @@ int nn_gnn_forward_pass(
                     ] * aggregated[source_hidden];
                 }
                 current_node_hidden[hidden_index] = gnn_apply_activation(linear, config->hidden_activation);
+            }
+
+            /* ── P0: RMSNorm → Dropout → Skip (per-node, per-pass) ── */
+            if (context->use_rms_norm && context->norm_gamma_h != NULL) {
+                if (context->p0_pre_norm != NULL) {
+                    (void)memcpy(context->p0_pre_norm + (pass_index * stage_stride)
+                                 + (node_index * config->hidden_size),
+                                 current_node_hidden, config->hidden_size * sizeof(float));
+                }
+                (void)rms_norm_forward(current_node_hidden, current_node_hidden,
+                                       context->norm_gamma_h, config->hidden_size,
+                                       context->norm_epsilon);
+            }
+            if (context->use_dropout) {
+                dropout_forward(current_node_hidden, current_node_hidden,
+                               config->hidden_size, &context->dropout_msg);
+            }
+            if (context->use_skip && context->skip_msg.mode != SKIP_NONE) {
+                const float* prev_hidden_src = previous_stage + (node_index * config->hidden_size);
+                if (context->p0_skip_x_cache != NULL) {
+                    (void)memcpy(context->p0_skip_x_cache + (pass_index * stage_stride)
+                                 + (node_index * config->hidden_size),
+                                 prev_hidden_src, config->hidden_size * sizeof(float));
+                }
+                if (context->p0_skip_fx_cache != NULL) {
+                    (void)memcpy(context->p0_skip_fx_cache + (pass_index * stage_stride)
+                                 + (node_index * config->hidden_size),
+                                 current_node_hidden, config->hidden_size * sizeof(float));
+                }
+                skip_forward(current_node_hidden, current_node_hidden,
+                            prev_hidden_src, config->hidden_size,
+                            &context->skip_msg);
             }
         }
     }
@@ -841,7 +930,9 @@ int nn_gnn_load_weights(void* ctx, FILE* fp) {
         gnn_transfer_float_block(fp, context->readout_primary, readout_weight_count, 0) &&
         gnn_transfer_float_block(fp, context->readout_secondary, readout_weight_count, 0) &&
         gnn_transfer_float_block(fp, context->readout_neighbor, readout_weight_count, 0) &&
-        gnn_transfer_float_block(fp, context->output_bias, context->config->output_size, 0);
+        gnn_transfer_float_block(fp, context->output_bias, context->config->output_size, 0) &&
+        (context->norm_gamma_h == NULL ||
+         gnn_transfer_float_block(fp, context->norm_gamma_h, context->config->hidden_size, 0));
 }
 
 /**
@@ -893,7 +984,9 @@ int nn_gnn_save_weights(void* ctx, FILE* fp) {
         gnn_transfer_float_block(fp, context->readout_primary, readout_weight_count, 1) &&
         gnn_transfer_float_block(fp, context->readout_secondary, readout_weight_count, 1) &&
         gnn_transfer_float_block(fp, context->readout_neighbor, readout_weight_count, 1) &&
-        gnn_transfer_float_block(fp, context->output_bias, context->config->output_size, 1);
+        gnn_transfer_float_block(fp, context->output_bias, context->config->output_size, 1) &&
+        (context->norm_gamma_h == NULL ||
+         gnn_transfer_float_block(fp, context->norm_gamma_h, context->config->hidden_size, 1));
 }
 
 /**

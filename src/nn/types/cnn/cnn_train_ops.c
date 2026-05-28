@@ -14,6 +14,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../../norm/rms_norm.h"
 #include "../../../utils/error.h"
 
 /**
@@ -42,6 +43,7 @@ static size_t diag_step_counter = 0;
 static int    diag_forward_count  = 0;
 
 static void cnn_zero_gradients(CnnTrainContext* context) {
+    CnnInferContext* infer_ctx;
     const CnnConfig* config;
     size_t conv_weight_count;
     size_t projection_weight_count;
@@ -51,6 +53,7 @@ static void cnn_zero_gradients(CnnTrainContext* context) {
         return;
     }
 
+    infer_ctx = context->infer_ctx;
     config = &context->infer_ctx->config;
     conv_weight_count = cnn_conv_weight_count(config);
     projection_weight_count = cnn_projection_weight_count(config);
@@ -72,6 +75,17 @@ static void cnn_zero_gradients(CnnTrainContext* context) {
     }
     if (context->bn_beta_grad != NULL) {
         (void)memset(context->bn_beta_grad, 0, config->filter_count * sizeof(float));
+    }
+    if (context->norm_gamma_grad != NULL) {
+        size_t pooled_value_count = cnn_pooled_value_count(config);
+        (void)memset(context->norm_gamma_grad, 0, pooled_value_count * sizeof(float));
+    }
+    if (context->skip_alpha_raw_grad != NULL) {
+        context->skip_alpha_raw_grad[0] = 0.0f;
+    }
+    /* Zero skip->grad_alpha_raw on infer context (accumulated by skip_backward) */
+    if (infer_ctx->skip != NULL) {
+        infer_ctx->skip->grad_alpha_raw = 0.0f;
     }
 }
 
@@ -147,6 +161,30 @@ static void cnn_apply_parameter_update(CnnTrainContext* context) {
                 lr * context->bn_beta_grad[weight_index];
             infer_ctx->bn_beta[weight_index] += context->bn_beta_vel[weight_index];
         }
+    }
+
+    /* ─── P0 shared-module parameter updates (SGD momentum) ─── */
+    if (config->use_rms_norm && context->norm_gamma_grad != NULL &&
+        context->norm_gamma_vel != NULL && infer_ctx->norm_gamma != NULL) {
+        size_t pooled_value_count = cnn_pooled_value_count(config);
+        size_t pi;
+        for (pi = 0U; pi < pooled_value_count; ++pi) {
+            context->norm_gamma_vel[pi] =
+                momentum * context->norm_gamma_vel[pi] - lr * context->norm_gamma_grad[pi];
+            infer_ctx->norm_gamma[pi] += context->norm_gamma_vel[pi];
+        }
+    }
+    if (config->use_skip && context->skip_alpha_raw_vel != NULL &&
+        infer_ctx->skip != NULL && infer_ctx->skip->mode != SKIP_NONE) {
+        /* Accumulate skip_alpha_raw_grad from both SkipConnection.grad_alpha_raw
+         * and our own accumulator (redundant but harmless) */
+        float accumulated = infer_ctx->skip->grad_alpha_raw;
+        if (accumulated == 0.0f && context->skip_alpha_raw_grad != NULL) {
+            accumulated = context->skip_alpha_raw_grad[0];
+        }
+        context->skip_alpha_raw_vel[0] =
+            momentum * context->skip_alpha_raw_vel[0] - lr * accumulated;
+        infer_ctx->skip->alpha_raw += context->skip_alpha_raw_vel[0];
     }
 
     /* Diagnostic: per-leaf weight update L2 norm (every 1000 steps) */
@@ -439,6 +477,25 @@ static int cnn_backpropagate(
         size_t pooled_grad_count = config->sequence_length * pooled_value_count;
         for (pci = 0U; pci < pooled_grad_count; ++pci) {
             context->pooled_gradient_cache[pci] *= context->dropout_mask[pci];
+        }
+    }
+
+    /* ── P0 RMSNorm backward: applied per-step on pooled_gradient_cache
+     * after dropout backward.  d_gamma is accumulated (+=) on norm_gamma_grad. */
+    if (config->use_rms_norm && context->norm_gamma_grad != NULL &&
+        infer_ctx->norm_gamma != NULL && context->norm_input_cache != NULL &&
+        pooled_value_count > 0U) {
+        size_t si;
+        for (si = 0U; si < config->sequence_length; ++si) {
+            size_t step_offset = si * pooled_value_count;
+            (void)rms_norm_backward(
+                context->pooled_gradient_cache + step_offset,
+                context->norm_gamma_grad,
+                context->pooled_gradient_cache + step_offset,
+                context->norm_input_cache + step_offset,
+                infer_ctx->norm_gamma,
+                pooled_value_count,
+                config->norm_epsilon);
         }
     }
 
@@ -909,6 +966,40 @@ CnnTrainContext* nn_cnn_train_create(void* infer_ctx_ptr, const CnnTrainConfig* 
         context->bn_spatial_var = NULL;
     }
 
+    /* ─── P0 shared-module training buffer allocations ─── */
+    if (infer_config->pooling_mode != CNN_POOL_NONE) {
+        if (infer_config->use_rms_norm) {
+            context->norm_gamma_grad = (float*)calloc(pooled_value_count, sizeof(float));
+            context->norm_gamma_vel  = (float*)calloc(pooled_value_count, sizeof(float));
+            context->norm_input_cache = (float*)calloc(pooled_cache_count, sizeof(float));
+        } else {
+            context->norm_gamma_grad = NULL;
+            context->norm_gamma_vel  = NULL;
+            context->norm_input_cache = NULL;
+        }
+        if (infer_config->use_skip) {
+            context->skip_alpha_raw_grad = (float*)calloc(1U, sizeof(float));
+            context->skip_alpha_raw_vel  = (float*)calloc(1U, sizeof(float));
+            context->skip_module_cache = (float*)calloc(
+                infer_config->sequence_length * infer_config->feature_size, sizeof(float));
+        } else {
+            context->skip_alpha_raw_grad = NULL;
+            context->skip_alpha_raw_vel  = NULL;
+            context->skip_module_cache = NULL;
+        }
+    } else {
+        context->norm_gamma_grad    = NULL;
+        context->norm_gamma_vel     = NULL;
+        context->norm_input_cache   = NULL;
+        context->skip_alpha_raw_grad = NULL;
+        context->skip_alpha_raw_vel  = NULL;
+        context->skip_module_cache  = NULL;
+    }
+
+    /* Propagate P0 cache pointers to inference context (same pattern as BN) */
+    infer_ctx->p0_norm_input_cache  = context->norm_input_cache;
+    infer_ctx->p0_skip_module_cache = context->skip_module_cache;
+
     /* Propagate training BN buffer pointers to inference context
      * so that graph_run (via nn_cnn_infer_step) can use spatial BN. */
     infer_ctx->bn_training_pre_cache   = context->bn_pre_cache;
@@ -970,9 +1061,17 @@ void nn_cnn_train_destroy(CnnTrainContext* context) {
     free(context->bn_beta_vel);
     free(context->bn_spatial_var);
     free(context->bn_pre_cache);
+    free(context->norm_gamma_grad);
+    free(context->norm_gamma_vel);
+    free(context->norm_input_cache);
+    free(context->skip_alpha_raw_grad);
+    free(context->skip_alpha_raw_vel);
+    free(context->skip_module_cache);
     if (context->infer_ctx != NULL) {
         context->infer_ctx->bn_training_pre_cache   = NULL;
         context->infer_ctx->bn_training_spatial_var = NULL;
+        context->infer_ctx->p0_norm_input_cache     = NULL;
+        context->infer_ctx->p0_skip_module_cache    = NULL;
         context->infer_ctx->debug_level       = 0;
         context->infer_ctx->debug_layer_index = -1;
     }

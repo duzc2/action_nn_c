@@ -9,8 +9,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include "../../../utils/error.h"
+#include "../../norm/rms_norm.h"
+#include "../../residual/skip_connection.h"
 
-#define RNN_ABI_VERSION 1U
+#define RNN_ABI_VERSION 2U
 
 /**
  * @brief Serialized header written before the flat RNN parameter arrays.
@@ -177,6 +179,36 @@ RnnInferContext* nn_rnn_infer_create_with_config(const RnnConfig* config, uint32
         context->output_bias[value_index] = rnn_random_weight(&context->rng_state, 0.05f);
     }
 
+    /* ── P0 shared-module initialisation ── */
+    context->use_rms_norm = config->use_rms_norm;
+    context->norm_epsilon  = (config->norm_epsilon > 0.0f) ? config->norm_epsilon : 1e-5f;
+    context->use_dropout   = config->use_dropout;
+    context->use_skip      = config->use_skip;
+
+    context->norm_gamma_h = (float*)calloc(config->hidden_size, sizeof(float));
+    if (context->norm_gamma_h == NULL) {
+        nn_rnn_infer_destroy(context);
+        return NULL;
+    }
+    {
+        size_t gamma_i;
+        for (gamma_i = 0U; gamma_i < config->hidden_size; ++gamma_i) {
+            context->norm_gamma_h[gamma_i] = 1.0f;
+        }
+    }
+
+    {
+        float kp = config->use_dropout ? config->dropout_rate : 1.0f;
+        (void)memset(&context->dropout_rec, 0, sizeof(context->dropout_rec));
+        dropout_init(&context->dropout_rec, kp, context->rng_state + 13U);
+        context->dropout_rec.training = 0;
+    }
+
+    {
+        SkipMode sm = config->use_skip ? config->skip_mode : SKIP_NONE;
+        (void)skip_init(&context->skip_recurrent, sm);
+    }
+
     return context;
 }
 
@@ -190,6 +222,12 @@ void nn_rnn_infer_destroy(void* ctx) {
         return;
     }
 
+    dropout_free(&context->dropout_rec);
+    free(context->norm_gamma_h);
+    context->norm_gamma_h   = NULL;
+    context->p0_pre_norm     = NULL;
+    context->p0_skip_x_cache  = NULL;
+    context->p0_skip_fx_cache = NULL;
     free(context->input_to_hidden);
     free(context->hidden_to_hidden);
     free(context->hidden_bias);
@@ -284,10 +322,38 @@ int nn_rnn_forward_pass(
 
             current_hidden[hidden_index] =
                 rnn_apply_activation(linear_value, config->hidden_activation);
-            if (hidden_cache != NULL) {
-                hidden_cache[(step_index * config->hidden_size) + hidden_index] =
-                    current_hidden[hidden_index];
+        }
+
+        /* ── P0: RMSNorm → Dropout → Skip (per-timestep) ── */
+        if (context->use_rms_norm && context->norm_gamma_h != NULL) {
+            if (context->p0_pre_norm != NULL) {
+                (void)memcpy(context->p0_pre_norm + (step_index * config->hidden_size),
+                    current_hidden, config->hidden_size * sizeof(float));
             }
+            (void)rms_norm_forward(current_hidden, current_hidden,
+                context->norm_gamma_h, config->hidden_size, context->norm_epsilon);
+        }
+        if (context->use_dropout) {
+            (void)dropout_forward(current_hidden, current_hidden,
+                config->hidden_size, &context->dropout_rec);
+        }
+        if (context->use_skip && context->skip_recurrent.mode != SKIP_NONE) {
+            if (context->p0_skip_x_cache != NULL) {
+                (void)memcpy(context->p0_skip_x_cache + (step_index * config->hidden_size),
+                    previous_hidden, config->hidden_size * sizeof(float));
+            }
+            if (context->p0_skip_fx_cache != NULL) {
+                (void)memcpy(context->p0_skip_fx_cache + (step_index * config->hidden_size),
+                    current_hidden, config->hidden_size * sizeof(float));
+            }
+            (void)skip_forward(current_hidden, current_hidden, previous_hidden,
+                config->hidden_size, &context->skip_recurrent);
+        }
+
+        /* Cache the FINAL (post-P0) hidden state for BPTT. */
+        if (hidden_cache != NULL) {
+            (void)memcpy(hidden_cache + (step_index * config->hidden_size),
+                current_hidden, config->hidden_size * sizeof(float));
         }
 
         (void)memcpy(previous_hidden, current_hidden, config->hidden_size * sizeof(float));
@@ -407,6 +473,11 @@ int nn_rnn_load_weights(void* ctx, FILE* fp) {
     if (fread(context->output_bias, sizeof(float), context->config.output_size, fp) != context->config.output_size) {
         return 0;
     }
+    if (context->norm_gamma_h != NULL) {
+        if (fread(context->norm_gamma_h, sizeof(float), context->config.hidden_size, fp) != context->config.hidden_size) {
+            return 0;
+        }
+    }
 
     return 1;
 }
@@ -457,6 +528,9 @@ int nn_rnn_save_weights(void* ctx, FILE* fp) {
         return 0;
     }
     if (fwrite(context->output_bias, sizeof(float), context->config.output_size, fp) != context->config.output_size) {
+        return 0;
+    }
+    if (fwrite(context->norm_gamma_h, sizeof(float), context->config.hidden_size, fp) != context->config.hidden_size) {
         return 0;
     }
 

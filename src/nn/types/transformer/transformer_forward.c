@@ -12,7 +12,11 @@
 #include "transformer_forward.h"
 
 #include <math.h>
+#include <string.h>
 #include "../../../utils/error.h"
+#include "../../norm/rms_norm.h"
+#include "../../dropout/dropout.h"
+#include "../../residual/skip_connection.h"
 
 size_t transformer_index(size_t row, size_t column, size_t column_count) {
     return (row * column_count) + column;
@@ -55,7 +59,7 @@ float transformer_vector_norm(const float* values, size_t count) {
 }
 
 int transformer_run_forward(
-    const TransformerInferContext* restrict context,
+    TransformerInferContext* restrict context,
     const char* restrict question,
     struct TransformerForwardCache* restrict cache
 ) {
@@ -132,12 +136,11 @@ int transformer_run_forward(
         transformer_softmax(attention_row, cache->seq_length);
     }
 
-    /* ── Attention-weighted aggregation + output projection + residual ── */
+    /* ── Step 1: Attention-weighted aggregation + output projection → attn_out ── */
     for (seq_index = 0U; seq_index < cache->seq_length; ++seq_index) {
         for (feature_index = 0U; feature_index < context->model_dim; ++feature_index) {
             float attended_value = 0.0f;
-            float projected_value = cache->input_states[
-                transformer_index(seq_index, feature_index, context->model_dim)];
+            float attn_out_val  = 0.0f;
 
             for (source_index = 0U; source_index < cache->seq_length; ++source_index) {
                 attended_value += cache->attention[
@@ -150,19 +153,63 @@ int transformer_run_forward(
                 attended_value;
 
             for (output_index = 0U; output_index < context->model_dim; ++output_index) {
-                projected_value += cache->attended[
+                attn_out_val += cache->attended[
                     transformer_index(seq_index, output_index, context->model_dim)
                 ] * context->output_weight[
                     transformer_index(output_index, feature_index, context->model_dim)];
             }
 
-            cache->projected[transformer_index(seq_index, feature_index, context->model_dim)] =
-                projected_value;
-            cache->hidden[transformer_index(seq_index, feature_index, context->model_dim)] =
-                tanhf(projected_value);
-            cache->pooled[feature_index] += cache->hidden[
-                transformer_index(seq_index, feature_index, context->model_dim)
-            ] / (float)cache->seq_length;
+            cache->attn_out[transformer_index(seq_index, feature_index, context->model_dim)] =
+                attn_out_val;
+        }
+    }
+
+    /* ── Step 2: RMSNorm → Dropout → Skip/Residual → Tanh → Mean Pooling ── */
+    (void)memset(cache->pooled, 0, context->model_dim * sizeof(float));
+    for (seq_index = 0U; seq_index < cache->seq_length; ++seq_index) {
+        float* attn_seq = cache->attn_out + (seq_index * context->model_dim);
+        float* proj_seq = cache->projected + (seq_index * context->model_dim);
+        float* hidn_seq = cache->hidden + (seq_index * context->model_dim);
+        const float* inpt_seq = cache->input_states + (seq_index * context->model_dim);
+
+        /* P0: RMSNorm on attention output (before residual) */
+        if (context->use_rms_norm && context->norm_gamma_attn != NULL) {
+            if (context->p0_attn_pre_norm != NULL) {
+                (void)memcpy(context->p0_attn_pre_norm + (seq_index * context->model_dim),
+                    attn_seq, context->model_dim * sizeof(float));
+            }
+            (void)rms_norm_forward(attn_seq, attn_seq,
+                context->norm_gamma_attn, context->model_dim, context->norm_epsilon);
+        }
+
+        /* P0: Dropout on attention output */
+        if (context->use_dropout) {
+            (void)dropout_forward(attn_seq, attn_seq, context->model_dim, &context->dropout_attn);
+        }
+
+        /* P0: Residual / Skip connection */
+        if (context->use_skip && context->skip_attn.mode != SKIP_NONE) {
+            if (context->p0_skip_x_cache != NULL) {
+                (void)memcpy(context->p0_skip_x_cache + (seq_index * context->model_dim),
+                    inpt_seq, context->model_dim * sizeof(float));
+            }
+            if (context->p0_skip_fx_cache != NULL) {
+                (void)memcpy(context->p0_skip_fx_cache + (seq_index * context->model_dim),
+                    attn_seq, context->model_dim * sizeof(float));
+            }
+            (void)skip_forward(proj_seq, attn_seq, inpt_seq, context->model_dim,
+                &context->skip_attn);
+        } else {
+            /* Default residual: projected = input + attn_out */
+            for (feature_index = 0U; feature_index < context->model_dim; ++feature_index) {
+                proj_seq[feature_index] = inpt_seq[feature_index] + attn_seq[feature_index];
+            }
+        }
+
+        /* Tanh activation + mean pooling */
+        for (feature_index = 0U; feature_index < context->model_dim; ++feature_index) {
+            hidn_seq[feature_index] = tanhf(proj_seq[feature_index]);
+            cache->pooled[feature_index] += hidn_seq[feature_index] / (float)cache->seq_length;
         }
     }
 

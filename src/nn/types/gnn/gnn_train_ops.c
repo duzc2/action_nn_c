@@ -11,6 +11,8 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include "../../norm/rms_norm.h"
+#include "../../residual/skip_connection.h"
 #include "../../../utils/error.h"
 
 /**
@@ -180,6 +182,7 @@ static int gnn_get_active_neighbor(
  * @brief Clear all gradient buffers before a new backward pass.
  */
 static void gnn_zero_gradients(GnnTrainContext* context) {
+    GnnInferContext* infer_ctx;
     const GnnConfig* config;
     size_t input_weight_count;
     size_t hidden_weight_count;
@@ -189,6 +192,7 @@ static void gnn_zero_gradients(GnnTrainContext* context) {
         return;
     }
 
+    infer_ctx = context->infer_ctx;
     config = context->infer_ctx->config;
     input_weight_count = config->hidden_size * config->node_feature_size;
     hidden_weight_count = config->hidden_size * config->hidden_size;
@@ -203,6 +207,13 @@ static void gnn_zero_gradients(GnnTrainContext* context) {
     (void)memset(context->readout_secondary_grad, 0, readout_weight_count * sizeof(float));
     (void)memset(context->readout_neighbor_grad, 0, readout_weight_count * sizeof(float));
     (void)memset(context->output_bias_grad, 0, config->output_size * sizeof(float));
+    /* P0 gradients (+= mode, must be zeroed each batch) */
+    if (context->norm_gamma_grad != NULL) {
+        (void)memset(context->norm_gamma_grad, 0, config->hidden_size * sizeof(float));
+    }
+    if (infer_ctx->use_skip && infer_ctx->skip_msg.mode == SKIP_LAUREL_RW) {
+        infer_ctx->skip_msg.grad_alpha_raw = 0.0f;
+    }
 }
 
 /**
@@ -262,6 +273,27 @@ static void gnn_apply_parameter_update(GnnTrainContext* context) {
         infer_ctx->output_bias[value_index] -=
             context->config.learning_rate * context->output_bias_grad[value_index];
     }
+
+    /* ── P0 parameter updates ── */
+    if (infer_ctx->norm_gamma_h != NULL && context->norm_gamma_grad != NULL) {
+        for (value_index = 0U; value_index < config->hidden_size; ++value_index) {
+            infer_ctx->norm_gamma_h[value_index] -= context->config.learning_rate *
+                context->norm_gamma_grad[value_index];
+        }
+    }
+    if (infer_ctx->use_skip && infer_ctx->skip_msg.mode == SKIP_LAUREL_RW) {
+        infer_ctx->skip_msg.alpha_raw -= context->config.learning_rate *
+            infer_ctx->skip_msg.grad_alpha_raw;
+    }
+}
+
+/**
+ * @brief Return 1 if any P0 module is active, 0 otherwise.
+ */
+static int gnn_has_p0(const GnnInferContext* infer_ctx) {
+    return (infer_ctx->use_rms_norm && infer_ctx->norm_gamma_h != NULL)
+        || infer_ctx->use_dropout
+        || (infer_ctx->use_skip && infer_ctx->skip_msg.mode != SKIP_NONE);
 }
 
 /**
@@ -439,10 +471,46 @@ static int gnn_backpropagate(
                 }
             }
 
+        {
+            float* dh_node = stage_grad + (node_index * config->hidden_size);
+            const float* act_src;
+            int p0 = gnn_has_p0(infer_ctx);
+
+            if (p0) {
+                /* ── P0 backward: Skip → Dropout → RMSNorm (reverse of forward) ── */
+                if (infer_ctx->use_skip && infer_ctx->skip_msg.mode != SKIP_NONE) {
+                    size_t co = (pass_index * stage_stride) + (node_index * config->hidden_size);
+                    skip_backward(context->skip_temp_dF, context->skip_temp_dX,
+                                 context->skip_fx_cache + co,
+                                 context->skip_x_cache + co,
+                                 dh_node, config->hidden_size, &infer_ctx->skip_msg);
+                    for (hidden_index = 0U; hidden_index < config->hidden_size; ++hidden_index) {
+                        dh_node[hidden_index] = context->skip_temp_dF[hidden_index];
+                        previous_stage_grad[(node_index * config->hidden_size) + hidden_index] +=
+                            context->skip_temp_dX[hidden_index];
+                    }
+                }
+                if (infer_ctx->use_dropout) {
+                    dropout_backward(dh_node, dh_node, config->hidden_size,
+                                   &infer_ctx->dropout_msg);
+                }
+                if (infer_ctx->use_rms_norm && infer_ctx->norm_gamma_h != NULL) {
+                    size_t co = (pass_index * stage_stride) + (node_index * config->hidden_size);
+                    rms_norm_backward(dh_node, context->norm_gamma_grad,
+                                     dh_node, context->pre_norm_cache + co,
+                                     infer_ctx->norm_gamma_h,
+                                     config->hidden_size, infer_ctx->norm_epsilon);
+                }
+                act_src = context->pre_norm_cache + (pass_index * stage_stride)
+                    + (node_index * config->hidden_size);
+            } else {
+                act_src = current_stage + (node_index * config->hidden_size);
+            }
+
             for (hidden_index = 0U; hidden_index < config->hidden_size; ++hidden_index) {
-                float delta = stage_grad[(node_index * config->hidden_size) + hidden_index] *
+                float delta = dh_node[hidden_index] *
                     gnn_activation_derivative_from_output(
-                        current_stage[(node_index * config->hidden_size) + hidden_index],
+                        act_src[hidden_index],
                         config->hidden_activation
                     );
                 size_t source_hidden;
@@ -459,6 +527,7 @@ static int gnn_backpropagate(
                     aggregated_grad[source_hidden] += infer_ctx->message_weight[weight_index] * delta;
                 }
             }
+        }
 
             if (neighbor_count > 0U) {
                 for (slot_index = 0U; slot_index < config->slot_count; ++slot_index) {
@@ -486,22 +555,46 @@ static int gnn_backpropagate(
             continue;
         }
 
-        for (hidden_index = 0U; hidden_index < config->hidden_size; ++hidden_index) {
-            float delta = stage_grad[(node_index * config->hidden_size) + hidden_index] *
-                gnn_activation_derivative_from_output(
-                    previous_stage[(node_index * config->hidden_size) + hidden_index],
-                    config->hidden_activation
-                );
-            size_t feature_index;
+        {
+            float* dh_node = stage_grad + (node_index * config->hidden_size);
+            const float* act_src;
+            int p0 = gnn_has_p0(infer_ctx);
 
-            context->input_bias_grad[hidden_index] += delta;
-            for (feature_index = 0U; feature_index < config->node_feature_size; ++feature_index) {
-                size_t weight_index = (hidden_index * config->node_feature_size) + feature_index;
+            if (p0) {
+                /* ── P0 encoder backward: Dropout → RMSNorm (no skip at stage 0) ── */
+                if (infer_ctx->use_dropout) {
+                    dropout_backward(dh_node, dh_node, config->hidden_size,
+                                   &infer_ctx->dropout_msg);
+                }
+                if (infer_ctx->use_rms_norm && infer_ctx->norm_gamma_h != NULL) {
+                    rms_norm_backward(dh_node, context->norm_gamma_grad,
+                                     dh_node,
+                                     context->pre_norm_cache + (node_index * config->hidden_size),
+                                     infer_ctx->norm_gamma_h,
+                                     config->hidden_size, infer_ctx->norm_epsilon);
+                }
+                act_src = context->pre_norm_cache + (node_index * config->hidden_size);
+            } else {
+                act_src = previous_stage + (node_index * config->hidden_size);
+            }
 
-                context->input_weight_grad[weight_index] += delta * input_node[feature_index];
-                if (input_gradient != NULL) {
-                    input_gradient[(node_index * config->node_feature_size) + feature_index] +=
-                        infer_ctx->input_weight[weight_index] * delta;
+            for (hidden_index = 0U; hidden_index < config->hidden_size; ++hidden_index) {
+                float delta = dh_node[hidden_index] *
+                    gnn_activation_derivative_from_output(
+                        act_src[hidden_index],
+                        config->hidden_activation
+                    );
+                size_t feature_index;
+
+                context->input_bias_grad[hidden_index] += delta;
+                for (feature_index = 0U; feature_index < config->node_feature_size; ++feature_index) {
+                    size_t weight_index = (hidden_index * config->node_feature_size) + feature_index;
+
+                    context->input_weight_grad[weight_index] += delta * input_node[feature_index];
+                    if (input_gradient != NULL) {
+                        input_gradient[(node_index * config->node_feature_size) + feature_index] +=
+                            infer_ctx->input_weight[weight_index] * delta;
+                    }
                 }
             }
         }
@@ -576,6 +669,42 @@ GnnTrainContext* nn_gnn_train_create(void* infer_ctx_ptr, const GnnTrainConfig* 
         }
     }
 
+    /* ── P0 training buffers ── */
+    {
+        if (infer_ctx->use_rms_norm) {
+            context->norm_gamma_grad = (float*)calloc(infer_config->hidden_size, sizeof(float));
+            context->pre_norm_cache  = (float*)calloc((infer_config->message_passes + 1U)
+                * gnn_stage_stride(infer_config), sizeof(float));
+            if (context->norm_gamma_grad == NULL || context->pre_norm_cache == NULL) {
+                nn_gnn_train_destroy(context);
+                return NULL;
+            }
+        }
+        if (infer_ctx->use_skip && infer_ctx->skip_msg.mode != SKIP_NONE) {
+            context->skip_x_cache  = (float*)calloc((infer_config->message_passes + 1U)
+                * gnn_stage_stride(infer_config), sizeof(float));
+            context->skip_fx_cache = (float*)calloc((infer_config->message_passes + 1U)
+                * gnn_stage_stride(infer_config), sizeof(float));
+            context->skip_temp_dF  = (float*)calloc(infer_config->hidden_size, sizeof(float));
+            context->skip_temp_dX  = (float*)calloc(infer_config->hidden_size, sizeof(float));
+            if (context->skip_x_cache == NULL || context->skip_fx_cache == NULL ||
+                context->skip_temp_dF == NULL || context->skip_temp_dX == NULL) {
+                nn_gnn_train_destroy(context);
+                return NULL;
+            }
+        }
+
+        /* Wire infer context P0 cache pointers to train-owned buffers */
+        infer_ctx->p0_pre_norm      = context->pre_norm_cache;
+        infer_ctx->p0_skip_x_cache  = context->skip_x_cache;
+        infer_ctx->p0_skip_fx_cache = context->skip_fx_cache;
+    }
+
+    /* Set training-mode flag for dropout */
+    if (infer_ctx->use_dropout) {
+        infer_ctx->dropout_msg.training = 1;
+    }
+
     return context;
 }
 
@@ -585,6 +714,16 @@ GnnTrainContext* nn_gnn_train_create(void* infer_ctx_ptr, const GnnTrainConfig* 
 void nn_gnn_train_destroy(GnnTrainContext* context) {
     if (context == NULL) {
         return;
+    }
+
+    /* Clear infer context's P0 cache pointers */
+    if (context->infer_ctx != NULL) {
+        context->infer_ctx->p0_pre_norm      = NULL;
+        context->infer_ctx->p0_skip_x_cache  = NULL;
+        context->infer_ctx->p0_skip_fx_cache = NULL;
+        if (context->infer_ctx->use_dropout) {
+            context->infer_ctx->dropout_msg.training = 0;
+        }
     }
 
     arena_destroy(context->arena);
@@ -598,6 +737,13 @@ void nn_gnn_train_destroy(GnnTrainContext* context) {
     free(context->readout_secondary_grad);
     free(context->readout_neighbor_grad);
     free(context->output_bias_grad);
+    /* P0 training buffers */
+    free(context->norm_gamma_grad);
+    free(context->pre_norm_cache);
+    free(context->skip_x_cache);
+    free(context->skip_fx_cache);
+    free(context->skip_temp_dF);
+    free(context->skip_temp_dX);
     free(context);
 }
 

@@ -8,6 +8,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include "../../residual/skip_connection.h"
 
 /**
  * @brief Activation types used by the tiny RNN backend.
@@ -28,6 +29,13 @@ typedef struct {
     RnnActivationType hidden_activation;  /**< Activation applied to recurrent state updates. */
     RnnActivationType output_activation;  /**< Activation applied to final control axes. */
     uint32_t seed;                        /**< Deterministic parameter initialization seed. */
+    /* ── P0 shared-module switches ── */
+    int      use_rms_norm;               /**< 0 = disabled, 1 = enabled. */
+    float    norm_epsilon;               /**< RMSNorm epsilon (default 1e-5). */
+    int      use_dropout;                /**< 0 = disabled, 1 = enabled. */
+    float    dropout_rate;               /**< keep_prob for shared dropout API. */
+    int      use_skip;                   /**< 0 = disabled, 1 = enabled. */
+    SkipMode skip_mode;                  /**< SKIP_NONE / SKIP_IDENTITY / SKIP_LAUREL_RW. */
 } RnnConfig;
 
 /**

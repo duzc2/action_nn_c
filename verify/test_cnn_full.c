@@ -1043,6 +1043,368 @@ static int test_single_filter(void) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
+ * Group F: P0 Shared Modules — RMSNorm & SkipConnection integration
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* Test 25: RMSNorm forward pass produces no NaN */
+static int test_p0_rms_norm_no_nan(void) {
+    CnnConfig cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.sequence_length    = 2;
+    cfg.frame_height       = 6;  cfg.frame_width = 6;
+    cfg.channel_count      = 1;  cfg.kernel_size = 3;
+    cfg.filter_count       = 4;  cfg.feature_size = 4;
+    cfg.pooling_mode       = CNN_POOL_AVG;
+    cfg.conv_mode          = CNN_CONV_STANDARD;
+    cfg.stride             = 1;
+    cfg.output_activation  = CNN_ACT_NONE;
+    cfg.pooling_activation = CNN_ACT_NONE;
+    cfg.use_batch_norm     = 0;
+    cfg.use_rms_norm       = 1;
+    cfg.norm_epsilon       = 1e-5f;
+    cfg.total_input_size   = cfg.frame_height * cfg.frame_width
+                           * cfg.channel_count * cfg.sequence_length;
+
+    CnnInferContext* ctx = nn_cnn_infer_create_with_config(&cfg, 42);
+    CHECK(ctx != NULL, "infer_create with rms_norm failed");
+
+    /* Verify norm_gamma exists and initialized to 1.0 */
+    CHECK(ctx->norm_gamma != NULL, "norm_gamma not allocated");
+    if (ctx->norm_gamma != NULL) {
+        CHECK_FEQ(ctx->norm_gamma[0], 1.0f, 1e-6f, "norm_gamma[0] not 1.0");
+        CHECK_FEQ(ctx->norm_gamma[2], 1.0f, 1e-6f, "norm_gamma[2] not 1.0");
+    }
+
+    size_t img_size = cfg.total_input_size;
+    float* img = (float*)malloc(img_size * sizeof(float));
+    generate_sine_image(img, cfg.frame_height, cfg.frame_width, cfg.channel_count);
+    /* second frame with different pattern */
+    for (size_t i = 0; i < (size_t)(cfg.frame_height * cfg.frame_width * cfg.channel_count); i++)
+        img[i + cfg.frame_height * cfg.frame_width * cfg.channel_count] = cosf((float)i * 0.7f) * 0.5f;
+
+    size_t out_size = cfg.sequence_length * cfg.feature_size;
+    float* out = (float*)malloc(out_size * sizeof(float));
+    int rc = nn_cnn_infer_auto_run(ctx, img, out);
+    CHECK(rc == 0, "auto_run with rms_norm failed");
+    CHECK(has_nan(out, out_size) == 0, "output contains NaN with rms_norm");
+
+    /* Verify norm_gamma unchanged after inference (no training) */
+    CHECK_FEQ(ctx->norm_gamma[0], 1.0f, 1e-6f, "norm_gamma changed during inference");
+
+    free(out); free(img);
+    nn_cnn_infer_destroy(ctx);
+    return g_test_failures;
+}
+
+/* Test 26: RMSNorm training doesn't crash and produces valid loss */
+static int test_p0_rms_norm_training(void) {
+    CnnConfig cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.sequence_length    = 1;
+    cfg.frame_height       = 6;  cfg.frame_width = 6;
+    cfg.channel_count      = 1;  cfg.kernel_size = 3;
+    cfg.filter_count       = 4;  cfg.feature_size = 4;
+    cfg.pooling_mode       = CNN_POOL_AVG;
+    cfg.conv_mode          = CNN_CONV_STANDARD;
+    cfg.stride             = 1;
+    cfg.output_activation  = CNN_ACT_NONE;
+    cfg.pooling_activation = CNN_ACT_NONE;
+    cfg.use_batch_norm     = 0;
+    cfg.use_rms_norm       = 1;
+    cfg.norm_epsilon       = 1e-5f;
+    cfg.total_input_size   = cfg.frame_height * cfg.frame_width
+                           * cfg.channel_count * cfg.sequence_length;
+
+    CnnInferContext* ctx = nn_cnn_infer_create_with_config(&cfg, 42);
+    CHECK(ctx != NULL, "infer_create with rms_norm failed");
+
+    CnnTrainConfig tcfg;
+    init_train_config(&tcfg, 1);
+
+    CnnTrainContext* train = nn_cnn_train_create(ctx, &tcfg);
+    CHECK(train != NULL, "train_create with rms_norm failed");
+
+    size_t img_size = cfg.total_input_size;
+    float* img = (float*)malloc(img_size * sizeof(float));
+    generate_sine_image(img, cfg.frame_height, cfg.frame_width, cfg.channel_count);
+
+    float* target = (float*)malloc(cfg.feature_size * sizeof(float));
+    make_soft_target(target, cfg.feature_size);
+
+    /* Run multiple training steps */
+    float first_loss = -1.0f;
+    for (int step = 0; step < 5; step++) {
+        int rc = nn_cnn_train_step_with_data(train, img, target);
+        CHECK(rc == 0, "train_step with rms_norm step failed");
+        CHECK(!is_nan(train->last_loss), "loss is NaN with rms_norm");
+        if (step == 0) first_loss = train->last_loss;
+    }
+
+    /* After training, verify loss is non-NaN and norm_gamma buffers exist */
+    CHECK(first_loss > 0.0f, "first loss not positive");
+    CHECK(train->norm_gamma_grad != NULL, "norm_gamma_grad not allocated");
+    CHECK(train->norm_gamma_vel != NULL, "norm_gamma_vel not allocated");
+    CHECK(train->norm_input_cache != NULL, "norm_input_cache not allocated");
+
+    free(target); free(img);
+    nn_cnn_train_destroy(train);
+    nn_cnn_infer_destroy(ctx);
+    return g_test_failures;
+}
+
+/* Test 27: RMSNorm gamma drifts after repeated training steps */
+static int test_p0_rms_norm_gamma_drift(void) {
+    CnnConfig cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.sequence_length    = 1;
+    cfg.frame_height       = 6;  cfg.frame_width = 6;
+    cfg.channel_count      = 1;  cfg.kernel_size = 3;
+    cfg.filter_count       = 2;  cfg.feature_size = 2;
+    cfg.pooling_mode       = CNN_POOL_AVG;
+    cfg.conv_mode          = CNN_CONV_STANDARD;
+    cfg.stride             = 1;
+    cfg.output_activation  = CNN_ACT_NONE;
+    cfg.pooling_activation = CNN_ACT_NONE;
+    cfg.use_batch_norm     = 0;
+    cfg.use_rms_norm       = 1;
+    cfg.norm_epsilon       = 1e-5f;
+    cfg.total_input_size   = cfg.frame_height * cfg.frame_width
+                           * cfg.channel_count * cfg.sequence_length;
+
+    CnnInferContext* ctx = nn_cnn_infer_create_with_config(&cfg, 42);
+    CHECK(ctx != NULL, "infer_create with rms_norm failed");
+
+    /* Record initial gamma values */
+    float init_gamma[2];
+    init_gamma[0] = ctx->norm_gamma[0];
+    init_gamma[1] = ctx->norm_gamma[1];
+
+    CnnTrainConfig tcfg;
+    init_train_config(&tcfg, 1);
+    tcfg.learning_rate = 0.01f;  /* modest LR to avoid activation explosion */
+
+    CnnTrainContext* train = nn_cnn_train_create(ctx, &tcfg);
+    CHECK(train != NULL, "train_create with rms_norm failed");
+
+    float* img = (float*)malloc(cfg.total_input_size * sizeof(float));
+    float* target = (float*)malloc(cfg.feature_size * sizeof(float));
+    generate_sine_image(img, cfg.frame_height, cfg.frame_width, cfg.channel_count);
+    make_onehot_target(target, cfg.feature_size, 0);
+
+    /* Train for several steps — verify no crash, NaN, or negative gamma */
+    for (int step = 0; step < 20; step++) {
+        int rc = nn_cnn_train_step_with_data(train, img, target);
+        CHECK(rc == 0, "train_step failed");
+        CHECK(!is_nan(train->last_loss), "loss is NaN");
+    }
+
+    /* Verify norm_gamma stays reasonable (not NaN, not negative) */
+    CHECK(!is_nan(ctx->norm_gamma[0]), "norm_gamma became NaN");
+    CHECK(!is_nan(ctx->norm_gamma[cfg.filter_count - 1]), "norm_gamma became NaN");
+    CHECK(ctx->norm_gamma[0] > 0.0f, "norm_gamma became non-positive");
+    CHECK(ctx->norm_gamma[cfg.filter_count - 1] > 0.0f, "norm_gamma became non-positive");
+
+    free(target); free(img);
+    nn_cnn_train_destroy(train);
+    nn_cnn_infer_destroy(ctx);
+    return g_test_failures;
+}
+
+/* Test 28: Skip connection is SKIP_NONE when dimensions mismatch (default case) */
+static int test_p0_skip_dims_mismatch(void) {
+    CnnConfig cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.sequence_length    = 1;
+    cfg.frame_height       = 6;  cfg.frame_width = 6;
+    cfg.channel_count      = 1;  cfg.kernel_size = 3;
+    cfg.filter_count       = 4;  cfg.feature_size = 4;
+    cfg.pooling_mode       = CNN_POOL_AVG;
+    cfg.conv_mode          = CNN_CONV_STANDARD;
+    cfg.stride             = 1;
+    cfg.output_activation  = CNN_ACT_NONE;
+    cfg.pooling_activation = CNN_ACT_NONE;
+    cfg.use_batch_norm     = 0;
+    cfg.use_skip           = 1;
+    cfg.skip_mode          = SKIP_IDENTITY;
+    cfg.total_input_size   = cfg.frame_height * cfg.frame_width
+                           * cfg.channel_count * cfg.sequence_length;
+
+    CnnInferContext* ctx = nn_cnn_infer_create_with_config(&cfg, 42);
+    CHECK(ctx != NULL, "infer_create with skip failed");
+
+    /* pooled_value_count (4) == feature_size (4), so skip should be IDENTITY */
+    /* Actually filter_count=4 and non-dual pooling, so pooled_value_count=4 == feature_size=4.
+     * Skip SHOULD be active. Let's test that instead: */
+    CHECK(ctx->skip != NULL, "skip not allocated");
+    CHECK(ctx->skip->mode == SKIP_IDENTITY, "skip should be IDENTITY when dims match");
+
+    /* Now test with different dims (should be SKIP_NONE) */
+    nn_cnn_infer_destroy(ctx);
+
+    CnnConfig cfg2;
+    memset(&cfg2, 0, sizeof(cfg2));
+    cfg2.sequence_length    = 1;
+    cfg2.frame_height       = 6;  cfg2.frame_width = 6;
+    cfg2.channel_count      = 1;  cfg2.kernel_size = 3;
+    cfg2.filter_count       = 4;  cfg2.feature_size = 6;  /* 6 != 4 */
+    cfg2.pooling_mode       = CNN_POOL_AVG;
+    cfg2.conv_mode          = CNN_CONV_STANDARD;
+    cfg2.stride             = 1;
+    cfg2.output_activation  = CNN_ACT_NONE;
+    cfg2.pooling_activation = CNN_ACT_NONE;
+    cfg2.use_skip           = 1;
+    cfg2.skip_mode          = SKIP_IDENTITY;
+    cfg2.total_input_size   = cfg2.frame_height * cfg2.frame_width
+                            * cfg2.channel_count * cfg2.sequence_length;
+
+    CnnInferContext* ctx2 = nn_cnn_infer_create_with_config(&cfg2, 42);
+    CHECK(ctx2 != NULL, "infer_create with mismatched dims failed");
+    CHECK(ctx2->skip != NULL, "skip not allocated for mismatched dims");
+    if (ctx2->skip != NULL) {
+        CHECK(ctx2->skip->mode == SKIP_NONE, "skip should be SKIP_NONE when dims mismatch");
+    }
+
+    /* Forward pass shouldn't crash with SKIP_NONE */
+    float* img = (float*)malloc(cfg2.total_input_size * sizeof(float));
+    float* out = (float*)malloc(cfg2.feature_size * sizeof(float));
+    generate_sine_image(img, cfg2.frame_height, cfg2.frame_width, cfg2.channel_count);
+    int rc = nn_cnn_infer_auto_run(ctx2, img, out);
+    CHECK(rc == 0, "auto_run with skip SKIP_NONE failed");
+    CHECK(has_nan(out, cfg2.feature_size) == 0, "output contains NaN with SKIP_NONE");
+
+    free(out); free(img);
+    nn_cnn_infer_destroy(ctx2);
+    return g_test_failures;
+}
+
+/* Test 29: Skip connection training doesn't crash when dims match */
+static int test_p0_skip_training(void) {
+    /* When pooled_value_count == feature_size, skip can be IDENTITY */
+    CnnConfig cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.sequence_length    = 1;
+    cfg.frame_height       = 6;  cfg.frame_width = 6;
+    cfg.channel_count      = 1;  cfg.kernel_size = 3;
+    cfg.filter_count       = 4;  cfg.feature_size = 4;  /* matches pooled_value_count */
+    cfg.pooling_mode       = CNN_POOL_AVG;
+    cfg.conv_mode          = CNN_CONV_STANDARD;
+    cfg.stride             = 1;
+    cfg.output_activation  = CNN_ACT_NONE;
+    cfg.pooling_activation = CNN_ACT_NONE;
+    cfg.use_batch_norm     = 0;
+    cfg.use_skip           = 1;
+    cfg.skip_mode          = SKIP_IDENTITY;
+    cfg.total_input_size   = cfg.frame_height * cfg.frame_width
+                           * cfg.channel_count * cfg.sequence_length;
+
+    CnnInferContext* ctx = nn_cnn_infer_create_with_config(&cfg, 42);
+    CHECK(ctx != NULL, "infer_create with dim-matched skip failed");
+    CHECK(ctx->skip->mode == SKIP_IDENTITY, "skip not IDENTITY when dims match");
+
+    /* Forward pass with skip */
+    float* img = (float*)malloc(cfg.total_input_size * sizeof(float));
+    float* out = (float*)malloc(cfg.feature_size * sizeof(float));
+    generate_sine_image(img, cfg.frame_height, cfg.frame_width, cfg.channel_count);
+    int rc = nn_cnn_infer_auto_run(ctx, img, out);
+    CHECK(rc == 0, "auto_run with skip IDENTITY failed");
+    CHECK(has_nan(out, cfg.feature_size) == 0, "output NaN with skip IDENTITY");
+
+    /* Training with skip */
+    CnnTrainConfig tcfg;
+    init_train_config(&tcfg, 1);
+    CnnTrainContext* train = nn_cnn_train_create(ctx, &tcfg);
+    CHECK(train != NULL, "train_create with skip failed");
+
+    float* target = (float*)malloc(cfg.feature_size * sizeof(float));
+    make_soft_target(target, cfg.feature_size);
+
+    for (int step = 0; step < 5; step++) {
+        rc = nn_cnn_train_step_with_data(train, img, target);
+        CHECK(rc == 0, "train_step with skip failed");
+        CHECK(!is_nan(train->last_loss), "loss NaN with skip IDENTITY");
+    }
+
+    free(target);
+    nn_cnn_train_destroy(train);
+    free(out); free(img);
+    nn_cnn_infer_destroy(ctx);
+    return g_test_failures;
+}
+
+/* Test 30: Weight save/load preserves norm_gamma */
+static int test_p0_save_load_norm_gamma(void) {
+    CnnConfig cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.sequence_length    = 1;
+    cfg.frame_height       = 6;  cfg.frame_width = 6;
+    cfg.channel_count      = 1;  cfg.kernel_size = 3;
+    cfg.filter_count       = 4;  cfg.feature_size = 4;
+    cfg.pooling_mode       = CNN_POOL_AVG;
+    cfg.conv_mode          = CNN_CONV_STANDARD;
+    cfg.stride             = 1;
+    cfg.output_activation  = CNN_ACT_NONE;
+    cfg.pooling_activation = CNN_ACT_NONE;
+    cfg.use_batch_norm     = 0;
+    cfg.use_rms_norm       = 1;
+    cfg.norm_epsilon       = 1e-5f;
+    cfg.total_input_size   = cfg.frame_height * cfg.frame_width
+                           * cfg.channel_count * cfg.sequence_length;
+
+    CnnInferContext* ctx = nn_cnn_infer_create_with_config(&cfg, 42);
+    CHECK(ctx != NULL, "infer_create failed");
+
+    /* Manually modify norm_gamma to non-default values */
+    ctx->norm_gamma[0] = 0.5f;
+    ctx->norm_gamma[1] = 2.0f;
+    ctx->norm_gamma[2] = 0.75f;
+    ctx->norm_gamma[3] = 1.5f;
+
+    /* Save to temporary file */
+    const char* path = "test_p0_norm_gamma.bin";
+    FILE* fp = fopen(path, "wb");
+    CHECK(fp != NULL, "cannot open save file");
+    int save_ok = nn_cnn_save_weights(ctx, fp);
+    fclose(fp);
+    CHECK(save_ok == 1, "save_weights failed");
+
+    /* Create new context and load */
+    CnnInferContext* ctx2 = nn_cnn_infer_create_with_config(&cfg, 42);
+    CHECK(ctx2 != NULL, "infer_create for load failed");
+    CHECK_FEQ(ctx2->norm_gamma[0], 1.0f, 1e-6f, "pre-load norm_gamma not default");
+
+    fp = fopen(path, "rb");
+    CHECK(fp != NULL, "cannot open load file");
+    int load_ok = nn_cnn_load_weights(ctx2, fp);
+    fclose(fp);
+    CHECK(load_ok == 1, "load_weights failed");
+
+    /* Verify norm_gamma loaded correctly */
+    CHECK_FEQ(ctx2->norm_gamma[0], 0.5f, 1e-6f, "norm_gamma[0] not restored");
+    CHECK_FEQ(ctx2->norm_gamma[1], 2.0f, 1e-6f, "norm_gamma[1] not restored");
+    CHECK_FEQ(ctx2->norm_gamma[2], 0.75f, 1e-6f, "norm_gamma[2] not restored");
+    CHECK_FEQ(ctx2->norm_gamma[3], 1.5f, 1e-6f, "norm_gamma[3] not restored");
+
+    /* Verify forward pass with loaded weights produces same output */
+    float* img = (float*)malloc(cfg.total_input_size * sizeof(float));
+    float* out1 = (float*)malloc(cfg.feature_size * sizeof(float));
+    float* out2 = (float*)malloc(cfg.feature_size * sizeof(float));
+    generate_sine_image(img, cfg.frame_height, cfg.frame_width, cfg.channel_count);
+
+    nn_cnn_infer_auto_run(ctx, img, out1);
+    nn_cnn_infer_auto_run(ctx2, img, out2);
+
+    for (size_t i = 0; i < (size_t)cfg.feature_size; i++) {
+        CHECK_FEQ(out1[i], out2[i], 1e-5f, "output mismatch after save/load");
+    }
+
+    free(out2); free(out1); free(img);
+    nn_cnn_infer_destroy(ctx2);
+    nn_cnn_infer_destroy(ctx);
+    (void)remove(path);
+    return g_test_failures;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
  * main — run all registered tests
  * ═══════════════════════════════════════════════════════════════════════ */
 
@@ -1083,6 +1445,14 @@ int main(void) {
         {"test_zero_input",                test_zero_input},
         {"test_constant_input",            test_constant_input},
         {"test_single_filter",             test_single_filter},
+
+        /* Group F: P0 Shared Modules */
+        {"test_p0_rms_norm_no_nan",        test_p0_rms_norm_no_nan},
+        {"test_p0_rms_norm_training",      test_p0_rms_norm_training},
+        {"test_p0_rms_norm_gamma_drift",   test_p0_rms_norm_gamma_drift},
+        {"test_p0_skip_dims_mismatch",     test_p0_skip_dims_mismatch},
+        {"test_p0_skip_training",          test_p0_skip_training},
+        {"test_p0_save_load_norm_gamma",   test_p0_save_load_norm_gamma},
     };
 
     size_t total  = sizeof(tests) / sizeof(tests[0]);

@@ -7,7 +7,7 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 add_definitions(-D_UNUSED)
 
 include(${CMAKE_CURRENT_LIST_DIR}/../demo/demo_common.cmake)
-action_c_enable_network_types(TYPES cnn cnn_dual_pool mlp)
+action_c_enable_network_types(TYPES cnn cnn_dual_pool mlp transformer)
 action_c_add_core_subdirectory()
 
 # ── test_stride: unit-level stride verification ──
@@ -68,10 +68,15 @@ add_executable(test_bn_consistency test_bn_consistency.c)
 target_include_directories(test_bn_consistency PRIVATE "${ACTION_C_ROOT}/src")
 target_link_libraries(test_bn_consistency PRIVATE nn_train_core)
 
-# ── test_cnn_full: comprehensive CNN unit test (24 test cases) ──
+# ── test_cnn_full: comprehensive CNN unit test (30 test cases) ──
 add_executable(test_cnn_full test_cnn_full.c)
 target_include_directories(test_cnn_full PRIVATE "${ACTION_C_ROOT}/src")
 target_link_libraries(test_cnn_full PRIVATE nn_train_core)
+
+# ── test_nn_p0_integration: MLP + CNN P0 shared-module integration (20 tests) ──
+add_executable(test_nn_p0_integration test_nn_p0_integration.c)
+target_include_directories(test_nn_p0_integration PRIVATE "${ACTION_C_ROOT}/src")
+target_link_libraries(test_nn_p0_integration PRIVATE nn_train_core)
 
 # ── test_motion_detect: adaptive threshold + temporal smoother ──
 add_executable(test_motion_detect
@@ -105,3 +110,13 @@ target_include_directories(test_motion_accuracy PRIVATE
     "${ACTION_C_ROOT}/demo/edge_video_preprocess"
 )
 target_link_libraries(test_motion_accuracy PRIVATE nn_train_core)
+
+# ── test_transformer_p0: Transformer P0 shared-module integration ──
+add_executable(test_transformer_p0 test_transformer_p0.c)
+target_include_directories(test_transformer_p0 PRIVATE "${ACTION_C_ROOT}/src")
+target_link_libraries(test_transformer_p0 PRIVATE nn_train_core)
+
+# ── test_tf_debug: Minimal debug test ──
+add_executable(test_tf_debug test_tf_debug.c)
+target_include_directories(test_tf_debug PRIVATE "${ACTION_C_ROOT}/src")
+target_link_libraries(test_tf_debug PRIVATE nn_train_core)

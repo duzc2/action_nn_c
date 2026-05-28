@@ -42,6 +42,7 @@ struct TransformerForwardCache {
     float* value;
     float* attention;
     float* attended;
+    float* attn_out;           /**< Pre-residual attention output (WO @ attended) [state_count] */
     float* projected;
     float* hidden;
     float* pooled;
@@ -59,7 +60,7 @@ float  transformer_vector_norm(const float* values, size_t count);
 /* ─── Unified forward pass ───────────────────────────────────────────── */
 
 int transformer_run_forward(
-    const TransformerInferContext* restrict context,
+    TransformerInferContext* restrict context,
     const char* restrict question,
     struct TransformerForwardCache* restrict cache
 );

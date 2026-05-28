@@ -13,6 +13,9 @@
 #include "mlp_train_ops.h"
 #include "mlp_infer_ops.h"
 #include "mlp_layers.h"
+#include "../../norm/rms_norm.h"
+#include "../../dropout/dropout.h"
+#include "../../residual/skip_connection.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -343,6 +346,8 @@ static int train_forward_pass(MlpTrainContext* ctx,
     MlpDenseLayer* layer;
     const float* current_input;
     size_t i;
+    size_t norm_offset;
+    float epsilon;
 
     if (ctx == NULL || ctx->infer_ctx == NULL || input == NULL) {
         return ACTION_C_ERR_NULL_POINTER;
@@ -354,14 +359,61 @@ static int train_forward_pass(MlpTrainContext* ctx,
         return ACTION_C_ERR_DIM_MISMATCH;
     }
 
+    /* Ensure dropout layers are in training mode. */
+    if (infer_ctx->config->use_dropout && infer_ctx->dropouts != NULL) {
+        for (i = 0; i < infer_ctx->layer_count - 1U; ++i) {
+            if (infer_ctx->dropouts[i] != NULL) infer_ctx->dropouts[i]->training = 1;
+        }
+    }
+
+    epsilon = infer_ctx->config->norm_epsilon;
+    if (epsilon <= 0.0f) epsilon = 1e-5f;
+
     /* Cache the original sample because backprop needs it later. */
     memcpy(ctx->input_buffer, input, infer_ctx->config->input_size * sizeof(float));
 
     /* Materialize each layer activation so the backward pass can reuse it. */
+    norm_offset = 0;
     for (i = 0; i < infer_ctx->layer_count; i++) {
         current_input = (i == 0U) ? ctx->input_buffer : ctx->activations[i - 1U];
         layer = infer_ctx->layers[i];
         mlp_dense_forward(layer, ctx->activations[i], current_input);
+
+        if (i < infer_ctx->layer_count - 1U) {
+            /* ─── Hidden layer: apply optional norm / dropout / skip ─── */
+            int do_norm  = infer_ctx->config->use_rms_norm && infer_ctx->norm_gamma != NULL;
+            int do_drop  = infer_ctx->config->use_dropout && infer_ctx->dropouts != NULL && infer_ctx->dropouts[i] != NULL;
+            int do_skip  = infer_ctx->config->use_skip && infer_ctx->skips != NULL
+                           && infer_ctx->skips[i].mode != SKIP_NONE
+                           && layer->output_size == layer->input_size;
+
+            if (do_norm) {
+                /* Save pre-norm value (dense+activation output) for backward. */
+                memcpy(ctx->norm_input_cache[i], ctx->activations[i],
+                       layer->output_size * sizeof(float));
+                /* Apply RMSNorm in-place on activations[i]. */
+                rms_norm_forward(ctx->activations[i], ctx->activations[i],
+                    infer_ctx->norm_gamma + norm_offset,
+                    layer->output_size, epsilon);
+            }
+
+            if (do_drop) {
+                /* Dropout in-place (only in training mode). */
+                dropout_forward(ctx->activations[i], ctx->activations[i],
+                    layer->output_size, infer_ctx->dropouts[i]);
+            }
+
+            if (do_skip) {
+                /* Save pre-skip value (norm+dropout output) for backward. */
+                memcpy(ctx->skip_module_cache[i], ctx->activations[i],
+                       layer->output_size * sizeof(float));
+                /* Apply skip in-place on activations[i]. */
+                skip_forward(ctx->activations[i], ctx->activations[i],
+                    current_input, layer->output_size, &infer_ctx->skips[i]);
+            }
+
+            norm_offset += layer->output_size;
+        }
     }
 
     /* Mirror the final activation into the infer context so shared callers see fresh outputs. */
@@ -399,6 +451,20 @@ static void mlp_zero_gradients(MlpTrainContext* ctx) {
             (void)memset(ctx->grads[i].bias_grad, 0, output_size * sizeof(float));
         }
     }
+
+    /* P0: zero shared-module gradient accumulators at batch start */
+    if (ctx->norm_gamma_grads != NULL) {
+        (void)memset(ctx->norm_gamma_grads, 0, ctx->total_norm_dim * sizeof(float));
+    }
+    if (ctx->skip_alpha_raw_grads != NULL) {
+        (void)memset(ctx->skip_alpha_raw_grads, 0, ctx->layer_count * sizeof(float));
+    }
+    /* Also clear accumulated gradients on the SkipConnection objects themselves. */
+    if (infer_ctx->skips != NULL) {
+        for (i = 0U; i < infer_ctx->layer_count; ++i) {
+            infer_ctx->skips[i].grad_alpha_raw = 0.0f;
+        }
+    }
 }
 
 /**
@@ -420,6 +486,8 @@ static int train_backward_pass(
     MlpInferContext* infer_ctx;
     float* current_delta;
     float* next_delta;
+    float* d_fx;          /* P0: temp buffer for skip backward d_module_out */
+    float* d_skip_in;     /* P0: temp buffer for skip backward d_input       */
     const float* prev_activation;
     size_t max_size;
     size_t layer_cursor;
@@ -431,12 +499,14 @@ static int train_backward_pass(
 
     infer_ctx = (MlpInferContext*)ctx->infer_ctx;
     max_size = infer_ctx->max_buffer_size;
-    /* Two scratch buffers are enough because backprop only needs adjacent layer deltas.
+    /* P0: extra temp buffers for skip backward.
      * Use arena snapshot/restore to stay off the heap inside the training hot path. */
     _arena_mark = arena_snapshot(ctx->arena);
     current_delta = ARENA_CALLOC(ctx->arena, float, max_size);
-    next_delta = ARENA_CALLOC(ctx->arena, float, max_size);
-    if (current_delta == NULL || next_delta == NULL) {
+    next_delta    = ARENA_CALLOC(ctx->arena, float, max_size);
+    d_fx          = ARENA_CALLOC(ctx->arena, float, max_size);
+    d_skip_in     = ARENA_CALLOC(ctx->arena, float, max_size);
+    if (current_delta == NULL || next_delta == NULL || d_fx == NULL || d_skip_in == NULL) {
         arena_restore(ctx->arena, _arena_mark);
         return ACTION_C_ERR_NO_MEMORY;
     }
@@ -453,11 +523,121 @@ static int train_backward_pass(
         size_t output_size = layer->output_size;
         size_t output_index;
         size_t input_index;
+        int is_hidden = (layer_index < infer_ctx->layer_count - 1U);
 
         /* Reset the previous-layer accumulator before filling it. */
         memset(next_delta, 0, max_size * sizeof(float));
-        /* Convert dL/dA into dL/dZ using the stored post-activation outputs. */
-        activation_derivative(layer->activation, ctx->activations[layer_index], current_delta, output_size);
+
+        /* ─── P0: apply skip / dropout / norm backward (reverse of forward) ─── */
+        if (is_hidden) {
+            const float* skip_module_out = NULL;
+            const float* skip_input_ptr  = NULL;
+            const float* norm_input_ptr  = NULL;
+            size_t norm_off;
+            float epsilon;
+
+            epsilon = infer_ctx->config->norm_epsilon;
+            if (epsilon <= 0.0f) epsilon = 1e-5f;
+
+            /* ---- skip backward ---- */
+            if (infer_ctx->config->use_skip && infer_ctx->skips != NULL
+                && infer_ctx->skips[layer_index].mode != SKIP_NONE
+                && output_size == input_size) {
+                skip_module_out = ctx->skip_module_cache[layer_index];
+                skip_input_ptr  = (layer_index == 0U) ? ctx->input_buffer : ctx->activations[layer_index - 1U];
+
+                memset(d_fx, 0, max_size * sizeof(float));
+                memset(d_skip_in, 0, max_size * sizeof(float));
+
+                skip_backward(d_fx, d_skip_in, skip_module_out, skip_input_ptr,
+                    current_delta, output_size, &infer_ctx->skips[layer_index]);
+
+                /* d_fx replaces current_delta (gradient through module path). */
+                memcpy(current_delta, d_fx, output_size * sizeof(float));
+
+                /* d_skip_in is accumulated to next_delta (gradient through skip path). */
+                for (output_index = 0U; output_index < output_size; ++output_index) {
+                    next_delta[output_index] += d_skip_in[output_index];
+                }
+
+                /* Accumulate per-step alpha_raw gradient (batch-level via skip_alpha_raw_grads). */
+                ctx->skip_alpha_raw_grads[layer_index] += infer_ctx->skips[layer_index].grad_alpha_raw;
+                infer_ctx->skips[layer_index].grad_alpha_raw = 0.0f;
+            }
+
+            /* ---- dropout backward ---- */
+            if (infer_ctx->config->use_dropout && infer_ctx->dropouts != NULL
+                && infer_ctx->dropouts[layer_index] != NULL) {
+                dropout_backward(current_delta, current_delta, output_size,
+                    infer_ctx->dropouts[layer_index]);
+            }
+
+            /* ---- rms_norm backward ---- */
+            if (infer_ctx->config->use_rms_norm && infer_ctx->norm_gamma != NULL) {
+                /* Compute norm_offset = sum of output_sizes of layers 0..layer_index-1 */
+                norm_off = 0;
+                {
+                    size_t k;
+                    for (k = 0; k < layer_index; ++k) {
+                        norm_off += infer_ctx->layers[k]->output_size;
+                    }
+                }
+                norm_input_ptr = ctx->norm_input_cache[layer_index];
+                if (norm_input_ptr != NULL) {
+                    rms_norm_backward(
+                        current_delta,
+                        infer_ctx->norm_dgamma + norm_off,
+                        current_delta,
+                        norm_input_ptr,
+                        infer_ctx->norm_gamma + norm_off,
+                        output_size, epsilon);
+                    /* Accumulate d_gamma into the training-level gradient buffer
+                     * (norm_gamma_grads uses += across samples). */
+                    {
+                        size_t j;
+                        for (j = 0; j < output_size; ++j) {
+                            ctx->norm_gamma_grads[norm_off + j] += infer_ctx->norm_dgamma[norm_off + j];
+                        }
+                    }
+                    /* Also transfer gradient to the skip_backward's expectation.
+                     * Clear norm_dgamma so the next layer doesn't pick up stale values. */
+                    memset(infer_ctx->norm_dgamma + norm_off, 0, output_size * sizeof(float));
+                }
+            }
+        }
+
+        /* Convert dL/dA into dL/dZ using the stored post-activation outputs.
+         *
+         * When RMSNorm was applied, the "activation" stored for this layer is
+         * the *pre-norm* value.  For skip-backward we use the cached module
+         * output; for norm-backward we use the stored pre-norm value.  In both
+         * cases the activation_derivative should use the pre-norm activation,
+         * which is still the same activations[layer_index] -- because the
+         * training forward pass saved the pre-norm value to norm_input_cache
+         * before applying norm in-place.
+         *
+         * When RMSNorm is NOT used but skip IS used, activations[layer_index]
+         * was modified in-place by skip_forward.  In that case the derivative
+         * needs the pre-skip value instead.  We use skip_module_cache for that.
+         */
+        if (is_hidden) {
+            int do_skip  = infer_ctx->config->use_skip && infer_ctx->skips != NULL
+                           && infer_ctx->skips[layer_index].mode != SKIP_NONE
+                           && output_size == input_size;
+            int do_norm  = infer_ctx->config->use_rms_norm && infer_ctx->norm_gamma != NULL;
+            if (do_skip && !do_norm && ctx->skip_module_cache[layer_index] != NULL) {
+                /* Use pre-skip cache as the activation for derivative computation. */
+                activation_derivative(layer->activation, ctx->skip_module_cache[layer_index],
+                    current_delta, output_size);
+            } else {
+                /* activations[layer_index] holds pre-norm (or pre-skip if no norm). */
+                activation_derivative(layer->activation, ctx->activations[layer_index],
+                    current_delta, output_size);
+            }
+        } else {
+            activation_derivative(layer->activation, ctx->activations[layer_index],
+                current_delta, output_size);
+        }
 
         prev_activation = (layer_index == 0U) ? ctx->input_buffer : ctx->activations[layer_index - 1U];
 
@@ -500,6 +680,7 @@ static void train_update(MlpTrainContext* ctx, size_t step) {
     size_t input_size;
     size_t output_size;
     float lr;
+    float momentum;
 
     if (ctx == NULL || ctx->infer_ctx == NULL) {
         return;
@@ -507,6 +688,7 @@ static void train_update(MlpTrainContext* ctx, size_t step) {
 
     infer_ctx = (MlpInferContext*)ctx->infer_ctx;
     lr = ctx->config.learning_rate;
+    momentum = ctx->config.momentum;
 
     /* Apply the chosen optimizer layer by layer in the same order as forward execution. */
     for (i = 0; i < infer_ctx->layer_count; i++) {
@@ -515,12 +697,33 @@ static void train_update(MlpTrainContext* ctx, size_t step) {
 
         if (ctx->config.optimizer == MLP_OPT_SGD) {
             update_sgd(layer->weights, layer->bias, &ctx->grads[i],
-                       lr, ctx->config.momentum, ctx->config.weight_decay,
+                       lr, momentum, ctx->config.weight_decay,
                        input_size * output_size, output_size);
         } else if (ctx->config.optimizer == MLP_OPT_ADAM) {
             update_adam(layer->weights, layer->bias, &ctx->grads[i],
                        lr, ctx->config.weight_decay, step,
                        input_size * output_size, output_size);
+        }
+    }
+
+    /* P0: update norm_gamma using SGD with momentum */
+    if (ctx->norm_gamma_grads != NULL && ctx->norm_gamma_vel != NULL
+        && infer_ctx->norm_gamma != NULL) {
+        size_t j;
+        for (j = 0; j < ctx->total_norm_dim; ++j) {
+            ctx->norm_gamma_vel[j] = momentum * ctx->norm_gamma_vel[j]
+                                     - lr * ctx->norm_gamma_grads[j];
+            infer_ctx->norm_gamma[j] += ctx->norm_gamma_vel[j];
+        }
+    }
+
+    /* P0: update skip alpha_raw using SGD with momentum */
+    if (ctx->skip_alpha_raw_grads != NULL && ctx->skip_alpha_raw_vel != NULL
+        && infer_ctx->skips != NULL) {
+        for (i = 0; i < infer_ctx->layer_count; ++i) {
+            ctx->skip_alpha_raw_vel[i] = momentum * ctx->skip_alpha_raw_vel[i]
+                                         - lr * ctx->skip_alpha_raw_grads[i];
+            infer_ctx->skips[i].alpha_raw += ctx->skip_alpha_raw_vel[i];
         }
     }
 }
@@ -568,6 +771,15 @@ MlpTrainContext* nn_mlp_train_create(void* infer_ctx, const MlpTrainConfig* conf
         max_size = mlp_ctx->config->output_size;
     }
 
+    /* Compute total norm dimension for P0 gamma arrays. */
+    {
+        size_t k;
+        ctx->total_norm_dim = 0;
+        for (k = 0; k < ctx->layer_count; ++k) {
+            ctx->total_norm_dim += mlp_ctx->layers[k]->output_size;
+        }
+    }
+
     /* Allocate all top-level arrays up front so creation fails early and cleanly. */
     ctx->grads = (MlpLayerGrad*)calloc(ctx->layer_count, sizeof(MlpLayerGrad));
     ctx->activations = (float**)calloc(ctx->layer_count, sizeof(float*));
@@ -584,6 +796,92 @@ MlpTrainContext* nn_mlp_train_create(void* infer_ctx, const MlpTrainConfig* conf
         free(ctx->loss_buffer);
         free(ctx);
         return NULL;
+    }
+
+    /* P0: allocate shared-module training buffers. */
+    ctx->norm_gamma_grads     = NULL;
+    ctx->norm_gamma_vel       = NULL;
+    ctx->skip_alpha_raw_grads = NULL;
+    ctx->skip_alpha_raw_vel   = NULL;
+    ctx->norm_input_cache     = NULL;
+    ctx->skip_module_cache    = NULL;
+
+    if (mlp_ctx->config->use_rms_norm) {
+        ctx->norm_gamma_grads = (float*)calloc(ctx->total_norm_dim, sizeof(float));
+        ctx->norm_gamma_vel   = (float*)calloc(ctx->total_norm_dim, sizeof(float));
+        if (ctx->norm_gamma_grads == NULL || ctx->norm_gamma_vel == NULL) {
+            free(ctx->norm_gamma_grads); free(ctx->norm_gamma_vel);
+            free(ctx->grads); free(ctx->activations);
+            free(ctx->input_buffer); free(ctx->target_buffer); free(ctx->loss_buffer);
+            free(ctx);
+            return NULL;
+        }
+        /* norm_input_cache: per-layer pointer array */
+        ctx->norm_input_cache = (float**)calloc(ctx->layer_count, sizeof(float*));
+        if (ctx->norm_input_cache == NULL) {
+            free(ctx->norm_gamma_grads); free(ctx->norm_gamma_vel);
+            free(ctx->grads); free(ctx->activations);
+            free(ctx->input_buffer); free(ctx->target_buffer); free(ctx->loss_buffer);
+            free(ctx);
+            return NULL;
+        }
+        for (i = 0; i < ctx->layer_count; ++i) {
+            ctx->norm_input_cache[i] = (float*)calloc(mlp_ctx->layers[i]->output_size, sizeof(float));
+            if (ctx->norm_input_cache[i] == NULL) {
+                for (j = 0; j < i; ++j) free(ctx->norm_input_cache[j]);
+                free(ctx->norm_input_cache);
+                free(ctx->norm_gamma_grads); free(ctx->norm_gamma_vel);
+                free(ctx->grads); free(ctx->activations);
+                free(ctx->input_buffer); free(ctx->target_buffer); free(ctx->loss_buffer);
+                free(ctx);
+                return NULL;
+            }
+        }
+    }
+
+    if (mlp_ctx->config->use_skip) {
+        ctx->skip_alpha_raw_grads = (float*)calloc(ctx->layer_count, sizeof(float));
+        ctx->skip_alpha_raw_vel   = (float*)calloc(ctx->layer_count, sizeof(float));
+        if (ctx->skip_alpha_raw_grads == NULL || ctx->skip_alpha_raw_vel == NULL) {
+            free(ctx->skip_alpha_raw_grads); free(ctx->skip_alpha_raw_vel);
+            free(ctx->norm_input_cache); /* details depend on cleanup flow below */
+            free(ctx->norm_gamma_grads); free(ctx->norm_gamma_vel);
+            free(ctx->grads); free(ctx->activations);
+            free(ctx->input_buffer); free(ctx->target_buffer); free(ctx->loss_buffer);
+            free(ctx);
+            return NULL;
+        }
+        /* skip_module_cache: per-layer pointer array */
+        ctx->skip_module_cache = (float**)calloc(ctx->layer_count, sizeof(float*));
+        if (ctx->skip_module_cache == NULL) {
+            free(ctx->skip_alpha_raw_grads); free(ctx->skip_alpha_raw_vel);
+            if (ctx->norm_input_cache) {
+                for (j = 0; j < ctx->layer_count; ++j) free(ctx->norm_input_cache[j]);
+                free(ctx->norm_input_cache);
+            }
+            free(ctx->norm_gamma_grads); free(ctx->norm_gamma_vel);
+            free(ctx->grads); free(ctx->activations);
+            free(ctx->input_buffer); free(ctx->target_buffer); free(ctx->loss_buffer);
+            free(ctx);
+            return NULL;
+        }
+        for (i = 0; i < ctx->layer_count; ++i) {
+            ctx->skip_module_cache[i] = (float*)calloc(mlp_ctx->layers[i]->output_size, sizeof(float));
+            if (ctx->skip_module_cache[i] == NULL) {
+                for (j = 0; j < i; ++j) free(ctx->skip_module_cache[j]);
+                free(ctx->skip_module_cache);
+                free(ctx->skip_alpha_raw_grads); free(ctx->skip_alpha_raw_vel);
+                if (ctx->norm_input_cache) {
+                    for (j = 0; j < ctx->layer_count; ++j) free(ctx->norm_input_cache[j]);
+                    free(ctx->norm_input_cache);
+                }
+                free(ctx->norm_gamma_grads); free(ctx->norm_gamma_vel);
+                free(ctx->grads); free(ctx->activations);
+                free(ctx->input_buffer); free(ctx->target_buffer); free(ctx->loss_buffer);
+                free(ctx);
+                return NULL;
+            }
+        }
     }
 
     /* Each layer receives activation storage, gradients, and optimizer state. */
@@ -661,8 +959,9 @@ MlpTrainContext* nn_mlp_train_create(void* infer_ctx, const MlpTrainConfig* conf
     }
 
     /* Create scratch arena for hot-path temporary allocations (backward_pass deltas).
-     * 4x max_buffer_size covers: current_delta + next_delta + dummy input/target. */
-    ctx->arena = arena_create(mlp_ctx->max_buffer_size * sizeof(float) * 4);
+     * 8x max_buffer_size covers: current_delta + next_delta + d_fx + d_skip_in
+     * (P0 skip backward) + dummy input/target. */
+    ctx->arena = arena_create(mlp_ctx->max_buffer_size * sizeof(float) * 8);
     if (ctx->arena == NULL) {
         nn_mlp_train_destroy(ctx);
         return NULL;
@@ -701,6 +1000,20 @@ void nn_mlp_train_destroy(MlpTrainContext* ctx) {
         free(ctx->activations[i]);
         free(ctx->grads[i].weight_grad);
         free(ctx->grads[i].bias_grad);
+    }
+
+    /* P0: free shared-module training buffers */
+    free(ctx->norm_gamma_grads);
+    free(ctx->norm_gamma_vel);
+    free(ctx->skip_alpha_raw_grads);
+    free(ctx->skip_alpha_raw_vel);
+    if (ctx->norm_input_cache != NULL) {
+        for (i = 0; i < ctx->layer_count; ++i) free(ctx->norm_input_cache[i]);
+        free(ctx->norm_input_cache);
+    }
+    if (ctx->skip_module_cache != NULL) {
+        for (i = 0; i < ctx->layer_count; ++i) free(ctx->skip_module_cache[i]);
+        free(ctx->skip_module_cache);
     }
 
     free(ctx->grads);
@@ -1015,6 +1328,16 @@ int nn_mlp_train_save_checkpoint(MlpTrainContext* ctx, FILE* fp, float best_loss
         }
     }
 
+    /* P0: save norm_gamma if present */
+    if (infer_ctx->config->use_rms_norm && infer_ctx->norm_gamma != NULL) {
+        size_t total_norm = 0;
+        for (i = 0; i < infer_ctx->layer_count; ++i) total_norm += infer_ctx->layers[i]->output_size;
+        rc = (int)fwrite(infer_ctx->norm_gamma, sizeof(float), total_norm, fp);
+        if ((size_t)rc != total_norm) {
+            return 0;
+        }
+    }
+
     return 1;
 }
 
@@ -1061,6 +1384,16 @@ int nn_mlp_train_load_checkpoint(MlpTrainContext* ctx, FILE* fp,
 
         rc = (int)fread(layer->bias, sizeof(float), layer->output_size, fp);
         if ((size_t)rc != layer->output_size) {
+            return 0;
+        }
+    }
+
+    /* P0: load norm_gamma if present */
+    if (infer_ctx->config->use_rms_norm && infer_ctx->norm_gamma != NULL) {
+        size_t total_norm = 0;
+        for (i = 0; i < infer_ctx->layer_count; ++i) total_norm += infer_ctx->layers[i]->output_size;
+        rc = (int)fread(infer_ctx->norm_gamma, sizeof(float), total_norm, fp);
+        if ((size_t)rc != total_norm) {
             return 0;
         }
     }

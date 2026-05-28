@@ -27,6 +27,10 @@ typedef struct {
     float cumulative_loss;              /**< Running loss sum for average tracking. */
     float average_loss;                 /**< Current average loss estimate. */
     float last_loss;                    /**< Most recent step loss for debugging/reporting. */
+    /* ── P0 training buffers ── */
+    float* attn_pre_norm;               /**< attn_out before RMSNorm [state_count] */
+    float* skip_x_cache;                /**< input_states before skip [state_count] */
+    float* skip_fx_cache;               /**< normed attn_out before skip [state_count] */
 } TransformerTrainContext;
 
 int nn_transformer_train_step(void* context);

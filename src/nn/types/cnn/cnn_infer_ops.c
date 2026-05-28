@@ -13,6 +13,8 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../../norm/rms_norm.h"
+#include "../../residual/skip_connection.h"
 #include "../../../utils/error.h"
 
 #define CNN_ABI_VERSION 2U
@@ -170,6 +172,14 @@ static uint64_t cnn_compute_layout_hash(const CnnConfig* config) {
     hash *= prime;
     hash ^= (uint64_t)config->use_batch_norm;
     hash *= prime;
+    hash ^= (uint64_t)config->use_rms_norm;
+    hash *= prime;
+    hash ^= (uint64_t)config->use_dropout;
+    hash *= prime;
+    hash ^= (uint64_t)config->use_skip;
+    hash *= prime;
+    hash ^= (uint64_t)config->skip_mode;
+    hash *= prime;
 
     return hash;
 }
@@ -279,6 +289,41 @@ CnnInferContext* nn_cnn_infer_create_with_config(const CnnConfig* config, uint32
         }
     }
 
+    /* ─── P0 shared-module allocations ───
+     * RMSNorm gamma and SkipConnection only apply
+     * when pooling_mode != CNN_POOL_NONE (pooled → projection path). */
+    if (config->pooling_mode != CNN_POOL_NONE) {
+        {
+            size_t pvi;
+            context->norm_gamma = (float*)calloc(pooled_value_count, sizeof(float));
+            if (context->norm_gamma == NULL) {
+                nn_cnn_infer_destroy(context);
+                return NULL;
+            }
+            for (pvi = 0U; pvi < pooled_value_count; ++pvi) {
+                context->norm_gamma[pvi] = 1.0f;
+            }
+        }
+        context->norm_dgamma = NULL;
+        context->p0_norm_input_cache = NULL;
+        context->p0_skip_module_cache = NULL;
+
+        context->skip = (SkipConnection*)calloc(1U, sizeof(SkipConnection));
+        if (context->skip == NULL) {
+            nn_cnn_infer_destroy(context);
+            return NULL;
+        }
+        skip_init(context->skip,
+            (config->use_skip && pooled_value_count == config->feature_size)
+                ? config->skip_mode : SKIP_NONE);
+    } else {
+        context->norm_gamma         = NULL;
+        context->norm_dgamma        = NULL;
+        context->p0_norm_input_cache = NULL;
+        context->p0_skip_module_cache = NULL;
+        context->skip               = NULL;
+    }
+
     /* ── He (Kaiming) uniform initialization ──
      * cnn_random_weight(state, scale) returns uniform samples in [-scale/2, scale/2].
      * He uniform wants U(-s, s) with s = sqrt(6 / fan_in).
@@ -340,6 +385,11 @@ void nn_cnn_infer_destroy(void* ctx) {
     free(context->bn_running_var);
     free(context->bn_gamma);
     free(context->bn_beta);
+    free(context->norm_gamma);
+    free(context->norm_dgamma);
+    if (context->skip != NULL) {
+        free(context->skip);
+    }
     free(context);
 }
 
@@ -862,6 +912,17 @@ int nn_cnn_forward_pass(
             }
         }
 
+        /* ── P0 RMSNorm: apply between pooling+activation and projection ──
+         * Cache pre-norm pooled values when p0_norm_input_cache is set (training). */
+        if (config->use_rms_norm && context->norm_gamma != NULL && pooled_value_count > 0U) {
+            if (context->p0_norm_input_cache != NULL) {
+                (void)memcpy(context->p0_norm_input_cache + (step_index * pooled_value_count),
+                    pooled_values, pooled_value_count * sizeof(float));
+            }
+            (void)rms_norm_forward(pooled_values, pooled_values,
+                context->norm_gamma, pooled_value_count, config->norm_epsilon);
+        }
+
         /* ── Dropout: apply between pooling and projection ──
          * Inverted dropout: keep prob = 1-rate, scale kept by 1/(1-rate).
          * Mask stored for backward pass. Only active when pooling is used. */
@@ -893,6 +954,20 @@ int nn_cnn_forward_pass(
             }
             output[(step_index * config->feature_size) + feature_index] =
                 cnn_apply_activation(linear_value, config->output_activation);
+        }
+
+        /* ── P0 Skip: apply skip connection from pooled to projected ──
+         * Only active when pooled_value_count == feature_size and use_skip is set.
+         * Typical CNN configs have different dimensions, so skip is SKIP_NONE. */
+        if (config->use_skip && context->skip != NULL && context->skip->mode != SKIP_NONE) {
+            size_t proj_start = step_index * config->feature_size;
+            float* proj_out = output + proj_start;
+            if (context->p0_skip_module_cache != NULL) {
+                (void)memcpy(context->p0_skip_module_cache + proj_start,
+                    proj_out, config->feature_size * sizeof(float));
+            }
+            skip_forward(proj_out, proj_out, context->pooled_values,
+                config->feature_size, context->skip);
         }
     }
 
@@ -1009,6 +1084,16 @@ int nn_cnn_forward_pass(
                     }
                 }
 
+                /* ── P0 RMSNorm: re-apply after BN post-processing reactivation ── */
+                if (config->use_rms_norm && context->norm_gamma != NULL && pooled_value_count > 0U) {
+                    if (context->p0_norm_input_cache != NULL) {
+                        (void)memcpy(context->p0_norm_input_cache + (step_index * pooled_value_count),
+                            context->pooled_values, pooled_value_count * sizeof(float));
+                    }
+                    (void)rms_norm_forward(context->pooled_values, context->pooled_values,
+                        context->norm_gamma, pooled_value_count, config->norm_epsilon);
+                }
+
                 /* Re-apply stored dropout mask after pooled_values refresh */
                 if (dropout_rate > 0.0f && dropout_mask != NULL) {
                     size_t drop_base = step_index * pooled_value_count;
@@ -1032,6 +1117,18 @@ int nn_cnn_forward_pass(
                     }
                     output[(step_index * config->feature_size) + feature_index] =
                         cnn_apply_activation(linear_value, config->output_activation);
+                }
+
+                /* ── P0 Skip: re-apply after BN post-processing projection ── */
+                if (config->use_skip && context->skip != NULL && context->skip->mode != SKIP_NONE) {
+                    size_t proj_start = step_index * config->feature_size;
+                    float* proj_out = output + proj_start;
+                    if (context->p0_skip_module_cache != NULL) {
+                        (void)memcpy(context->p0_skip_module_cache + proj_start,
+                            proj_out, config->feature_size * sizeof(float));
+                    }
+                    skip_forward(proj_out, proj_out, context->pooled_values,
+                        config->feature_size, context->skip);
                 }
             }
         }
@@ -1155,6 +1252,21 @@ int nn_cnn_load_weights(void* ctx, FILE* fp) {
         }
     }
 
+    /* Load P0 shared-module parameters (norm_gamma, skip) */
+    if (context->norm_gamma != NULL) {
+        size_t pooled_value_count = cnn_pooled_value_count(&context->config);
+        if (fread(context->norm_gamma, sizeof(float), pooled_value_count, fp) != pooled_value_count) {
+            return 0;
+        }
+    }
+    if (context->skip != NULL) {
+        float skip_raw;
+        if (fread(&skip_raw, sizeof(float), 1, fp) != 1U) {
+            return 0;
+        }
+        context->skip->alpha_raw = skip_raw;
+    }
+
     return 1;
 }
 
@@ -1217,6 +1329,20 @@ int nn_cnn_save_weights(void* ctx, FILE* fp) {
             return 0;
         }
         if (fwrite(context->bn_running_var, sizeof(float), context->config.filter_count, fp) != context->config.filter_count) {
+            return 0;
+        }
+    }
+
+    /* Save P0 shared-module parameters (norm_gamma, skip) */
+    if (context->norm_gamma != NULL) {
+        size_t pooled_value_count = cnn_pooled_value_count(&context->config);
+        if (fwrite(context->norm_gamma, sizeof(float), pooled_value_count, fp) != pooled_value_count) {
+            return 0;
+        }
+    }
+    if (context->skip != NULL) {
+        float skip_raw = context->skip->alpha_raw;
+        if (fwrite(&skip_raw, sizeof(float), 1, fp) != 1U) {
             return 0;
         }
     }

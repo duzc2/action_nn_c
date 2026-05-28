@@ -7,6 +7,7 @@
 #define RNN_INFER_OPS_H
 
 #include "rnn_config.h"
+#include "../../dropout/dropout.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -29,6 +30,18 @@ typedef struct {
     float* output_buffer;           /**< Owned copy of the latest output vector. */
     float* hidden_state_a;          /**< Reusable scratch buffer for one hidden-state vector. */
     float* hidden_state_b;          /**< Reusable scratch buffer for one hidden-state vector. */
+    /* ── P0 shared-module state ── */
+    int              use_rms_norm;   /**< Copied from config. */
+    float            norm_epsilon;   /**< Copied from config. */
+    int              use_dropout;    /**< Copied from config. */
+    int              use_skip;       /**< Copied from config. */
+    SkipConnection   skip_recurrent; /**< LAuReL-RW skip for hidden state. */
+    float*           norm_gamma_h;   /**< RMSNorm gamma [hidden_size] (init to 1.0). */
+    DropoutLayer     dropout_rec;    /**< Per-timestep dropout layer. */
+    /* P0 backward-pass cache (set by train_create, NULL during pure inference) */
+    float*           p0_pre_norm;     /**< hidden before RMSNorm [seq_len * hidden_size] */
+    float*           p0_skip_x_cache; /**< prev_h before skip [seq_len * hidden_size] */
+    float*           p0_skip_fx_cache;/**< normed current before skip [seq_len * hidden_size] */
 } RnnInferContext;
 
 RnnInferContext* nn_rnn_infer_create(void);

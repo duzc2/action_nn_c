@@ -7,11 +7,13 @@
 #define MLP_CONFIG_H
 
 #include "mlp_layers.h"
+#include "../../residual/skip_connection.h"
 
 #include <assert.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <math.h>
 #include "../../../utils/error.h"
 
 /**
@@ -43,11 +45,17 @@ typedef struct {
     size_t output_size;
     MlpActivationType hidden_activation;
     MlpActivationType output_activation;
+    int      use_rms_norm;   /* 0 = disabled, 1 = enabled (default 0) */
+    float    norm_epsilon;   /* RMSNorm epsilon (default 1e-5) */
+    int      use_dropout;    /* 0 = disabled, 1 = enabled (default 0) */
+    float    dropout_rate;   /* keep_prob for dropout (default 0.5) */
+    int      use_skip;       /* 0 = disabled, 1 = enabled (default 0) */
+    SkipMode skip_mode;      /* SKIP_NONE / SKIP_IDENTITY / SKIP_LAUREL_RW */
 } MlpConfig;
 
 /* The trailing hidden-size array is accessed via pointer arithmetic from
  * sizeof(MlpConfig); any trailing padding would break that offset. */
-static_assert(sizeof(MlpConfig) == offsetof(MlpConfig, output_activation) + sizeof(MlpActivationType),
+static_assert(sizeof(MlpConfig) == offsetof(MlpConfig, skip_mode) + sizeof(SkipMode),
               "MlpConfig must not have trailing padding");
 
 /**

@@ -15,6 +15,8 @@
 #ifndef CNN_CONFIG_H
 #define CNN_CONFIG_H
 
+#include "../../residual/skip_connection.h"
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -68,6 +70,12 @@ typedef struct {
     float bn_momentum;                    /**< Running mean/variance update rate (typical 0.9) */
     float bn_epsilon;                     /**< Numerical stability constant (typical 1e-5) */
     uint32_t seed;                        /**< Deterministic parameter initialization seed. */
+    int      use_rms_norm;                /**< 0 = disabled, 1 = enabled (default 0) */
+    float    norm_epsilon;                /**< RMSNorm epsilon (default 1e-5) */
+    int      use_dropout;                 /**< 0 = disabled, 1 = use shared dropout API (default 0, existing dropout via CnnTrainConfig still works) */
+    float    dropout_rate;                /**< keep_prob = 1 - dropout_rate for shared API (default 0.5) */
+    int      use_skip;                    /**< 0 = disabled, 1 = enabled (skip from pooled to projected when dims match, default 0) */
+    SkipMode skip_mode;                   /**< SKIP_NONE / SKIP_IDENTITY / SKIP_LAUREL_RW */
 } CnnConfig;
 
 /**

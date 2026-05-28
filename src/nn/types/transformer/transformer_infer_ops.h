@@ -8,6 +8,8 @@
 
 #include "transformer_config.h"
 #include "../../../utils/arena.h"
+#include "../../residual/skip_connection.h"
+#include "../../dropout/dropout.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -46,6 +48,18 @@ typedef struct {
     char* fallback_answer;             /**< Stable fallback answer buffer. */
     float* graph_projection_weight;    /**< [graph_input_size][graph_output_size] graph-mode weights. */
     float* graph_projection_bias;      /**< [graph_output_size] graph-mode bias. */
+    /* ── P0 shared-module state ── */
+    int              use_rms_norm;     /**< Copied from config.use_rms_norm. */
+    float            norm_epsilon;     /**< Copied from config.norm_epsilon. */
+    int              use_dropout;      /**< Copied from config.use_dropout. */
+    int              use_skip;         /**< Copied from config.use_skip. */
+    SkipConnection   skip_attn;        /**< LAuReL-RW skip for attention residual. */
+    float*           norm_gamma_attn;  /**< RMSNorm gamma [model_dim] (initialised to 1.0). */
+    DropoutLayer     dropout_attn;     /**< Post-attention dropout layer. */
+    /* P0 backward-pass cache (populated by train_create, read in train ops) */
+    float*           p0_attn_pre_norm;    /**< attn_out before RMSNorm [state_count] */
+    float*           p0_skip_x_cache;     /**< input_states before skip [state_count] */
+    float*           p0_skip_fx_cache;    /**< normed attn_out before skip [state_count] */
     Arena* arena;                      /**< Scratch arena for forward cache + training temp buffers. */
     TransformerForwardCache* forward_cache; /**< Pre-allocated scratch cache; allocated from arena once. */
 } TransformerInferContext;
@@ -72,7 +86,7 @@ int nn_transformer_find_or_add_class(
     const char* answer
 );
 int nn_transformer_predict_class(
-    const TransformerInferContext* context,
+    TransformerInferContext* context,
     const char* question,
     float* out_probabilities,
     size_t probability_capacity,

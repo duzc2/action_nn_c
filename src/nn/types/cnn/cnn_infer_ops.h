@@ -7,6 +7,7 @@
 #define CNN_INFER_OPS_H
 
 #include "cnn_config.h"
+#include "../../dropout/dropout.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -39,6 +40,12 @@ typedef struct {
     float* bn_training_spatial_var; /**< Set by train_create: points to per-filter spatial variance values */
     int debug_level;          /**< Copied from train config; 0 in pure inference */
     int debug_layer_index;    /**< Copied from train config; for [FWD] log tags */
+    /* ─── P0 shared-module integration ─── */
+    SkipConnection* skip;              /**< Single skip connection from pooled to projected (dims must match) */
+    float* norm_gamma;                 /**< RMSNorm gamma [pooled_value_count] */
+    float* norm_dgamma;                /**< RMSNorm d_gamma [pooled_value_count] (allocated when use_rms_norm && training) */
+    float* p0_norm_input_cache;        /**< Pre-norm pooled values [pooled_cache_count] (set by train_create, for backward) */
+    float* p0_skip_module_cache;       /**< Pre-skip projected output [sequence_length * feature_size] (set by train_create) */
 } CnnInferContext;
 
 CnnInferContext* nn_cnn_infer_create_with_config(const CnnConfig* config, uint32_t seed);

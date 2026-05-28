@@ -4,9 +4,13 @@
  */
 
 #include "mlp_infer_ops.h"
+#include "../../norm/rms_norm.h"
+#include "../../dropout/dropout.h"
+#include "../../residual/skip_connection.h"
 
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #include "../../../utils/error.h"
 
 #define ABI_VERSION 1
@@ -54,6 +58,17 @@ static uint64_t compute_layout_hash(const MlpConfig* config) {
     hash *= 0x100000001b3ULL;
 
     hash ^= (uint64_t)config->output_activation;
+    hash *= 0x100000001b3ULL;
+
+    /* P0: include optional-module flags so weight files are invalidated
+     * when the user changes norm/dropout/skip settings. */
+    hash ^= (uint64_t)config->use_rms_norm;
+    hash *= 0x100000001b3ULL;
+    hash ^= (uint64_t)config->use_dropout;
+    hash *= 0x100000001b3ULL;
+    hash ^= (uint64_t)config->use_skip;
+    hash *= 0x100000001b3ULL;
+    hash ^= (uint64_t)config->skip_mode;
     hash *= 0x100000001b3ULL;
 
     return hash;
@@ -246,6 +261,88 @@ MlpInferContext* nn_mlp_infer_create_with_config_blob(
     memset(ctx->work_buffer_a, 0, max_buffer_size * sizeof(float));
     memset(ctx->work_buffer_b, 0, max_buffer_size * sizeof(float));
 
+    /* ─── P0: allocate shared-module buffers ─── */
+    ctx->skips = NULL;
+    ctx->dropouts = NULL;
+    ctx->norm_gamma = NULL;
+    ctx->norm_dgamma = NULL;
+
+    if (ctx->config->use_rms_norm) {
+        size_t total_norm = 0;
+        size_t k;
+        for (k = 0; k < ctx->layer_count; ++k) {
+            total_norm += ctx->layers[k]->output_size;
+        }
+        ctx->norm_gamma  = (float*)malloc(total_norm * sizeof(float));
+        ctx->norm_dgamma = (float*)malloc(total_norm * sizeof(float));
+        if (ctx->norm_gamma == NULL || ctx->norm_dgamma == NULL) {
+            free(ctx->norm_gamma);
+            free(ctx->norm_dgamma);
+            /* clean up previously allocated resources */
+            for (i = 0; i < ctx->layer_count; i++) { mlp_dense_free(ctx->layers[i]); }
+            free(ctx->layers); free(ctx->config);
+            free(ctx->input_buffer); free(ctx->output_buffer);
+            free(ctx->work_buffer_a); free(ctx->work_buffer_b);
+            free(ctx);
+            return NULL;
+        }
+        /* Initialise gamma to all-ones so RMSNorm starts as identity. */
+        for (k = 0; k < total_norm; ++k) {
+            ctx->norm_gamma[k] = 1.0f;
+            ctx->norm_dgamma[k] = 0.0f;
+        }
+    }
+
+    if (ctx->config->use_dropout) {
+        size_t hidden_count = ctx->layer_count - 1U;
+        ctx->dropouts = (DropoutLayer**)malloc(hidden_count * sizeof(DropoutLayer*));
+        if (ctx->dropouts == NULL) {
+            free(ctx->norm_gamma); free(ctx->norm_dgamma);
+            for (i = 0; i < ctx->layer_count; i++) { mlp_dense_free(ctx->layers[i]); }
+            free(ctx->layers); free(ctx->config);
+            free(ctx->input_buffer); free(ctx->output_buffer);
+            free(ctx->work_buffer_a); free(ctx->work_buffer_b);
+            free(ctx);
+            return NULL;
+        }
+        for (i = 0; i < hidden_count; ++i) {
+            ctx->dropouts[i] = (DropoutLayer*)malloc(sizeof(DropoutLayer));
+            if (ctx->dropouts[i] == NULL) {
+                size_t j;
+                for (j = 0; j < i; ++j) { dropout_free(ctx->dropouts[j]); free(ctx->dropouts[j]); }
+                free(ctx->dropouts); free(ctx->norm_gamma); free(ctx->norm_dgamma);
+                for (j = 0; j < ctx->layer_count; j++) { mlp_dense_free(ctx->layers[j]); }
+                free(ctx->layers); free(ctx->config);
+                free(ctx->input_buffer); free(ctx->output_buffer);
+                free(ctx->work_buffer_a); free(ctx->work_buffer_b);
+                free(ctx);
+                return NULL;
+            }
+            dropout_init(ctx->dropouts[i], ctx->config->dropout_rate,
+                         seed + (uint32_t)i + 1000U);
+        }
+    }
+
+    if (ctx->config->use_skip) {
+        ctx->skips = (SkipConnection*)malloc(ctx->layer_count * sizeof(SkipConnection));
+        if (ctx->skips == NULL) {
+            if (ctx->dropouts) {
+                for (i = 0; i < ctx->layer_count - 1U; ++i) { dropout_free(ctx->dropouts[i]); free(ctx->dropouts[i]); }
+                free(ctx->dropouts);
+            }
+            free(ctx->norm_gamma); free(ctx->norm_dgamma);
+            for (i = 0; i < ctx->layer_count; i++) { mlp_dense_free(ctx->layers[i]); }
+            free(ctx->layers); free(ctx->config);
+            free(ctx->input_buffer); free(ctx->output_buffer);
+            free(ctx->work_buffer_a); free(ctx->work_buffer_b);
+            free(ctx);
+            return NULL;
+        }
+        for (i = 0; i < ctx->layer_count; ++i) {
+            skip_init(&ctx->skips[i], ctx->config->skip_mode);
+        }
+    }
+
     return ctx;
 }
 
@@ -285,6 +382,18 @@ void nn_mlp_infer_destroy(void* context) {
             mlp_dense_free(ctx->layers[i]);
         }
     }
+
+    /* P0: free shared-module allocations */
+    free(ctx->norm_gamma);
+    free(ctx->norm_dgamma);
+    if (ctx->dropouts != NULL) {
+        for (i = 0; i < ctx->layer_count - 1U; ++i) {
+            dropout_free(ctx->dropouts[i]);
+            free(ctx->dropouts[i]);
+        }
+        free(ctx->dropouts);
+    }
+    free(ctx->skips);
 
     free(ctx->layers);
     free(ctx);
@@ -341,22 +450,59 @@ int nn_mlp_infer_step(void* context) {
     float* current;
     float* next;
     size_t i;
+    size_t norm_offset;
+    float epsilon;
 
     if (ctx == NULL) {
         return ACTION_C_ERR_NULL_POINTER;
     }
 
+    /* Ensure dropout is in inference (non-training) mode. */
+    if (ctx->config->use_dropout && ctx->dropouts != NULL) {
+        size_t hidden_count = ctx->layer_count - 1U;
+        for (i = 0; i < hidden_count; ++i) {
+            if (ctx->dropouts[i] != NULL) ctx->dropouts[i]->training = 0;
+        }
+    }
+
     current = ctx->input_buffer;
     next = ctx->work_buffer_a;
+    norm_offset = 0;
+    epsilon = ctx->config->norm_epsilon;
+    if (epsilon <= 0.0f) epsilon = 1e-5f;
 
     /* Hidden layers ping-pong between two work buffers; only the final output persists. */
     for (i = 0; i < ctx->layer_count; i++) {
         MlpDenseLayer* layer = ctx->layers[i];
 
         if (i == ctx->layer_count - 1) {
+            /* Output layer: no norm / dropout / skip */
             mlp_dense_forward(layer, ctx->output_buffer, current);
         } else {
             mlp_dense_forward(layer, next, current);
+
+            /* P0: apply RMSNorm in-place */
+            if (ctx->config->use_rms_norm && ctx->norm_gamma != NULL) {
+                rms_norm_forward(next, next,
+                    ctx->norm_gamma + norm_offset,
+                    layer->output_size, epsilon);
+            }
+
+            /* P0: apply dropout in-place */
+            if (ctx->config->use_dropout && ctx->dropouts != NULL && ctx->dropouts[i] != NULL) {
+                dropout_forward(next, next, layer->output_size, ctx->dropouts[i]);
+            }
+
+            /* P0: apply skip connection (dimensions must match) */
+            if (ctx->config->use_skip && ctx->skips != NULL
+                && ctx->skips[i].mode != SKIP_NONE) {
+                /* Only apply skip when current and next have the same dimension. */
+                if (layer->output_size == layer->input_size) {
+                    skip_forward(next, next, current, layer->output_size, &ctx->skips[i]);
+                }
+            }
+
+            norm_offset += layer->output_size;
             current = next;
             next = (next == ctx->work_buffer_a) ? ctx->work_buffer_b : ctx->work_buffer_a;
         }
@@ -441,6 +587,26 @@ int nn_mlp_load_weights(void* context, FILE* fp) {
         }
     }
 
+    /* P0: load norm_gamma if present */
+    if (ctx->config->use_rms_norm && ctx->norm_gamma != NULL) {
+        size_t total_norm = 0;
+        for (i = 0; i < ctx->layer_count; ++i) total_norm += ctx->layers[i]->output_size;
+        rc = (int)fread(ctx->norm_gamma, sizeof(float), total_norm, fp);
+        if ((size_t)rc != total_norm) {
+            return 0;
+        }
+    }
+
+    /* P0: load skip alpha_raw if present */
+    if (ctx->config->use_skip && ctx->skips != NULL) {
+        for (i = 0; i < ctx->layer_count; ++i) {
+            float sr;
+            rc = (int)fread(&sr, sizeof(float), 1, fp);
+            if (rc != 1) return 0;
+            ctx->skips[i].alpha_raw = sr;
+        }
+    }
+
     return 1;
 }
 
@@ -489,6 +655,25 @@ int nn_mlp_save_weights(void* context, FILE* fp) {
         rc = (int)fwrite(layer->bias, sizeof(float), layer->output_size, fp);
         if ((size_t)rc != layer->output_size) {
             return 0;
+        }
+    }
+
+    /* P0: save norm_gamma if present */
+    if (ctx->config->use_rms_norm && ctx->norm_gamma != NULL) {
+        size_t total_norm = 0;
+        for (i = 0; i < ctx->layer_count; ++i) total_norm += ctx->layers[i]->output_size;
+        rc = (int)fwrite(ctx->norm_gamma, sizeof(float), total_norm, fp);
+        if ((size_t)rc != total_norm) {
+            return 0;
+        }
+    }
+
+    /* P0: save skip alpha_raw if present */
+    if (ctx->config->use_skip && ctx->skips != NULL) {
+        for (i = 0; i < ctx->layer_count; ++i) {
+            float sr = ctx->skips[i].alpha_raw;
+            rc = (int)fwrite(&sr, sizeof(float), 1, fp);
+            if (rc != 1) return 0;
         }
     }
 

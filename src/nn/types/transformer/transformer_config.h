@@ -11,6 +11,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include "../../residual/skip_connection.h"
 
 /**
  * @brief Minimal structural configuration needed to create a tiny transformer.
@@ -22,6 +23,13 @@ typedef struct {
     size_t max_response_classes;  /**< Maximum learned answer-class count chosen by the user. */
     size_t max_text_length;       /**< Maximum stored answer text length, including the terminator. */
     uint32_t seed;                /**< Deterministic seed for reproducible parameter init. */
+    /* P0 shared-module flags (all default to 0 = backward compatible) */
+    int      use_rms_norm;        /**< 0 = disabled, 1 = enabled (default 0) */
+    float    norm_epsilon;        /**< RMSNorm epsilon (default 1e-5) */
+    int      use_dropout;         /**< 0 = disabled, 1 = enabled (default 0, shared API) */
+    float    dropout_rate;        /**< keep_prob for shared dropout API (default 0.5) */
+    int      use_skip;            /**< 0 = disabled, 1 = enabled (default 0) */
+    SkipMode skip_mode;           /**< SKIP_NONE / SKIP_IDENTITY / SKIP_LAUREL_RW */
 } TransformerModelConfig;
 
 /**

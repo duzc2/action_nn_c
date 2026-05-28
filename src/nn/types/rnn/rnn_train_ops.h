@@ -26,6 +26,13 @@ typedef struct {
     float* hidden_grad_a;           /**< Reusable scratch gradient vector for one hidden state. */
     float* hidden_grad_b;           /**< Reusable scratch gradient vector for one hidden state. */
     float* output_gradient_buffer;  /**< Reusable scratch buffer for supervised output loss. */
+    /* ── P0 training buffers ── */
+    float* norm_gamma_grad;         /**< d_gamma accumulator [hidden_size] (+= mode). */
+    float* pre_norm_cache;          /**< hidden before RMSNorm [seq_len * hidden_size]. */
+    float* skip_x_cache;            /**< prev_h before skip [seq_len * hidden_size]. */
+    float* skip_fx_cache;           /**< normed hidden before skip [seq_len * hidden_size]. */
+    float* skip_temp_dF;            /**< Temporary for skip_backward dF output [hidden_size]. */
+    float* skip_temp_dX;            /**< Temporary for skip_backward dX output [hidden_size]. */
     size_t total_steps;             /**< Count of successful training updates. */
     size_t total_epochs;            /**< Count reported through train_get_stats. */
     float cumulative_loss;          /**< Running loss accumulator for averages. */

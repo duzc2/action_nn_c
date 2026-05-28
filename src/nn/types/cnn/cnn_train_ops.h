@@ -36,6 +36,13 @@ typedef struct {
     float* bn_pre_cache;            /**< Pre-BN cached x_hat values for backward pass */
     float* bn_spatial_var;          /**< Per-filter spatial variance computed in forward pass */
     float* dropout_mask;            /**< Bernoulli mask for dropout (0 or scale), applied between pool and projection */
+    /* ─── P0 shared-module training buffers ─── */
+    float* norm_gamma_grad;         /**< RMSNorm d_gamma accumulator [pooled_value_count] */
+    float* norm_gamma_vel;          /**< SGD momentum for norm_gamma [pooled_value_count] */
+    float* skip_alpha_raw_grad;     /**< LAuReL-RW d_alpha_raw (scalar, allocated when use_skip) */
+    float* skip_alpha_raw_vel;      /**< SGD momentum for skip_alpha_raw (scalar, allocated when use_skip) */
+    float* norm_input_cache;        /**< Pre-norm pooled values for backward pass (same as infer_ctx->p0_norm_input_cache) */
+    float* skip_module_cache;       /**< Pre-skip projected features for backward pass (same as infer_ctx->p0_skip_module_cache) */
     size_t batch_step_count;        /**< Samples accumulated since last batch update. */
     size_t total_steps;             /**< Count of successful training updates. */
     size_t total_epochs;            /**< Count reported through train_get_stats. */
