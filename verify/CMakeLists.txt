@@ -7,7 +7,7 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 add_definitions(-D_UNUSED)
 
 include(${CMAKE_CURRENT_LIST_DIR}/../demo/demo_common.cmake)
-action_c_enable_network_types(TYPES cnn cnn_dual_pool mlp transformer)
+action_c_enable_network_types(TYPES cnn cnn_dual_pool mlp transformer rnn gnn)
 action_c_add_core_subdirectory()
 
 # ── test_stride: unit-level stride verification ──
@@ -73,7 +73,7 @@ add_executable(test_cnn_full test_cnn_full.c)
 target_include_directories(test_cnn_full PRIVATE "${ACTION_C_ROOT}/src")
 target_link_libraries(test_cnn_full PRIVATE nn_train_core)
 
-# ── test_nn_p0_integration: MLP + CNN P0 shared-module integration (20 tests) ──
+# ── test_nn_p0_integration: MLP + CNN P0 shared-module integration (26 tests) ──
 add_executable(test_nn_p0_integration test_nn_p0_integration.c)
 target_include_directories(test_nn_p0_integration PRIVATE "${ACTION_C_ROOT}/src")
 target_link_libraries(test_nn_p0_integration PRIVATE nn_train_core)
@@ -111,10 +111,20 @@ target_include_directories(test_motion_accuracy PRIVATE
 )
 target_link_libraries(test_motion_accuracy PRIVATE nn_train_core)
 
-# ── test_transformer_p0: Transformer P0 shared-module integration ──
+# ── test_transformer_p0: Transformer P0 shared-module integration (16 tests) ──
 add_executable(test_transformer_p0 test_transformer_p0.c)
 target_include_directories(test_transformer_p0 PRIVATE "${ACTION_C_ROOT}/src")
 target_link_libraries(test_transformer_p0 PRIVATE nn_train_core)
+
+# ── test_rnn_p0: RNN P0 shared-module integration (14 tests) ──
+add_executable(test_rnn_p0 test_rnn_p0.c)
+target_include_directories(test_rnn_p0 PRIVATE "${ACTION_C_ROOT}/src")
+target_link_libraries(test_rnn_p0 PRIVATE nn_train_core)
+
+# ── test_gnn_p0: GNN P0 shared-module integration (14 tests) ──
+add_executable(test_gnn_p0 test_gnn_p0.c)
+target_include_directories(test_gnn_p0 PRIVATE "${ACTION_C_ROOT}/src")
+target_link_libraries(test_gnn_p0 PRIVATE nn_train_core)
 
 # ── test_tf_debug: Minimal debug test ──
 add_executable(test_tf_debug test_tf_debug.c)

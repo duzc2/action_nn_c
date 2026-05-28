@@ -1,6 +1,8 @@
 # 网络结构扩展路线图
 
-> 最后更新：2026-05-27 | 基于 2025–2026 论文调查 + 项目应用场景分析
+> 最后更新：2026-05-28 | 基于 2025–2026 论文调查 + 项目应用场景分析
+>
+> **Phase 0 状态：已完成** — RMSNorm、LAuReL-RW、Dropout 三个共享模块已集成到全部 6 种网络类型（MLP、CNN、CNN Dual Pool、RNN、GNN、Transformer），含 70 项 P0 集成测试，全部通过。
 
 ---
 
@@ -23,12 +25,12 @@
 
 | 类型 | 注册名 | 能力 |
 |---|---|---|
-| MLP | `mlp` | 全连接，可变层数，6 种激活函数，SGD/Adam |
-| CNN | `cnn` | 标准/深度可分离卷积，4 种池化，BN，Dropout |
-| CNN Dual Pool | `cnn_dual_pool` | CNN 变体，avg+max 双池化 |
-| RNN | `rnn` | Elman 式单层 RNN，tanh 隐藏激活 |
-| GNN | `gnn` | 消息传递图网络，mean 聚合，图池化/锚点读出 |
-| Transformer | `transformer` | 单头自注意力，字符级 tokenizer，文本 QA |
+| MLP | `mlp` | 全连接，可变层数，6 种激活函数，SGD/Adam，**RMSNorm + Dropout + Skip (ID/LAuReL-RW)** |
+| CNN | `cnn` | 标准/深度可分离卷积，4 种池化，BN，Dropout，**RMSNorm + Skip (ID)** |
+| CNN Dual Pool | `cnn_dual_pool` | CNN 变体，avg+max 双池化，**RMSNorm + Skip** |
+| RNN | `rnn` | Elman 式单层 RNN，tanh 隐藏激活，**RMSNorm + Dropout + Skip (ID/LAuReL-RW)** |
+| GNN | `gnn` | 消息传递图网络，mean 聚合，图池化/锚点读出，**RMSNorm + Dropout + Skip (ID/LAuReL-RW)** |
+| Transformer | `transformer` | 单头自注意力，字符级 tokenizer，文本 QA，**RMSNorm + Dropout + Skip (ID/LAuReL-RW)** |
 
 ---
 
@@ -36,7 +38,24 @@
 
 ---
 
-### Phase 0 — 基础设施（零依赖，三项可并行开发）
+### Phase 0 — 基础设施（零依赖，三项可并行开发）✅ 已完成
+
+这三项已完成。RMSNorm (P0-1)、LAuReL-RW (P0-2)、Dropout (P0-3) 均已实现并集成到所有 6 种网络类型中。每个模块都有独立的 C 实现、前向/反向传播、以及 70 项跨网络类型的集成测试。
+
+| 模块 | 实现文件 | 测试覆盖 |
+|---|---|---|
+| RMSNorm | `src/nn/norm/rms_norm.h/.c` | MLP(6), CNN(6), RNN(5), GNN(5), Transformer(5) |
+| LAuReL-RW Skip | `src/nn/residual/skip_connection.h/.c` | MLP(4), CNN(2), RNN(3), GNN(2), Transformer(4) |
+| Dropout/DropPath | `src/nn/dropout/dropout.h/.c` | MLP(3), CNN(0*), RNN(3), GNN(2), Transformer(3) |
+
+> *CNN dropout 已有内置实现，此次改为调用共享 dropout API
+
+测试文件：
+- `verify/test_nn_p0_integration.c` — MLP + CNN 集成 (26 tests)
+- `verify/test_rnn_p0.c` — RNN 集成 (14 tests)
+- `verify/test_gnn_p0.c` — GNN 集成 (14 tests)
+- `verify/test_transformer_p0.c` — Transformer 集成 (16 tests)
+- `verify/test_cnn_full.c` — CNN 已有测试 (含 6 P0 tests, 30 total)
 
 这三个模块互相独立、零前置依赖，每一个完成后所有 6 种现有网络类型立即受益。可以同时开工，不需要等任何一项完成。
 
@@ -595,7 +614,7 @@ P4-3 Mamba-2 ◄───────── 需要 P0-1 + parallel scan (同 P1-
 ```
 现在 ────────────────────────────────────────────────────────→ 未来
 
-│ Phase 0                │ Phase 1              │ Phase 2          │ Phase 3       │ Phase 4
+│ Phase 0 (已完成✅)      │ Phase 1              │ Phase 2          │ Phase 3       │ Phase 4
 │ (基础设施)              │ (能力升级)            │ (领域特化)        │ (新能力)       │ (按需)
 │                        │                      │                  │               │
 │ ┌──────────────┐      │ ┌──────────────┐    │ ┌─────────────┐  │ ┌───────────┐ │ ┌─────────┐

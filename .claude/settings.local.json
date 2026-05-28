@@ -118,7 +118,9 @@
       "Bash(build/tests/Debug/test_dropout.exe:*)",
       "Bash(./test_nn_p0_integration.exe:*)",
       "Bash(./test_transformer_p0.exe:*)",
-      "Bash(./test_tf_debug.exe:*)"
+      "Bash(./test_tf_debug.exe:*)",
+      "Bash(./test_rnn_p0.exe:*)",
+      "Bash(./test_gnn_p0.exe)"
     ]
   }
 }

@@ -932,6 +932,236 @@ static int test_cnn_rms_norm_changes_output(void) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
+ * MLP Additional Tests (edge cases)
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* Test 21: MLP zero input — doesn't crash or NaN */
+static int test_mlp_zero_input(void) {
+    size_t h[] = {8, 8};
+    MlpConfig* cfg = make_mlp_config(4, 2, h, 2);
+    cfg->use_rms_norm = 1; cfg->use_dropout = 1; cfg->use_skip = 1;
+    cfg->norm_epsilon = 1e-5f; cfg->dropout_rate = 0.3f; cfg->skip_mode = SKIP_IDENTITY;
+    MlpInferContext* ictx = nn_mlp_infer_create_with_config(cfg, 42);
+    CHECK(ictx != NULL, "create failed");
+
+    float in[4] = {0}; float out[2];
+    int rc = nn_mlp_infer_auto_run(ictx, in, out);
+    CHECK(rc == 0, "zero-in forward failed");
+    CHECK(!has_nan(out, 2), "output NaN zero-in");
+
+    MlpTrainConfig tcfg = make_mlp_train_config();
+    MlpTrainContext* tctx = nn_mlp_train_create(ictx, &tcfg);
+    CHECK(tctx != NULL, "train_create zero-in failed");
+
+    float target[2] = {0}; target[0] = 1.0f;
+    for (int i = 0; i < 5; i++) {
+        rc = nn_mlp_train_step_with_data(tctx, in, target);
+        CHECK(rc == 0, "train_step zero-in failed");
+        CHECK(!is_nan(tctx->last_loss), "loss NaN zero-in");
+    }
+    CHECK(tctx->last_loss > 0.0f, "loss non-positive zero-in");
+
+    nn_mlp_train_destroy(tctx);
+    nn_mlp_infer_destroy(ictx);
+    free(cfg);
+    return g_test_failures;
+}
+
+/* Test 22: MLP single layer — edge case with minimal depth */
+static int test_mlp_single_layer(void) {
+    size_t h[] = {4};
+    MlpConfig* cfg = make_mlp_config(4, 1, h, 4);
+    cfg->use_rms_norm = 1; cfg->use_dropout = 1; cfg->use_skip = 1;
+    cfg->norm_epsilon = 1e-5f; cfg->dropout_rate = 0.2f; cfg->skip_mode = SKIP_LAUREL_RW;
+    cfg->hidden_activation = MLP_ACT_RELU;
+    MlpInferContext* ictx = nn_mlp_infer_create_with_config(cfg, 42);
+    CHECK(ictx != NULL, "create 1-layer failed");
+    CHECK(ictx->norm_gamma != NULL, "gamma missing 1-layer");
+    CHECK(ictx->skips != NULL, "skips missing 1-layer");
+    /* Should have 2 skip layers: hidden[0] and output */
+    CHECK(ictx->skips[0].mode == SKIP_LAUREL_RW, "skip[0] not laurel");
+
+    float in[4]; float out[4];
+    fill_sine(in, 4);
+    int rc = nn_mlp_infer_auto_run(ictx, in, out);
+    CHECK(rc == 0, "1-layer forward failed");
+    CHECK(!has_nan(out, 4), "output NaN 1-layer");
+
+    MlpTrainConfig tcfg = make_mlp_train_config();
+    tcfg.learning_rate = 0.1f;
+    MlpTrainContext* tctx = nn_mlp_train_create(ictx, &tcfg);
+    CHECK(tctx != NULL, "train_create 1-layer failed");
+
+    float target[4];
+    make_onehot(target, 4, 0);
+    for (int i = 0; i < 20; i++) {
+        nn_mlp_train_step_with_data(tctx, in, target);
+        CHECK(!is_nan(tctx->last_loss), "loss NaN 1-layer");
+    }
+    CHECK(tctx->last_loss > 0.0f, "loss non-positive 1-layer");
+    CHECK(tctx->last_loss < 10.0f, "loss too high 1-layer"); /* shouldn't explode */
+
+    nn_mlp_train_destroy(tctx);
+    nn_mlp_infer_destroy(ictx);
+    free(cfg);
+    return g_test_failures;
+}
+
+/* Test 23: MLP high learning rate — doesn't explode */
+static int test_mlp_high_learning_rate(void) {
+    size_t h[] = {6, 6};
+    MlpConfig* cfg = make_mlp_config(6, 2, h, 3);
+    cfg->use_rms_norm = 1; cfg->norm_epsilon = 1e-3f;
+    cfg->use_skip     = 1; cfg->skip_mode = SKIP_LAUREL_RW;
+    MlpInferContext* ictx = nn_mlp_infer_create_with_config(cfg, 42);
+    CHECK(ictx != NULL, "create hr failed");
+
+    MlpTrainConfig tcfg = make_mlp_train_config();
+    tcfg.learning_rate = 1.0f; /* very high */
+    MlpTrainContext* tctx = nn_mlp_train_create(ictx, &tcfg);
+    CHECK(tctx != NULL, "train_create hr failed");
+
+    float in[6]; float target[3];
+    fill_sine(in, 6); make_onehot(target, 3, 0);
+
+    int saw_finite = 0;
+    for (int i = 0; i < 20; i++) {
+        nn_mlp_train_step_with_data(tctx, in, target);
+        /* Loss may grow but shouldn't be NaN */
+        CHECK(!is_nan(tctx->last_loss), "loss NaN hr");
+        if (tctx->last_loss < 1e6f) saw_finite = 1;
+    }
+    CHECK(saw_finite, "loss always exploding");
+
+    for (size_t i = 0; i < 15; i++)
+        CHECK(!is_nan(ictx->norm_gamma[i]), "gamma NaN hr");
+
+    nn_mlp_train_destroy(tctx);
+    nn_mlp_infer_destroy(ictx);
+    free(cfg);
+    return g_test_failures;
+}
+
+/* Test 24: MLP all P0 disabled — identical to non-P0 output */
+static int test_mlp_skip_none_mode(void) {
+    size_t h[] = {8, 8};
+    MlpConfig* cfg = make_mlp_config(4, 2, h, 2);
+    cfg->use_skip  = 1;
+    cfg->skip_mode = SKIP_NONE; /* explicitly NONE */
+    MlpInferContext* ictx = nn_mlp_infer_create_with_config(cfg, 42);
+    CHECK(ictx != NULL, "create none failed");
+    CHECK(ictx->skips[0].mode == SKIP_NONE, "skip[0] not NONE");
+    CHECK(ictx->skips[1].mode == SKIP_NONE, "skip[1] not NONE");
+    CHECK(ictx->skips[2].mode == SKIP_NONE, "skip[2] not NONE");
+
+    float in[4]; float out[2];
+    fill_sine(in, 4);
+    int rc = nn_mlp_infer_auto_run(ictx, in, out);
+    CHECK(rc == 0, "forward none failed");
+    CHECK(!has_nan(out, 2), "output NaN none");
+
+    nn_mlp_infer_destroy(ictx);
+    free(cfg);
+    return g_test_failures;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * CNN Additional Tests (edge cases)
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* Test 25: CNN zero input — with RMSNorm doesn't crash */
+static int test_cnn_zero_input(void) {
+    CnnConfig cfg;
+    init_cnn_cfg_avg(&cfg, 4, 4, 1, 0);
+    cfg.use_rms_norm = 1; cfg.norm_epsilon = 1e-5f;
+
+    CnnInferContext* ctx = nn_cnn_infer_create_with_config(&cfg, 42);
+    CHECK(ctx != NULL, "create zero failed");
+
+    float* img = (float*)calloc(cfg.total_input_size, sizeof(float));
+    float* out = (float*)malloc(cfg.feature_size * sizeof(float));
+    int rc = nn_cnn_infer_auto_run(ctx, img, out);
+    CHECK(rc == 0, "zero forward failed");
+    CHECK(!has_nan(out, cfg.feature_size), "output NaN zero");
+    CHECK(compute_rms(out, cfg.feature_size) < 100.0f, "output exploded zero-in");
+
+    CnnTrainConfig tcfg;
+    init_cnn_train_cfg(&tcfg);
+    CnnTrainContext* tctx = nn_cnn_train_create(ctx, &tcfg);
+    CHECK(tctx != NULL, "train_create zero failed");
+
+    float* target = (float*)malloc(cfg.feature_size * sizeof(float));
+    make_onehot(target, cfg.feature_size, 0);
+    for (int i = 0; i < 5; i++) {
+        rc = nn_cnn_train_step_with_data(tctx, img, target);
+        CHECK(rc == 0, "train_step zero failed");
+        CHECK(!is_nan(tctx->last_loss), "loss NaN zero");
+    }
+
+    free(target); free(out); free(img);
+    nn_cnn_train_destroy(tctx);
+    nn_cnn_infer_destroy(ctx);
+    return g_test_failures;
+}
+
+/* Test 26: CNN depthwise conv + P0 */
+static int test_cnn_depthwise_p0(void) {
+    CnnConfig cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.sequence_length     = 1;
+    cfg.frame_height        = 8; cfg.frame_width = 8;
+    cfg.channel_count       = 3; cfg.kernel_size = 3;
+    cfg.filter_count        = 3; /* depthwise requires filter_count == channel_count */
+    cfg.feature_size        = 8;
+    cfg.pooling_mode        = CNN_POOL_AVG;
+    cfg.conv_mode           = CNN_CONV_DEPTHWISE;
+    cfg.stride              = 1;
+    cfg.output_activation   = CNN_ACT_NONE;
+    cfg.pooling_activation  = CNN_ACT_RELU;
+    cfg.use_batch_norm      = 0;
+    cfg.use_rms_norm        = 1;
+    cfg.norm_epsilon        = 1e-5f;
+    cfg.total_input_size    = cfg.frame_height * cfg.frame_width
+                            * cfg.channel_count * cfg.sequence_length;
+
+    CnnInferContext* ctx = nn_cnn_infer_create_with_config(&cfg, 42);
+    CHECK(ctx != NULL, "create dw failed");
+    CHECK(ctx->norm_gamma != NULL, "gamma missing dw");
+
+    float* img = (float*)malloc(cfg.total_input_size * sizeof(float));
+    float* out = (float*)malloc(cfg.feature_size * sizeof(float));
+    fill_sine(img, cfg.total_input_size);
+    int rc = nn_cnn_infer_auto_run(ctx, img, out);
+    CHECK(rc == 0, "forward dw failed");
+    CHECK(!has_nan(out, cfg.feature_size), "output NaN dw");
+
+    CnnTrainConfig tcfg;
+    init_cnn_train_cfg(&tcfg);
+    CnnTrainContext* tctx = nn_cnn_train_create(ctx, &tcfg);
+    CHECK(tctx != NULL, "train_create dw failed");
+
+    float* target = (float*)malloc(cfg.feature_size * sizeof(float));
+    make_onehot(target, cfg.feature_size, 0);
+    for (int i = 0; i < 5; i++) {
+        rc = nn_cnn_train_step_with_data(tctx, img, target);
+        CHECK(rc == 0, "train_step dw failed");
+        CHECK(!is_nan(tctx->last_loss), "loss NaN dw");
+    }
+
+    /* Verify norm_gamma gradient for depthwise is non-zero */
+    size_t pvc = cnn_pooled_value_count(&cfg);
+    CHECK(pvc > 0, "pooled_value_count zero for dw");
+    float gs = 0.0f;
+    for (size_t i = 0; i < pvc; i++) gs += fabsf(tctx->norm_gamma_grad[i]);
+    CHECK(gs > 0.0f, "norm_gamma_grad all zero dw");
+
+    free(target); free(out); free(img);
+    nn_cnn_train_destroy(tctx);
+    nn_cnn_infer_destroy(ctx);
+    return g_test_failures;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
  * main
  * ═══════════════════════════════════════════════════════════════════════ */
 
@@ -962,6 +1192,16 @@ int main(void) {
         {"cnn_rms_norm_leakyrelu",          test_cnn_rms_norm_leakyrelu},
         {"cnn_rms_norm_weight_decay",       test_cnn_rms_norm_weight_decay},
         {"cnn_rms_norm_changes_output",     test_cnn_rms_norm_changes_output},
+
+        /* MLP edge cases (tests 21-24) */
+        {"mlp_zero_input",                  test_mlp_zero_input},
+        {"mlp_single_layer",                test_mlp_single_layer},
+        {"mlp_high_learning_rate",          test_mlp_high_learning_rate},
+        {"mlp_skip_none_mode",              test_mlp_skip_none_mode},
+
+        /* CNN edge cases (tests 25-26) */
+        {"cnn_zero_input",                  test_cnn_zero_input},
+        {"cnn_depthwise_p0",                test_cnn_depthwise_p0},
     };
 
     size_t total  = sizeof(tests) / sizeof(tests[0]);

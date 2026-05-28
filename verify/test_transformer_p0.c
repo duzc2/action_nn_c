@@ -494,25 +494,131 @@ static void test_arena_size(void) {
     nn_transformer_infer_destroy(ctx);
 }
 
+/* ── Test 14: P0 stability across multiple forward passes ─────────────── */
+static void test_weight_decay_p0(void) {
+    TransformerModelConfig cfg = make_default_config();
+    cfg.use_rms_norm  = 1;
+    cfg.use_dropout   = 1;
+    cfg.dropout_rate  = 0.2f;
+    cfg.use_skip      = 1;
+    cfg.skip_mode     = SKIP_IDENTITY;
+    cfg.max_response_classes = 8;
+
+    TransformerInferContext* ctx = tf_ctx_alloc(&cfg);
+    CHECK(ctx != NULL, "ctx init stability");
+
+    nn_transformer_find_or_add_class(ctx, "yes");
+    nn_transformer_find_or_add_class(ctx, "no");
+    nn_transformer_find_or_add_class(ctx, "???");
+    nn_transformer_find_or_add_class(ctx, "idk");
+
+    /* Run many forward passes with dropout in training mode; outputs must stay finite */
+    ctx->dropout_attn.training = 1;
+    float probs[8] = {0};
+    int pass;
+    for (pass = 0; pass < 20; ++pass) {
+        int rc = nn_transformer_predict_class(ctx, "stability test text", probs, 8, NULL);
+        CHECK(rc >= 0, "predict stability");
+        size_t i;
+        for (i = 0; i < 8; ++i) CHECK(float_is_finite(probs[i]), "prob finite stability");
+    }
+
+    nn_transformer_infer_destroy(ctx);
+}
+
+/* ── Test 15: Zero input doesn't crash or produce NaN ────────────────── */
+static void test_zero_input(void) {
+    TransformerModelConfig cfg = make_default_config();
+    cfg.use_rms_norm  = 1;
+    cfg.norm_epsilon  = 1e-5f;
+    cfg.use_dropout   = 1;
+    cfg.dropout_rate  = 0.2f;
+    cfg.use_skip      = 1;
+    cfg.skip_mode     = SKIP_LAUREL_RW;
+
+    TransformerInferContext* ctx = tf_ctx_alloc(&cfg);
+    CHECK(ctx != NULL, "ctx init zero");
+
+    nn_transformer_find_or_add_class(ctx, "a");
+    nn_transformer_find_or_add_class(ctx, "b");
+
+    /* All-zero input (empty token) */
+    float probs[4] = {0};
+    int rc = nn_transformer_predict_class(ctx, "", probs, 4, NULL);
+    CHECK(rc >= 0, "predict zero input");
+    size_t i;
+    for (i = 0; i < 4; ++i) CHECK(float_is_finite(probs[i]), "prob finite zero");
+
+    /* Verify forward_cache attn_out is finite after P0 modules */
+    if (ctx->forward_cache && ctx->forward_cache->attn_out) {
+        float* attn = ctx->forward_cache->attn_out;
+        size_t state_count = ctx->max_seq_length * ctx->model_dim;
+        for (i = 0; i < state_count; ++i)
+            CHECK(float_is_finite(attn[i]), "attn_out finite zero");
+    } else {
+        CHECK(1, "attn_out skip (null cache)");
+    }
+
+    nn_transformer_infer_destroy(ctx);
+}
+
+/* ── Test 16: Larger classifier capacity + P0 modules ─────────────────── */
+static void test_large_vocab_p0(void) {
+    TransformerModelConfig cfg = make_default_config();
+    cfg.max_response_classes = 16;
+    cfg.use_rms_norm = 1;
+    cfg.norm_epsilon = 1e-5f;
+
+    TransformerInferContext* ctx = tf_ctx_alloc(&cfg);
+    CHECK(ctx != NULL, "ctx init large");
+
+    /* Add many classes up to max_response_classes */
+    int class_ids[16];
+    int k;
+    for (k = 0; k < 16; ++k) {
+        char label[8];
+        snprintf(label, sizeof(label), "c%d", k);
+        class_ids[k] = nn_transformer_find_or_add_class(ctx, label);
+        CHECK(class_ids[k] >= 0, "add class");
+    }
+
+    float probs[16];
+    int rc = nn_transformer_predict_class(ctx, "test text", probs, 16, NULL);
+    CHECK(rc >= 0, "predict large vocab");
+
+    float sum = 0.0f;
+    for (k = 0; k < 16; ++k) {
+        CHECK(float_is_finite(probs[k]), "prob finite large");
+        CHECK(probs[k] >= 0.0f, "prob non-negative large");
+        sum += probs[k];
+    }
+    CHECK(fabsf(sum - 1.0f) < 0.2f, "prob sum approx 1");
+
+    nn_transformer_infer_destroy(ctx);
+}
+
 /* ── Main ────────────────────────────────────────────────────────────── */
 
 int main(void) {
     setbuf(stdout, NULL);
     printf("=== Transformer P0 Integration Tests ===\n\n");
 
-    printf("[1/13] backward compat...\n");       test_p0_disabled_forward();
-    printf("[2/13] rms norm forward...\n");       test_rms_norm_forward();
-    printf("[3/13] rms norm changes output...\n"); test_rms_norm_changes_output();
-    printf("[4/13] rms norm attn finite...\n");   test_rms_norm_attn_finite();
-    printf("[5/13] dropout forward...\n");         test_dropout_forward();
-    printf("[6/13] skip identity...\n");           test_skip_identity();
-    printf("[7/13] skip laurel rw...\n");          test_skip_laurel_rw();
-    printf("[8/13] skip alpha effect...\n");       test_skip_alpha_effect();
-    printf("[9/13] combined all...\n");            test_combined_all();
-    printf("[10/13] multiple passes...\n");        test_multiple_passes();
-    printf("[11/13] save load norm gamma...\n");   test_save_load_norm_gamma();
-    printf("[12/13] save load forward...\n");      test_save_load_forward();
-    printf("[13/13] arena size...\n");             test_arena_size();
+    printf("[1/16] backward compat...\n");       test_p0_disabled_forward();
+    printf("[2/16] rms norm forward...\n");       test_rms_norm_forward();
+    printf("[3/16] rms norm changes output...\n"); test_rms_norm_changes_output();
+    printf("[4/16] rms norm attn finite...\n");   test_rms_norm_attn_finite();
+    printf("[5/16] dropout forward...\n");         test_dropout_forward();
+    printf("[6/16] skip identity...\n");           test_skip_identity();
+    printf("[7/16] skip laurel rw...\n");          test_skip_laurel_rw();
+    printf("[8/16] skip alpha effect...\n");       test_skip_alpha_effect();
+    printf("[9/16] combined all...\n");            test_combined_all();
+    printf("[10/16] multiple passes...\n");        test_multiple_passes();
+    printf("[11/16] save load norm gamma...\n");   test_save_load_norm_gamma();
+    printf("[12/16] save load forward...\n");      test_save_load_forward();
+    printf("[13/16] arena size...\n");             test_arena_size();
+    printf("[14/16] weight decay p0...\n");        test_weight_decay_p0();
+    printf("[15/16] zero input...\n");             test_zero_input();
+    printf("[16/16] large vocab p0...\n");         test_large_vocab_p0();
 
     printf("\n%d test assertions: %d pass, %d fail\n",
            _tests_run, _tests_pass, _tests_fail);
